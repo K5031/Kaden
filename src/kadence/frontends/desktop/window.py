@@ -212,8 +212,6 @@ COLUMN_WIDTH = 780  # px: the conversation and the message box, centred
 RECENT_FOLDERS = 6  # a new chat's folder menu: its own and recent ones
 WINDOW_BUTTON = QSize(38, 28)  # minimize, maximize and close, at the header's top
 COPIED_MS = 1500  # a reply's copy button shows a tick this long
-MASCOT_WIDTH = 200  # px: the new chat's mascot
-ASSETS = Path(__file__).parent / "assets"
 SIDEBAR_WIDTH = 320  # px at 100%: room for a title and a sub-session's under it
 TOOL_TONES = {ToolStatus.OK: "ok", ToolStatus.ERROR: "error", ToolStatus.ABANDONED: "warning",
               ToolStatus.TIMED_OUT: "warning", ToolStatus.INTERRUPTED: "warning"}
@@ -274,18 +272,6 @@ def _thought(seconds: float | None) -> str:
         return "Thought"
     minutes, rest = divmod(max(1, round(seconds)), 60)
     return f"Thought for {minutes}m {rest}s" if minutes else f"Thought for {rest}s"
-
-
-def _mascot(width: int) -> QLabel:
-    """Kadence's mascot, peeking: sharp on high-density screens."""
-    label = QLabel(objectName="mascot")
-    ratio = label.devicePixelRatioF() or 1.0
-    pixmap = QPixmap(str(ASSETS / "mascot-peek.png")).scaledToWidth(
-        round(width * ratio), Qt.TransformationMode.SmoothTransformation)
-    pixmap.setDevicePixelRatio(ratio)
-    label.setPixmap(pixmap)
-    label.setAccessibleName("Kadence")
-    return label
 
 
 def _discard(widget: QWidget) -> None:
@@ -1872,7 +1858,6 @@ class MainWindow(QMainWindow):
         self.empty_state = QWidget()
         empty = QVBoxLayout(self.empty_state)
         empty.addStretch(2)
-        empty.addWidget(_mascot(MASCOT_WIDTH), 0, Qt.AlignmentFlag.AlignHCenter)
         title = _label(EMPTY_TITLE, selectable=False, role="title")
         title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         empty.addWidget(title)

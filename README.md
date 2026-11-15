@@ -7,7 +7,7 @@ OpenAI-compatible models.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/empty-dark.png">
-  <img src="docs/images/empty-light.png" alt="The Kadence desktop app on a new chat, with its mascot peeking over the words Start a conversation">
+  <img src="docs/images/empty-light.png" alt="The Kadence desktop app on a new chat">
 </picture>
 
 The [desktop app](docs/desktop-app.md), ready for a new chat.
