@@ -320,6 +320,7 @@ async def test_read_only_flags(tools):
         "edit_file": False,
         "list_files": True,
         "search_files": True,
+        "request_folder": False,  # asks the user, also where only reading runs unasked
         "web_search": True,
         "web_fetch": True,
     }
@@ -368,16 +369,19 @@ async def test_use_folder_moves_every_tool_to_that_folder(tools, workspace, tmp_
 
 
 @BWRAP
-async def test_folders_named_readable_are_read_without_asking_and_not_written(
-        workspace, tmp_path):
-    """A project that needs another one beside it (a library it imports) names it."""
+async def test_a_folder_the_agent_asked_for_is_read_and_not_written(tools, workspace, tmp_path):
+    """A project that needs another one beside it (a library it imports): the agent asks
+    with request_folder, which is not confined, so the user is asked."""
     lib = tmp_path / "lib"
     lib.mkdir()
     (lib / "code.py").write_text("ANSWER = 42\n")
     secret = tmp_path / "secret.txt"
     secret.write_text("key")
     (lib / "link").symlink_to(secret)
-    tools = ShellFilesTools(workspace, readable=[str(lib)])
+    assert not await confined(tools, "request_folder", path=str(lib), reason="its tests")
+    assert not await confined(tools, "read_file", path=str(lib / "code.py"))
+    out = await run(tools, tmp_path, "request_folder", path=str(lib), reason="its tests")
+    assert not out.is_error and str(lib) in out.content
     assert await confined(tools, "read_file", path=str(lib / "code.py"))
     assert await confined(tools, "list_files", path=str(lib))
     assert await confined(tools, "search_files", pattern="ANSWER", path=str(lib))
@@ -386,29 +390,36 @@ async def test_folders_named_readable_are_read_without_asking_and_not_written(
                               old_string="42", new_string="43")
     assert not await confined(tools, "read_file", path=str(lib / "link"))  # leads out of it
     assert not await confined(tools, "read_file", path=str(secret))
+    assert not await confined(tools, "request_folder", path=str(tmp_path), reason="more")
     inside = ctx(tmp_path, confined=True)
     out = await tools.execute(ToolCall("c", "read_file", {"path": str(lib / "code.py")}), inside)
     assert not out.is_error and "ANSWER = 42" in out.content
-    await tools.use_folder(tmp_path / "other")  # the folder changes, what is readable stays
-    assert await confined(tools, "read_file", path=str(lib / "code.py"))
+    out = await run(tools, tmp_path, "request_folder", path=str(lib / "code.py"), reason="x")
+    assert out.is_error and "not a folder" in out.content
+    await tools.use_folder(workspace)  # another conversation starts: it asks again
+    assert not await confined(tools, "read_file", path=str(lib / "code.py"))
 
 
 @BWRAP
-async def test_a_sandboxed_command_reads_the_folders_named_readable(workspace, tmp_path):
+async def test_a_sandboxed_command_reads_a_folder_the_agent_asked_for(tools, workspace,
+                                                                       tmp_path):
     lib = tmp_path / "lib"
     lib.mkdir()
     (lib / "code.py").write_text("ANSWER = 42\n")
     (tmp_path / "alias").symlink_to(lib)  # a folder named by a link is there by both names
-    tools = ShellFilesTools(workspace, readable=[str(tmp_path / "alias"),
-                                                 str(tmp_path / "missing")])
+    command = (f"cat {lib / 'code.py'} {tmp_path / 'alias' / 'code.py'}; "
+               f"echo no > {lib / 'new.py'}; true")
+    out = await run(tools, tmp_path, "shell", command=command)
+    assert "ANSWER" not in out.content
+    await run(tools, tmp_path, "request_folder", path=str(tmp_path / "alias"), reason="tests")
     assert await confined(tools, "shell", command="true")
-    out = await run(tools, tmp_path, "shell", command=(
-        f"cat {lib / 'code.py'} {tmp_path / 'alias' / 'code.py'}; "
-        f"echo no > {lib / 'new.py'}; true"))
+    out = await run(tools, tmp_path, "shell", command=command)
     assert out.content.count("ANSWER = 42") == 2 and not (lib / "new.py").exists()
-    [shell] = [spec for spec in await tools.list_tools() if spec.name == "shell"]
-    assert str(tmp_path / "alias") in shell.description
-    assert "missing" not in shell.description
+
+
+def test_the_folders_to_read_are_not_an_option(workspace):
+    with pytest.raises(TypeError):
+        ShellFilesTools(workspace, readable=["/usr"])
 
 
 async def test_the_sandbox_follows_the_folder(tools, workspace, tmp_path):

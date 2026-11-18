@@ -100,8 +100,23 @@ SANDBOX_NOTE = (
     " Commands run in a sandbox: they can read and write the workspace, read the system "
     "and use the network, but the rest of the home directory and environment variables "
     "holding keys or tokens are hidden, and nothing outside the workspace can be "
-    "changed. Set `unsandboxed` to true only when a command needs something outside; "
-    "the user is then asked first, so say why."
+    "changed. `request_folder` makes a folder outside readable in the sandbox. Set "
+    "`unsandboxed` to true only when a command needs something else outside; the user "
+    "is then asked first, so say why."
+)
+REQUEST_FOLDER = ToolSpec(
+    name="request_folder",
+    description=(
+        "Ask to read a folder outside the workspace, such as a library this project is "
+        "installed with. The user is asked. Once allowed, commands in the sandbox and "
+        "read_file, list_files and search_files read it without asking, for the rest of "
+        "this conversation; it cannot be changed that way."
+    ),
+    parameters=_object(
+        {"path": _STRING,
+         "reason": {"type": "string", "description": "What it is needed for."}},
+        ["path", "reason"],
+    ),
 )
 # Variables whose names look like secrets (API keys, tokens, passwords) are left out of a
 # sandboxed command's environment: it runs unasked and may use the network.
@@ -197,8 +212,7 @@ def _page_range(pages: str | None, total: int) -> tuple[int, int]:
 
 
 def factory(options: dict[str, Any], paths: InstancePaths) -> ShellFilesTools:
-    """Options: root (default: the current directory), shell_timeout, shell_stall_timeout,
-    readable (folders outside the work folder that may be read without asking)."""
+    """Options: root (default: the current directory), shell_timeout, shell_stall_timeout."""
     options = dict(options)
     return ShellFilesTools(Path(options.pop("root", Path.cwd())), **options)
 
@@ -259,13 +273,12 @@ class ShellFilesTools(Tools):
         shell_stall_timeout: float | None = SHELL_STALL_TIMEOUT,
         web_tools: web.Web | None = None,
         screen_tools: screen.Screen | None = None,
-        readable: Sequence[str] = (),
     ) -> None:
         self._default = Path(root).expanduser().resolve()
-        # Folders outside the work folder that are read without asking; those that exist.
-        self._named = tuple(path for path in (Path(raw).expanduser().absolute()
-                                              for raw in readable) if path.is_dir())
-        self._readable = tuple(path.resolve() for path in self._named)
+        # Folders outside the work folder that request_folder made readable in this
+        # conversation: as they were named, and where those names lead.
+        self._named: tuple[Path, ...] = ()
+        self._readable: tuple[Path, ...] = ()
         self._bwrap = _bwrap(self._default, Path.home().resolve())
         self._shell_spec = replace(SHELL, timeout=shell_timeout,
                                    stall_timeout=shell_stall_timeout)
@@ -279,6 +292,7 @@ class ShellFilesTools(Tools):
             "edit_file": self._edit_file,
             "list_files": self._list_files,
             "search_files": self._search_files,
+            REQUEST_FOLDER.name: self._request_folder,
             **{name: self._web_call(name) for name in web.NAMES},
             screen.NAME: self._screenshot,
         }
@@ -292,10 +306,9 @@ class ShellFilesTools(Tools):
                          if self._bwrap is not None and self._bounded else None)
         shell = self._shell_spec
         if self._sandbox is not None:
-            also = (" These folders outside the workspace can be read as well: "
-                    + ", ".join(map(str, self._named)) + "." if self._named else "")
-            shell = replace(shell, description=shell.description + SANDBOX_NOTE + also)
-        self._spec_list = (shell, *FILE_SPECS, *web.SPECS, *self._screen.specs)
+            shell = replace(shell, description=shell.description + SANDBOX_NOTE)
+        asking = (REQUEST_FOLDER,) if self._bounded else ()  # no boundary, nothing to ask
+        self._spec_list = (shell, *FILE_SPECS, *asking, *web.SPECS, *self._screen.specs)
         self._specs = {spec.name: spec for spec in self._spec_list}
 
     async def list_tools(self) -> Sequence[ToolSpec]:
@@ -304,6 +317,7 @@ class ShellFilesTools(Tools):
     async def use_folder(self, folder: Path | None) -> None:
         root = self._default if folder is None else Path(folder).expanduser().resolve()
         await asyncio.to_thread(root.mkdir, parents=True, exist_ok=True)
+        self._named = self._readable = ()  # what one conversation was given ends with it
         self._set_root(root)
 
     async def confined(self, call: ToolCall) -> bool:
@@ -352,6 +366,20 @@ class ShellFilesTools(Tools):
             return ToolOutput(f"{type(e).__name__}: {e}", is_error=True)
         finally:
             _must_stay_inside.reset(token)
+
+    async def _request_folder(self, args: dict[str, Any], ctx: ToolContext) -> str:
+        """Runs only once allowed, by the user or the review: the call is never confined."""
+        named = Path(args["path"]).expanduser()
+        named = named if named.is_absolute() else self.root / named
+        if not await asyncio.to_thread(named.is_dir):
+            raise ToolError(f"{named} is not a folder")
+        if named not in self._named:
+            self._named += (named,)
+            self._readable += (await asyncio.to_thread(named.resolve),)
+            self._set_root(self.root)
+        return (f"{named} can be read for the rest of this conversation, by commands in "
+                "the sandbox and by read_file, list_files and search_files. Changing "
+                "anything in it still asks the user.")
 
     async def _screenshot(self, args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
         return await self._screen.run()
