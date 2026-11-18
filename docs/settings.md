@@ -126,11 +126,6 @@ Things to know:
 
 - **Keep secrets out of the work folder.** A command there can send the folder's contents
   anywhere.
-- **A project that needs another folder.** When the work needs something beside the work
-  folder (a library it imports, shared data), the agent asks you for that folder. Once
-  you allow it, the agent reads it without asking for the rest of the conversation, in
-  commands and with the file tools, and still cannot change it. A command can send what
-  it reads anywhere, so think twice about a folder with secrets in it.
 - **Without the sandbox, commands ask.** That is the case on macOS and on Linux without
   bubblewrap; file actions in the work folder still run freely.
 - **Your home folder is not a work folder.** If the work folder is your home folder, or a

@@ -76,7 +76,6 @@ Inside the sandbox (`shell_files._sandbox`):
 | Work folder | read and write |
 | System (`/usr`, `/etc`, ...) | read-only, so installed programs run |
 | `/home`, `/root`, the user's home | empty, except the work folder itself |
-| Folders the agent asked for | read-only, under the name given and the one it resolves to |
 | `/tmp` | private and empty |
 | `/run/user` | hidden, so the session bus and its services (the keychain) cannot be reached |
 | Environment | as outside, minus variables whose names look like secrets (`KEY`, `TOKEN`, `SECRET`, `PASSW`, `CREDENTIAL`) |
@@ -85,24 +84,9 @@ Inside the sandbox (`shell_files._sandbox`):
 
 ```
 bwrap --ro-bind / / --tmpfs /home --tmpfs /root --tmpfs /run/user --tmpfs /tmp
-      --dir HOME [--ro-bind READABLE READABLE]... --bind ROOT ROOT
-      --dev /dev --proc /proc --unshare-pid
+      --dir HOME --bind ROOT ROOT --dev /dev --proc /proc --unshare-pid
       --die-with-parent --chdir ROOT sh -c COMMAND
 ```
-
-### Folders that are read and not written
-
-A project often needs something beside its folder: a library installed from a path next
-to it, shared data. With the home folder hidden its tests cannot run in the sandbox, and
-running them outside it asks for each command.
-
-The tool `request_folder(path, reason)` asks for such a folder. Its call is never
-confined, so the user is asked (or the review decides, under that policy). Once it has
-run, a sandboxed command sees the folder read-only, and a call that only reads
-(`read_file`, `list_files`, `search_files`, `shell_files.READS`) is confined when its
-path is in it; writing there is outside as before. What was given lasts until the next
-conversation starts (`use_folder`), as the runtime's conversation grants do. The tool is
-offered where the work folder is a boundary.
 
 Whether it works is tested once when the module is built, by running `true` in it, off
 the event loop: `bwrap` missing, user namespaces disabled, or Kadence itself running in a
@@ -126,9 +110,13 @@ user choose each chat's folder.
   (`~/.cargo`, `~/.local/bin`, caches) would keep working, but with the network allowed a
   command could read keys and tokens there and send them anywhere. `unsandboxed` covers
   the commands that need more.
-- **Readable folders as a Tools option in `config.toml`.** Built first. It is decided
-  ahead of time, for every conversation, by editing a file, where every other permission
-  is asked for when the agent needs it.
+- **Folders outside the work folder that are read without asking** (a library the
+  project is installed with, next to its folder). Built twice and taken out: as a Tools
+  option in `config.toml`, which decides ahead of time what every other permission asks
+  for when it is needed, and as a tool the agent calls to ask for a folder, which is a
+  special case of the question that already exists. A command that needs something
+  outside runs with `unsandboxed`, the user is asked, and may allow it for the
+  conversation.
 - **No network in the sandbox.** The strongest containment, but it breaks installing
   packages and fetching anything, which agents do constantly.
 - **Landlock, or a container (Docker, Podman).** Landlock needs no helper binary but a
@@ -156,7 +144,7 @@ user choose each chat's folder.
   another name still gets through; unsandboxed commands, which are checked first, keep
   the whole environment.
 - **Network plus the work folder.** A confined command can send anything in the work
-  folder anywhere, and anything in a folder the user let it read. The docs say so.
+  folder anywhere. The docs say to keep secrets out of it.
 - **Tools under the home folder do not work in the sandbox** (toolchains, caches, `uv`,
   `cargo`). The agent asks to run such commands unsandboxed, which brings a prompt back
   for them. A list of extra read-only paths is the next step if that proves common.
