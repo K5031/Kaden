@@ -1202,7 +1202,7 @@ class RoundedCorners(QWidget):
     RADIUS = 12  # px
     SHADOW = 24  # px around the frame
     SHADOW_DROP = 4  # px the shadow lies below the frame
-    SHADOW_ALPHA = 0.2, 0.45  # at the frame, by day and by night
+    SHADOW_ALPHA = 0.13, 0.32  # at the frame, by day and by night
 
     def __init__(self, window: QWidget) -> None:
         super().__init__(window)
