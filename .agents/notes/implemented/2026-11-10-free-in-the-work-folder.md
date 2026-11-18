@@ -76,6 +76,7 @@ Inside the sandbox (`shell_files._sandbox`):
 | Work folder | read and write |
 | System (`/usr`, `/etc`, ...) | read-only, so installed programs run |
 | `/home`, `/root`, the user's home | empty, except the work folder itself |
+| Folders named readable | read-only, under the name given and the one it resolves to |
 | `/tmp` | private and empty |
 | `/run/user` | hidden, so the session bus and its services (the keychain) cannot be reached |
 | Environment | as outside, minus variables whose names look like secrets (`KEY`, `TOKEN`, `SECRET`, `PASSW`, `CREDENTIAL`) |
@@ -84,9 +85,20 @@ Inside the sandbox (`shell_files._sandbox`):
 
 ```
 bwrap --ro-bind / / --tmpfs /home --tmpfs /root --tmpfs /run/user --tmpfs /tmp
-      --dir HOME --bind ROOT ROOT --dev /dev --proc /proc --unshare-pid
+      --dir HOME [--ro-bind READABLE READABLE]... --bind ROOT ROOT
+      --dev /dev --proc /proc --unshare-pid
       --die-with-parent --chdir ROOT sh -c COMMAND
 ```
+
+### Folders that are read and not written
+
+A project often needs something beside its folder: a library installed from a path next
+to it, shared data. With the home folder hidden its tests cannot run in the sandbox, and
+running them outside it asks each time, which nobody answers when the agent works alone.
+The Tools option `readable` names such folders. A sandboxed command sees them read-only,
+and a call that only reads (`read_file`, `list_files`, `search_files`, `shell_files.READS`)
+is confined when its path is in one; writing there is outside as before. The shell
+tool's description lists them. Folders that do not exist are left out.
 
 Whether it works is tested once when the module is built, by running `true` in it, off
 the event loop: `bwrap` missing, user namespaces disabled, or Kadence itself running in a
@@ -137,7 +149,8 @@ user choose each chat's folder.
   another name still gets through; unsandboxed commands, which are checked first, keep
   the whole environment.
 - **Network plus the work folder.** A confined command can send anything in the work
-  folder anywhere. The docs say to keep secrets out of it.
+  folder anywhere, and anything in a folder named readable. The docs say to keep secrets
+  out of both.
 - **Tools under the home folder do not work in the sandbox** (toolchains, caches, `uv`,
   `cargo`). The agent asks to run such commands unsandboxed, which brings a prompt back
   for them. A list of extra read-only paths is the next step if that proves common.

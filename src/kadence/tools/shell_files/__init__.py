@@ -95,6 +95,7 @@ SHELL = ToolSpec(
     parameters=_object({"command": _STRING, "unsandboxed": {"type": "boolean"}}, ["command"]),
     stall_timeout=SHELL_STALL_TIMEOUT,
 )
+READS = frozenset({"read_file", "list_files", "search_files"})  # calls that change nothing
 SANDBOX_NOTE = (
     " Commands run in a sandbox: they can read and write the workspace, read the system "
     "and use the network, but the rest of the home directory and environment variables "
@@ -196,7 +197,8 @@ def _page_range(pages: str | None, total: int) -> tuple[int, int]:
 
 
 def factory(options: dict[str, Any], paths: InstancePaths) -> ShellFilesTools:
-    """Options: root (default: the current directory), shell_timeout, shell_stall_timeout."""
+    """Options: root (default: the current directory), shell_timeout, shell_stall_timeout,
+    readable (folders outside the work folder that may be read without asking)."""
     options = dict(options)
     return ShellFilesTools(Path(options.pop("root", Path.cwd())), **options)
 
@@ -208,18 +210,23 @@ def sandbox_environment(environ: Mapping[str, str]) -> dict[str, str]:
     return {k: v for k, v in environ.items() if not SECRET_NAME.search(k)}
 
 
-def _sandbox(bwrap: str, root: Path, home: Path) -> list[str]:
+def _sandbox(bwrap: str, root: Path, home: Path, readable: Sequence[Path] = ()) -> list[str]:
     """The bubblewrap command line that confines a shell command to `root`.
 
     The whole system is visible read-only, so installed programs run; home directories,
     /tmp and the session's runtime directory are replaced by empty ones, and only the
-    workspace is bound back, writable. The network is left as it is."""
+    workspace is bound back, writable, and the `readable` folders, read-only. The network
+    is left as it is."""
     hidden = [p for p in (Path("/home"), Path("/root"), Path("/run/user"), Path("/tmp"), home)
               if p.is_dir()]
     command = [bwrap, "--ro-bind", "/", "/"]
     for path in hidden:
         command += ["--tmpfs", str(path)]
-    return command + ["--dir", str(home), "--bind", str(root), str(root), "--dev", "/dev",
+    command += ["--dir", str(home)]
+    for path in readable:  # also under the name it was given by, if that is a link to it
+        for shown in dict.fromkeys((path.resolve(), path)):
+            command += ["--ro-bind", str(path.resolve()), str(shown)]
+    return command + ["--bind", str(root), str(root), "--dev", "/dev",
                       "--proc", "/proc", "--unshare-pid", "--die-with-parent",
                       "--chdir", str(root)]
 
@@ -252,8 +259,13 @@ class ShellFilesTools(Tools):
         shell_stall_timeout: float | None = SHELL_STALL_TIMEOUT,
         web_tools: web.Web | None = None,
         screen_tools: screen.Screen | None = None,
+        readable: Sequence[str] = (),
     ) -> None:
         self._default = Path(root).expanduser().resolve()
+        # Folders outside the work folder that are read without asking; those that exist.
+        self._named = tuple(path for path in (Path(raw).expanduser().absolute()
+                                              for raw in readable) if path.is_dir())
+        self._readable = tuple(path.resolve() for path in self._named)
         self._bwrap = _bwrap(self._default, Path.home().resolve())
         self._shell_spec = replace(SHELL, timeout=shell_timeout,
                                    stall_timeout=shell_stall_timeout)
@@ -276,11 +288,13 @@ class ShellFilesTools(Tools):
         home = Path.home().resolve()
         # A workspace that is or holds the home directory (or is /) is no boundary.
         self._bounded = root != home and root not in home.parents
-        self._sandbox = (_sandbox(self._bwrap, root, home)
+        self._sandbox = (_sandbox(self._bwrap, root, home, self._named)
                          if self._bwrap is not None and self._bounded else None)
         shell = self._shell_spec
         if self._sandbox is not None:
-            shell = replace(shell, description=shell.description + SANDBOX_NOTE)
+            also = (" These folders outside the workspace can be read as well: "
+                    + ", ".join(map(str, self._named)) + "." if self._named else "")
+            shell = replace(shell, description=shell.description + SANDBOX_NOTE + also)
         self._spec_list = (shell, *FILE_SPECS, *web.SPECS, *self._screen.specs)
         self._specs = {spec.name: spec for spec in self._spec_list}
 
@@ -300,11 +314,17 @@ class ShellFilesTools(Tools):
         if call.name == "shell":
             return self._sandbox is not None and call.arguments.get("unsandboxed") is not True
         path = call.arguments.get("path", ".")
-        return isinstance(path, str) and await asyncio.to_thread(self._inside, path)
+        return isinstance(path, str) and await asyncio.to_thread(
+            self._inside, path, call.name in READS)
 
-    def _inside(self, raw: str) -> bool:
-        """Whether the path, with symlinks followed, is in the workspace."""
-        return self._path(raw).resolve().is_relative_to(self.root)
+    def _inside(self, raw: str, reading: bool = False) -> bool:
+        """Whether the path, with symlinks followed, is in the workspace, or for a call
+        that only reads, in a folder named readable."""
+        return self._allowed(self._path(raw).resolve(), reading)
+
+    def _allowed(self, path: Path, reading: bool) -> bool:
+        return path.is_relative_to(self.root) or (
+            reading and any(path.is_relative_to(folder) for folder in self._readable))
 
     async def attach(self, path: Path) -> Attachment:
         """A relative path is taken from the work folder. Reading is the user's act, so
@@ -348,12 +368,14 @@ class ShellFilesTools(Tools):
 
     def _open(self, path: Path, flags: int) -> int:
         """os.open, for a call `confined` allowed only if the file opened is in the
-        workspace: checked on the open file, so a link swapped in after the check (or
-        between this check and the read or write) cannot lead outside."""
+        workspace (or, opened for reading, in a readable folder): checked on the open
+        file, so a link swapped in after the check (or between this check and the read or
+        write) cannot lead outside."""
         if not _must_stay_inside.get():
             return os.open(path, flags, 0o644)
         fd = os.open(path.resolve(), flags | os.O_NOFOLLOW, 0o644)
-        if not Path(os.readlink(f"/proc/self/fd/{fd}")).is_relative_to(self.root):
+        reading = flags & os.O_ACCMODE == os.O_RDONLY
+        if not self._allowed(Path(os.readlink(f"/proc/self/fd/{fd}")), reading):
             os.close(fd)
             raise ToolError(f"{self._display(path)} leads outside the work folder; set it "
                             "up again inside the folder or ask the user")

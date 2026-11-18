@@ -299,7 +299,8 @@ Design: [Agent Note](notes/implemented/2026-10-30-deepseek-openai-compatible-pro
 
 - Factory: `kadence.tools.shell_files:factory`. Options: `root` (default: the process's
   current directory), `shell_timeout` (default None = the runtime's default; `math.inf`
-  for none), `shell_stall_timeout` (default 600 s without output). File tools keep the
+  for none), `shell_stall_timeout` (default 600 s without output), `readable` (default
+  none: folders outside the work folder read without asking). File tools keep the
   runtime defaults (no stall detection, default hard timeout).
 - Subprocesses get the process environment unchanged (`env` is never passed), so
   `KADENCE_PERMISSION_CEILING` reaches nested Kadence instances; covered by the
