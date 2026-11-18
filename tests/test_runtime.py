@@ -567,7 +567,7 @@ async def test_a_message_queued_while_a_turn_fails_is_still_answered(make: Any) 
     await h.runtime.send("and this")
     queued = (await h.rec.wait_for(lambda r: r.of(MessageQueued)))[0]
     await eventually(lambda: len(core.requests) == 2)
-    await h.rec.wait_state(AgentState.IDLE)
+    await h.rec.wait_state(AgentState.IDLE, count=2)  # idle at the start, and after both
     assert h.rec.of(Failure)
     assert (await h.transcript())[-2].id == queued.message_id
     assert (await h.transcript())[-1].blocks == (Text("answer"),)
