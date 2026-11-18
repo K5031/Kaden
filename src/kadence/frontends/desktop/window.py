@@ -56,6 +56,7 @@ from PySide6.QtGui import (
     QPaintEvent,
     QPen,
     QPixmap,
+    QRegion,
     QShortcut,
     QTextBlockFormat,
     QTextCharFormat,
@@ -1130,7 +1131,8 @@ class WindowEdges(QObject):
     """Resizing a window without a frame: near an edge the cursor shows the direction, and
     pressing there hands the resize to the window system."""
 
-    MARGIN = 6  # px from the edge
+    MARGIN = 6  # px inside the frame's edge
+    GRIP = 8  # px of the shadow outside it
     OVER_SCROLL_BAR = 2  # px that still resize where a scroll bar lies along the edge
 
     def __init__(self, window: QWidget) -> None:
@@ -1140,21 +1142,24 @@ class WindowEdges(QObject):
         QApplication.instance().installEventFilter(self)
 
     def edges(self, global_pos: QPoint, over: QWidget | None = None) -> Qt.Edge:
-        """The edges `global_pos` is on; `over` is the widget under it. A scroll bar keeps
-        all but the outermost pixels, or it could hardly be grabbed."""
+        """The edges `global_pos` is on; `over` is the widget under it. The frame is the
+        window without its shadow (RoundedCorners). A scroll bar keeps all but the
+        outermost pixels, or it could hardly be grabbed."""
         if self.window.isMaximized() or self.window.isFullScreen():
             return Qt.Edge(0)
         pos = self.window.mapFromGlobal(global_pos)
-        rect = self.window.rect()
+        frame = self.window.contentsRect()
+        if not frame.adjusted(-self.GRIP, -self.GRIP, self.GRIP, self.GRIP).contains(pos):
+            return Qt.Edge(0)
         m = self.OVER_SCROLL_BAR if isinstance(over, QScrollBar) else self.MARGIN
         found = Qt.Edge(0)
-        if pos.x() <= m:
+        if pos.x() <= frame.left() + m:
             found |= Qt.Edge.LeftEdge
-        elif pos.x() >= rect.width() - m:
+        elif pos.x() >= frame.right() - m + 1:
             found |= Qt.Edge.RightEdge
-        if pos.y() <= m:
+        if pos.y() <= frame.top() + m:
             found |= Qt.Edge.TopEdge
-        elif pos.y() >= rect.height() - m:
+        elif pos.y() >= frame.bottom() - m + 1:
             found |= Qt.Edge.BottomEdge
         return found
 
@@ -1188,12 +1193,16 @@ class WindowEdges(QObject):
 
 
 class RoundedCorners(QWidget):
-    """Rounds a frameless window's corners: it lies over the whole window, lets the mouse
-    through, and clears what is outside the rounded outline, so the desktop shows there
-    whatever the widgets underneath painted. Square while maximized or full screen. Made
-    once the window's contents are."""
+    """Rounds a frameless window's corners and gives it a shadow: it lies over the whole
+    window, lets the mouse through, keeps a margin around the window's contents and clears
+    what is outside the rounded frame, so the desktop shows there whatever the widgets
+    underneath painted, with the shadow over it. Square and without a margin while
+    maximized or full screen. Made once the window's contents are."""
 
     RADIUS = 12  # px
+    SHADOW = 24  # px around the frame
+    SHADOW_DROP = 4  # px the shadow lies below the frame
+    SHADOW_ALPHA = 0.2, 0.45  # at the frame, by day and by night
 
     def __init__(self, window: QWidget) -> None:
         super().__init__(window)
@@ -1203,7 +1212,8 @@ class RoundedCorners(QWidget):
         self._fit()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if event.type() in (QEvent.Type.Resize, QEvent.Type.WindowStateChange):
+        if event.type() in (QEvent.Type.Resize, QEvent.Type.WindowStateChange,
+                            QEvent.Type.Show):
             self._fit()
         elif event.type() == QEvent.Type.Paint:  # a translucent window has no background
             QPainter(self.parentWidget()).fillRect(self.parentWidget().rect(),
@@ -1212,23 +1222,49 @@ class RoundedCorners(QWidget):
 
     def _fit(self) -> None:
         window = self.parentWidget()
+        framed = not (window.isMaximized() or window.isFullScreen())
+        margin = self.SHADOW if framed else 0
+        if window.contentsMargins().left() != margin:
+            window.setContentsMargins(margin, margin, margin, margin)
         self.setGeometry(window.rect())
-        self.setVisible(not (window.isMaximized() or window.isFullScreen()))
+        self.setVisible(framed)
         self.raise_()
+        handle = window.windowHandle()
+        if handle is not None and QApplication.platformName().startswith("wayland"):
+            # Clicks on the shadow beyond the resize grip go to what lies behind it. Only
+            # where a mask is the input region: elsewhere it would cut the shadow off.
+            grip = WindowEdges.GRIP
+            handle.setMask(QRegion(window.contentsRect().adjusted(-grip, -grip, grip, grip))
+                           if framed else QRegion())
 
     def paintEvent(self, event: QPaintEvent) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        whole = QRectF(self.rect())
-        outside = QPainterPath()
-        outside.addRect(whole)
+        frame = QRectF(self.parentWidget().contentsRect())
+        whole = QPainterPath()
+        whole.addRect(QRectF(self.rect()))
         inside = QPainterPath()
-        inside.addRoundedRect(whole, self.RADIUS, self.RADIUS)
+        inside.addRoundedRect(frame, self.RADIUS, self.RADIUS)
+        outside = whole - inside
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
-        painter.fillPath(outside - inside, Qt.GlobalColor.black)
+        painter.fillPath(outside, Qt.GlobalColor.black)
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        painter.save()
+        painter.setClipPath(outside)
+        reach = self.SHADOW - self.SHADOW_DROP  # how far the shadow spreads
+        cast = frame.translated(0, self.SHADOW_DROP)
+        peak = self.SHADOW_ALPHA[theme.current().dark]
+        under = QPainterPath()  # what the frame leaves showing of the shadow's own shape
+        under.addRoundedRect(cast, self.RADIUS, self.RADIUS)
+        painter.fillPath(under, QColor(0, 0, 0, round(255 * peak)))
+        for step in range(reach):
+            alpha = peak * (1 - step / reach) ** 2
+            painter.setPen(QPen(QColor(0, 0, 0, round(255 * alpha)), 1))
+            grown = cast.adjusted(-step - 0.5, -step - 0.5, step + 0.5, step + 0.5)
+            painter.drawRoundedRect(grown, self.RADIUS + step, self.RADIUS + step)
+        painter.restore()
         painter.setPen(QPen(QColor(theme.current().line), 1))
-        painter.drawRoundedRect(whole.adjusted(0.5, 0.5, -0.5, -0.5),
+        painter.drawRoundedRect(frame.adjusted(0.5, 0.5, -0.5, -0.5),
                                 self.RADIUS, self.RADIUS)
 
 

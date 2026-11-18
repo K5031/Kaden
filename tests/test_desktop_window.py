@@ -1193,24 +1193,33 @@ async def test_the_menus_live_behind_two_buttons_and_their_shortcuts_still_work(
     assert dialog.stack.currentIndex() == 0
 
 
-async def test_the_window_has_rounded_corners_unless_maximized(make, qapp):
+async def test_the_window_has_rounded_corners_and_a_shadow_unless_maximized(make, qapp):
+    from kadence.frontends.desktop.window import RoundedCorners
+
     h: Harness = await make()
     await h.start()
     window, controller, _ = await open_window(h)
     dialog = SettingsDialog(window, h.runtime, controller, await h.runtime.settings(), [], 0.0)
+    s = RoundedCorners.SHADOW  # the margin around the frame, where the shadow is drawn
     for shown in (window, dialog):
-        shown.resize(800, 600)
+        shown.resize(900, 700)
         shown.show()
         qapp.processEvents()
+        assert shown.contentsRect().getRect() == (s, s, 900 - 2 * s, 700 - 2 * s)
         image = shown.grab().toImage()
-        for x, y in ((0, 0), (799, 0), (0, 599), (799, 599)):
+        for x, y in ((0, 0), (899, 0), (0, 699), (899, 699), (450, 0), (0, 350)):
             assert image.pixelColor(x, y).alpha() == 0  # the desktop shows through
-        assert image.pixelColor(400, 300).alpha() == 255
-        assert image.pixelColor(400, 0).alpha() == 255 == image.pixelColor(0, 300).alpha()
-        assert image.pixelColor(780, 592).alpha() == 255  # the window's own background
+        assert image.pixelColor(s, s).alpha() < 255  # the frame's corner is rounded
+        for x, y in ((450, s - 2), (s - 2, 350), (901 - s, 350), (450, 701 - s)):
+            pixel = image.pixelColor(x, y)  # just outside the frame: its shadow
+            assert 0 < pixel.alpha() < 255 and pixel.lightness() == 0
+        assert image.pixelColor(450, 350).alpha() == 255
+        assert image.pixelColor(450, s).alpha() == 255 == image.pixelColor(s, 350).alpha()
+        assert image.pixelColor(880 - s, 692 - s).alpha() == 255  # the window's background
     window.showMaximized()
     qapp.processEvents()
     assert window.grab().toImage().pixelColor(0, 0).alpha() == 255
+    assert window.contentsRect() == window.rect()  # no shadow at the screen's edge
 
 
 async def test_the_window_draws_its_own_title_bar(make, qapp):
@@ -1227,15 +1236,20 @@ async def test_the_window_draws_its_own_title_bar(make, qapp):
     window.resize(800, 600)
     window.show()
     edges = window._edges.edges
-    assert edges(window.mapToGlobal(QPoint(2, 300))) == Qt.Edge.LeftEdge
-    assert edges(window.mapToGlobal(QPoint(799, 599))) == (Qt.Edge.RightEdge
-                                                          | Qt.Edge.BottomEdge)
+    frame = window.contentsRect()  # the window without its shadow
+    left, right, bottom = frame.left(), frame.right(), frame.bottom()
+    assert edges(window.mapToGlobal(QPoint(left + 2, 300))) == Qt.Edge.LeftEdge
+    assert edges(window.mapToGlobal(QPoint(right, bottom))) == (Qt.Edge.RightEdge
+                                                               | Qt.Edge.BottomEdge)
     assert not edges(window.mapToGlobal(QPoint(400, 300)))
+    # The shadow next to the frame resizes too; further out it is not the window's.
+    assert edges(window.mapToGlobal(QPoint(left - 5, 300))) == Qt.Edge.LeftEdge
+    assert not edges(window.mapToGlobal(QPoint(2, 300)))
     # A scroll bar along the edge keeps all but the outermost pixels for itself.
     bar = window.scroll.verticalScrollBar()
-    assert edges(window.mapToGlobal(QPoint(795, 300))) == Qt.Edge.RightEdge
-    assert not edges(window.mapToGlobal(QPoint(795, 300)), bar)
-    assert edges(window.mapToGlobal(QPoint(799, 300)), bar) == Qt.Edge.RightEdge
+    assert edges(window.mapToGlobal(QPoint(right - 4, 300))) == Qt.Edge.RightEdge
+    assert not edges(window.mapToGlobal(QPoint(right - 4, 300)), bar)
+    assert edges(window.mapToGlobal(QPoint(right, 300)), bar) == Qt.Edge.RightEdge
     window.window_buttons["maximize"].click()
     await eventually(lambda: window.isMaximized())
     assert window.window_buttons["maximize"].toolTip() == "Restore"
@@ -1341,10 +1355,10 @@ async def test_the_close_button_reaches_the_top_right_corner(make, qapp):
     window.resize(1000, 700)
     window.show()
     await asyncio.sleep(0.05)
-    corner = QPoint(window.width() - 1, 0)  # where a cursor pushed to the corner lands
-    assert window.childAt(corner) is window.window_buttons["close"]
+    frame = window.contentsRect()  # the window without its shadow
+    assert window.childAt(frame.topRight()) is window.window_buttons["close"]
     for name, button in window.window_buttons.items():
-        assert button.mapTo(window, QPoint(0, 0)).y() == 0, name  # each reaches the top
+        assert button.mapTo(window, QPoint(0, 0)).y() == frame.top(), name  # reaches the top
         # Small, as a title bar's are: not as tall as the header they sit in.
         assert button.height() <= 30 and button.width() <= 40, name
         assert button.height() < window.title_label.parentWidget().height(), name
