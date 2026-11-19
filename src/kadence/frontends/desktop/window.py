@@ -56,7 +56,6 @@ from PySide6.QtGui import (
     QPaintEvent,
     QPen,
     QPixmap,
-    QRegion,
     QShortcut,
     QTextBlockFormat,
     QTextCharFormat,
@@ -1229,13 +1228,6 @@ class RoundedCorners(QWidget):
         self.setGeometry(window.rect())
         self.setVisible(framed)
         self.raise_()
-        handle = window.windowHandle()
-        if handle is not None and QApplication.platformName().startswith("wayland"):
-            # Clicks on the shadow beyond the resize grip go to what lies behind it. Only
-            # where a mask is the input region: elsewhere it would cut the shadow off.
-            grip = WindowEdges.GRIP
-            handle.setMask(QRegion(window.contentsRect().adjusted(-grip, -grip, grip, grip))
-                           if framed else QRegion())
 
     def paintEvent(self, event: QPaintEvent) -> None:
         painter = QPainter(self)
