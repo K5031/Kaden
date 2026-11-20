@@ -4,8 +4,8 @@ Status: implemented — a headless frontend lets another program drive a Kadence
 
 ## Problem
 
-[PHILOSOPHY.md](../../../PHILOSOPHY.md) describes a fleet of Kadence units (K1 to K5) that
-work without supervision: supervisors spawn subordinates, give them work, verify it, and
+The user's direction (2026-11-10) is a fleet of Kadence units, in ranks, that work without
+supervision: supervisors spawn subordinates, give them work, verify it, and
 escalate what they cannot resolve, up to a human at the top. A unit must be spawnable
 headless, report back, keep to the budgets and permissions it is given, and be paused or
 killed at any time. Communication may go through the KFM instead of directly between
@@ -101,7 +101,8 @@ Recorded so the frontend covers it:
   notice when the unit dies; a pipe gives both.
 - **Units talking to each other directly,** each a server and a client. No bridge to
   build, but every unit would need fleet logic (who it may talk to, escalation, ranks),
-  and the runtime would have to know other units exist. PHILOSOPHY.md suggests the bridge.
+  and the runtime would have to know other units exist. The user's direction suggests the
+  bridge.
 - **Several units in one process,** one runtime each. Cheaper to start, but a crash takes
   down the fleet, kill depends on cooperative cancellation, and SPEC 4.3 has one agent per
   process.

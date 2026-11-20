@@ -31,5 +31,5 @@ in the desktop's settings, and nothing new to keep in step.
 - No hotkey in Kadence itself: on Wayland an application cannot take a global one, so the
   key is bound in the desktop's settings.
 - Voice already covers use without reaching for the window.
-- The work goes to the direction in `PHILOSOPHY.md`: an agent that works unsupervised,
+- The work goes to the user's direction: an agent that works unsupervised,
   not polish on the supervised side.

@@ -1,7 +1,7 @@
 # Kadence
 
-Modular AI agent application. Read before coding:
-- `PHILOSOPHY.md`: where Kadence is going: the base unit of a fleet (KFM) that works without supervision.
+Modular AI agent application. It is built to work without supervision, also headless and
+driven by another program. Read before coding:
 - `SPEC.md`: product requirements: what Kadence does.
 - `src/kadence/api.py`: normative module contracts (Core, Memory, Tools, Frontend, RuntimeAPI). Spec section 16 summarizes the behavior it cannot express.
 

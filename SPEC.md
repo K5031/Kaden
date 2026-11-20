@@ -9,7 +9,7 @@ It provides persistent conversations the user can start, continue, curate and de
 The user controls what the agent sees: fresh starts at any time, continuity when asked for, and long-term memory the user can see and change.
 Users may run multiple independent Kadence instances concurrently as separate operating-system processes, with their own configurations, memory, and budgets.
 A conversation can be given a duty: standing work it plans and carries on by itself until a person ends it (4.4).
-These agents can collaborate using ordinary tools. Kadence does not implement a bespoke multi-agent organization framework: PHILOSOPHY.md describes the fleet manager (KFM) meant to be built on Kadence instances as a separate program, and duties are what a Kadence instance provides toward it.
+These agents can collaborate using ordinary tools. Kadence does not implement a bespoke multi-agent organization framework: a program that manages many Kadence instances is a separate program, and duties and the headless frontend are what a Kadence instance provides toward it.
 Core principle: The runtime owns orchestration; modules provide capabilities; frontends control presentation.
 Engineering priorities:
 User-visible utility.
@@ -285,7 +285,7 @@ Budgets.
 A crash in one instance should not directly terminate other instances.
 10.1 Instance Creation
 Instances are launched through ordinary application or OS mechanisms.
-An agent with authorized terminal access may launch another Kadence process. A program can launch and drive one through the headless frontend (section 3); the fleet manager in PHILOSOPHY.md is such a program, a separate project.
+An agent with authorized terminal access may launch another Kadence process. A program can launch and drive one through the headless frontend (section 3); a fleet manager is such a program, and a separate project.
 No dedicated agent-spawning API is required.
 10.2 Instance Communication
 Agents communicate through ordinary available tools and external services.

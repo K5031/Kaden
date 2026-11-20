@@ -816,10 +816,11 @@ was used.
 
 ## 14. Found while proposing duties
 
-### D1 (C) PHILOSOPHY.md and the spec's scope for fleets
+### D1 (C) The direction for fleets and the spec's scope
 - **Status:** Resolved (SPEC 1, 3, 4.4, 5, 10.1, 13): duties and the headless frontend.
-- **Where:** `PHILOSOPHY.md` (Kadence as the base agent of a fleet manager with ranks,
-  supervisors and duties) against SPEC 1 ("Kadence does not implement a bespoke multi-agent
+- **Where:** the user's direction of 2026-11-10 (Kadence as the base agent of a fleet
+  manager with ranks, supervisors and duties, kept in that manager's own project) against
+  SPEC 1 ("Kadence does not implement a bespoke multi-agent
   organization framework"), 10.2 (no centralized fleet management, no hardcoded hierarchy)
   and 13 (centralized fleet management and scheduled wake-ups out of scope).
 - **Problem:** The user's direction needs units that run by themselves, headless, and
@@ -829,8 +830,8 @@ was used.
   the spec as it is built: duties
   ([note](notes/implemented/2026-11-11-duties.md)),
   then a headless frontend ([note](notes/implemented/2026-11-11-headless-units.md)).
-- **Fix:** SPEC 1 and 13 point to PHILOSOPHY.md for the fleet and name what Kadence
-  provides toward it.
+- **Fix:** SPEC 1 and 13 say that managing a fleet is a separate program's and name what
+  Kadence provides toward it.
 
 ## 15. Found while fixing the causes of patch code (2026-11-14)
 
