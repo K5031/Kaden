@@ -78,7 +78,7 @@ async def open_window(h: Harness) -> tuple[MainWindow, Controller, asyncio.Task[
 
 
 def widgets[W](window: MainWindow, kind: type[W]) -> list[W]:
-    return [w for w in window._widgets.values() if isinstance(w, kind)]
+    return [w for w in window.conversation._widgets.values() if isinstance(w, kind)]
 
 
 def buttons(widget: Any, text: str) -> list[QPushButton]:
@@ -365,7 +365,8 @@ async def test_an_empty_conversation_shows_the_empty_state(make, qapp):
     h.core.add(Step(text="hi"))
     await h.start()
     window, controller, _ = await open_window(h)
-    window._rebuild()
+    window.conversation.rebuild()
+    window._refresh_status()
     assert window.empty_state.isVisibleTo(window)
     controller.send("hello")
     await eventually(lambda: widgets(window, AssistantBubble) and not controller.model.busy)
@@ -846,8 +847,8 @@ async def test_a_burst_of_changes_is_laid_out_once(make, qapp, monkeypatch):
     window, controller, _ = await open_window(h)
     await asyncio.sleep(0)
     arranged = []
-    original = window._arrange
-    monkeypatch.setattr(window, "_arrange", lambda: (arranged.append(1), original()))
+    original = window.conversation._arrange
+    monkeypatch.setattr(window.conversation, "_arrange", lambda: (arranged.append(1), original()))
     for n in range(20):  # as a page of earlier messages arrives
         controller.model.notify(f"note {n}", "info")
     await asyncio.sleep(0)
@@ -938,7 +939,7 @@ async def test_a_memory_update_after_an_answer_is_shown_with_a_link(make, qapp):
     window.show()
     controller.send("I leave for Oslo on Friday")
     line = await eventually(lambda: next(
-        (w for w in window._widgets.values() if isinstance(w, NoticeLine)), None))
+        (w for w in window.conversation._widgets.values() if isinstance(w, NoticeLine)), None))
     assert "Memory updated: Trip" in line.text() and "Open memory" in line.text()
     line.linkActivated.emit("memory")
     await eventually(lambda: window.memory_dialog is not None
@@ -1163,10 +1164,10 @@ async def test_a_long_notice_is_folded(make, qapp):
     await h.start()
     window, _controller, _ = await open_window(h)
     brief = "New goal: Research Gen.G's path through Worlds.\n\nFind every series they played."
-    assert isinstance(window._widget_for(NoticeItem(brief)), Detail)
-    folded = window._widget_for(NoticeItem(brief))
+    assert isinstance(window.conversation._widget_for(NoticeItem(brief)), Detail)
+    folded = window.conversation._widget_for(NoticeItem(brief))
     assert folded.label.text() == "New goal: Research Gen.G's path through Worlds.…"
-    assert isinstance(window._widget_for(NoticeItem("Time to check in.")), NoticeLine)
+    assert isinstance(window.conversation._widget_for(NoticeItem("Time to check in.")), NoticeLine)
 
 
 async def test_the_menus_live_behind_two_buttons_and_their_shortcuts_still_work(make, qapp):
@@ -1711,13 +1712,13 @@ async def test_the_checklist_is_part_of_the_conversation(make, qapp):
                                  for i in items))
     lists = [i for i in items if isinstance(i, ChecklistItem)]
     assert len(lists) == 1 and items[-1] is lists[0]  # under the step that came after it
-    card = window._widgets[id(lists[0])]
+    card = window.conversation._widgets[id(lists[0])]
     assert isinstance(card, PlanCard) and window.scroll.isAncestorOf(card)
     assert card.rows() == [("done", "Read the code"), ("doing", "Fix the bug")]
     controller.stop()
     await eventually(lambda: not controller.model.busy)
     await eventually(lambda: not any(isinstance(i, ChecklistItem) for i in items))
-    assert id(lists[0]) not in window._widgets
+    assert id(lists[0]) not in window.conversation._widgets
 
 
 async def test_dropped_files_wait_above_the_message_box_and_go_with_the_message(
@@ -1761,7 +1762,7 @@ async def test_dropped_files_wait_above_the_message_box_and_go_with_the_message(
     assert [type(b).__name__ for b in sent.blocks] == ["Text", "Image", "File", "Image"]
     [mine] = [i for i in controller.model.items if isinstance(i, UserItem)]
     assert [type(a) for a in mine.attachments] == [Image, File, Image]
-    bubble = window._widgets[id(mine)]
+    bubble = window.conversation._widgets[id(mine)]
     assert len(bubble.images) == 2 and [f.text() for f in bubble.files] == ["notes.txt"]
     assert not bubble.images[0].pixmap().isNull()
 

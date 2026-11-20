@@ -1012,7 +1012,7 @@ class StepGroup(QFrame):
         layout.addWidget(self.body)
 
     def set_members(self, widgets: Sequence[QWidget]) -> None:
-        """Its steps in order; the window says which of them show (MainWindow._arrange)."""
+        """Its steps in order; the view says which of them show (ConversationView._arrange)."""
         for index, widget in enumerate(widgets):
             _place(self.steps, index, widget)
         self.refresh()
@@ -1704,6 +1704,196 @@ class AttachmentStrip(QWidget):
         self.setVisible(bool(self.chips))
 
 
+# ── the conversation ──────────────────────────────────────────────────────
+
+
+class ConversationView(QScrollArea):
+    """A conversation as its ConversationModel holds it: its items, grouped into steps,
+    the line that says the agent thinks, and in `prompts` what waits for an answer, which
+    the window that hosts the view places where the person answers. The host passes on
+    what changes in the model (`changed`; `rebuild` when all of it did, `refresh` for how
+    it stands). `controller` gives the conversation on screen, which may change."""
+
+    chose = Signal()  # an option of a card was clicked
+
+    def __init__(self, controller: Callable[[], Controller], empty_state: QWidget,
+                 notice_link: Callable[[str], None]) -> None:
+        super().__init__(widgetResizable=True)
+        self._controller, self._notice_link = controller, notice_link
+        self._widgets: dict[int, QWidget] = {}  # by id() of its item
+        self._groups: dict[int, StepGroup] = {}  # by id() of its first step
+        self._arrange_pending = False
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        content = QWidget(objectName="transcript")
+        centred = QHBoxLayout(content)
+        centred.setContentsMargins(24, 16, 24, 24)
+        reading = QWidget()
+        reading.setMaximumWidth(COLUMN_WIDTH)
+        centred.addWidget(reading)
+        outer = QVBoxLayout(reading)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.load_earlier = QPushButton("Load earlier messages")
+        self.load_earlier.clicked.connect(self._load_earlier)
+        self.load_earlier.hide()
+        self.items_layout = QVBoxLayout()
+        self.items_layout.setSpacing(12)
+        self.empty_state = empty_state  # what shows where nothing was said yet
+        outer.addWidget(self.load_earlier, 0, Qt.AlignmentFlag.AlignHCenter)
+        outer.addLayout(self.items_layout)
+        self.waiting_line = _label("Thinking…", selectable=False, tone="muted")
+        self.waiting_line.hide()
+        outer.addWidget(self.waiting_line)
+        outer.addWidget(self.empty_state, 1)
+        outer.addStretch()
+        self.setWidget(content)
+        self._at_end = True
+        bar = self.verticalScrollBar()
+        bar.valueChanged.connect(lambda v: setattr(self, "_at_end", v >= bar.maximum() - 4))
+        bar.rangeChanged.connect(lambda _lo, hi: self._at_end and bar.setValue(hi))
+        self.prompts = QVBoxLayout()
+        self.prompts.setContentsMargins(0, 0, 0, 8)
+
+    @property
+    def controller(self) -> Controller:
+        return self._controller()
+
+    @property
+    def model(self) -> ConversationModel:
+        return self.controller.model
+
+    def changed(self, change: Change) -> None:
+        match change:
+            case Inserted(item=item):
+                self._widgets[id(item)] = self._widget_for(item)
+                self._arrange_soon()
+                self._show_empty_state()
+            case Updated(item=item):
+                widget = self._widgets[id(item)]
+                widget.refresh()  # type: ignore[attr-defined]
+                if isinstance(item, AssistantItem) and item.shown == widget.isHidden():
+                    self._arrange_soon()
+                if isinstance(group := self._group_of(widget), StepGroup):
+                    if isinstance(item, AssistantItem) and (item.text or item.refused):
+                        self._arrange_soon()  # a reply now: out of the group
+                    else:
+                        group.refresh()
+            case Removed(item=item):
+                if (widget := self._widgets.pop(id(item), None)) is not None:
+                    _detach(widget)
+                    _discard(widget)
+                self._arrange_soon()
+                self._show_empty_state()
+            case PromptsChanged():
+                self._rebuild_prompts()
+
+    def rebuild(self) -> None:
+        """Draw the model's conversation from nothing."""
+        for widget in (*self._widgets.values(), *self._groups.values()):
+            _discard(widget)
+        self._widgets.clear()
+        self._groups.clear()
+        for item in self.model.items:
+            self._widgets[id(item)] = self._widget_for(item)
+        self._arrange()
+        self._at_end = True
+        self._rebuild_prompts()
+
+    def refresh(self) -> None:
+        """How the conversation stands: whether the agent thinks, whether there is more
+        above, and whether nothing was said yet."""
+        self.waiting_line.setVisible(self.model.waiting)
+        self._show_empty_state()
+        self.load_earlier.setVisible(self.model.has_earlier)
+        self.load_earlier.setEnabled(True)
+
+    def _widget_for(self, item: Item) -> QWidget:
+        match item:
+            case UserItem():
+                return UserBubble(item)
+            case AssistantItem():
+                return AssistantBubble(item)
+            case ToolItem():
+                return ToolCard(item, self.controller.cancel)
+            case ChecklistItem():
+                return PlanCard(item)
+            case NoticeItem() if item.link is None and is_long(item.text):
+                return Detail(item.text, lines=1, chars=140)  # a new goal's brief
+            case NoticeItem():
+                line = NoticeLine(item)
+                line.linkActivated.connect(self._notice_link)
+                return line
+
+    def _arrange_soon(self) -> None:
+        """Arrange once the current burst of changes is in (a page of history, a commit
+        that replaces what streamed), not once per item."""
+        if not self._arrange_pending:
+            self._arrange_pending = True
+            asyncio.get_running_loop().call_soon(self._arrange)
+
+    def _arrange(self) -> None:
+        """Lay the item widgets out as step_segments groups them, keeping each group (and
+        whether it is open) for as long as its first step stays first, and show each item
+        that has something to draw: the one place that decides what of the conversation
+        is visible."""
+        self._arrange_pending = False
+        groups: dict[int, StepGroup] = {}
+        for index, segment in enumerate(step_segments(self.model.items)):
+            if isinstance(segment, list):
+                key = id(next(item for item in segment if isinstance(item, ToolItem)))
+                group = self._groups.get(key) or StepGroup(self.controller.cancel)
+                groups[key] = group
+                group.set_members([self._widgets[id(item)] for item in segment])
+                _place(self.items_layout, index, group)
+                group.show()
+            else:
+                _place(self.items_layout, index, self._widgets[id(segment)])
+        for item in self.model.items:
+            self._widgets[id(item)].setVisible(
+                not isinstance(item, AssistantItem) or item.shown)
+        for key, group in self._groups.items():
+            if key not in groups:
+                _detach(group)
+                _discard(group)
+        self._groups = groups
+
+    @staticmethod
+    def _group_of(widget: QWidget) -> QWidget | None:
+        body = widget.parentWidget()
+        return body.parentWidget() if body is not None else None
+
+    def _rebuild_prompts(self) -> None:
+        while (child := self.prompts.takeAt(0)) is not None:
+            if child.widget() is not None:
+                _discard(child.widget())
+        for request in self.model.prompts.values():
+            self.prompts.addWidget(PermissionCard(request, self.controller.resolve))
+        for proposal in self.model.proposals.values():
+            if not proposal.card:
+                self.prompts.addWidget(ProposalCard(proposal, self.controller.resolve_proposal))
+        if (card := self.model.card) is not None:
+            self.prompts.addWidget(WrapUpCard(card, self.model.proposals, self._choose,
+                                              self.model.close_card))
+
+    def _choose(self, index: int) -> None:
+        if (card := self.model.card) is None:
+            return
+        if card.runs(index, self.model.proposals):
+            self.controller.resolve_proposal(card.call_id, True)
+            self.model.close_card()
+        else:
+            self.controller.send(card.options[index])
+        self.chose.emit()
+
+    def _show_empty_state(self) -> None:
+        self.empty_state.setVisible(self.model.conversation is not None and not self.model.items
+                                    and not self.model.has_earlier)
+
+    def _load_earlier(self) -> None:
+        self.load_earlier.setEnabled(False)
+        self._at_end = False
+        self.controller.load_earlier()
+
+
 # ── main window ───────────────────────────────────────────────────────────
 
 
@@ -1729,9 +1919,6 @@ class MainWindow(QMainWindow):
         controller.sessions = sessions
         self._collapsed: set[str] = set()  # sidebar groups the user folded
         self.model.on_change = self._changed
-        self._widgets: dict[int, QWidget] = {}  # by id() of its item
-        self._groups: dict[int, StepGroup] = {}  # by id() of its first step
-        self._arrange_pending = False
         self._dialog: QDialog | None = None
         self.memory_dialog: MemoryDialog | None = None
         self.mcp_dialog: McpDialog | None = None
@@ -1868,21 +2055,6 @@ class MainWindow(QMainWindow):
             head.addWidget(button, 0, Qt.AlignmentFlag.AlignTop)
             self.window_buttons[name] = button
 
-        self.scroll = QScrollArea(widgetResizable=True)
-        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
-        content = QWidget(objectName="transcript")
-        centred = QHBoxLayout(content)
-        centred.setContentsMargins(24, 16, 24, 24)
-        reading = QWidget()
-        reading.setMaximumWidth(COLUMN_WIDTH)
-        centred.addWidget(reading)
-        outer = QVBoxLayout(reading)
-        outer.setContentsMargins(0, 0, 0, 0)
-        self.load_earlier = QPushButton("Load earlier messages")
-        self.load_earlier.clicked.connect(self._load_earlier)
-        self.load_earlier.hide()
-        self.items_layout = QVBoxLayout()
-        self.items_layout.setSpacing(12)
         self.empty_state = QWidget()
         empty = QVBoxLayout(self.empty_state)
         empty.addStretch(2)
@@ -1904,21 +2076,16 @@ class MainWindow(QMainWindow):
         empty.addSpacing(16)
         empty.addWidget(self.folder_button, 0, Qt.AlignmentFlag.AlignHCenter)
         empty.addStretch(3)
-        outer.addWidget(self.load_earlier, 0, Qt.AlignmentFlag.AlignHCenter)
-        outer.addLayout(self.items_layout)
-        self.waiting_line = _label("Thinking…", selectable=False, tone="muted")
-        self.waiting_line.hide()
-        outer.addWidget(self.waiting_line)
-        outer.addWidget(self.empty_state, 1)
-        outer.addStretch()
-        self.scroll.setWidget(content)
-        self._at_end = True
-        bar = self.scroll.verticalScrollBar()
-        bar.valueChanged.connect(lambda v: setattr(self, "_at_end", v >= bar.maximum() - 4))
-        bar.rangeChanged.connect(lambda _lo, hi: self._at_end and bar.setValue(hi))
+        self.conversation = ConversationView(lambda: self.controller, self.empty_state,
+                                             self._notice_link)
+        self.conversation.chose.connect(lambda: self.input.setFocus())
+        # Its parts, by the names the rest of the window has for them.
+        self.scroll = self.conversation
+        self.load_earlier = self.conversation.load_earlier
+        self.items_layout = self.conversation.items_layout
+        self.waiting_line = self.conversation.waiting_line
+        self.prompts = self.conversation.prompts
 
-        self.prompts = QVBoxLayout()
-        self.prompts.setContentsMargins(0, 0, 0, 8)
         self.composer = QFrame(objectName="composer")
         box = QVBoxLayout(self.composer)  # what is attached, then the row to write in
         box.setContentsMargins(6, 6, 6, 6)
@@ -2268,7 +2435,8 @@ class MainWindow(QMainWindow):
     def _changed(self, change: Change) -> None:
         match change:
             case Reset():
-                self._rebuild()
+                self.conversation.rebuild()
+                self._refresh_status()
                 _spawn(self.fill_sidebar())
                 _spawn(self.refresh_models())
             case ConversationListChanged():
@@ -2276,128 +2444,13 @@ class MainWindow(QMainWindow):
             case MemoryListChanged():
                 if self.memory_dialog is not None and self.memory_dialog.isVisible():
                     self.memory_dialog.refresh()
-            case Inserted(item=item):
-                self._widgets[id(item)] = self._widget_for(item)
-                self._arrange_soon()
-                self._show_empty_state()
-            case Updated(item=item):
-                widget = self._widgets[id(item)]
-                widget.refresh()  # type: ignore[attr-defined]
-                if isinstance(item, AssistantItem) and item.shown == widget.isHidden():
-                    self._arrange_soon()
-                if isinstance(group := self._group_of(widget), StepGroup):
-                    if isinstance(item, AssistantItem) and (item.text or item.refused):
-                        self._arrange_soon()  # a reply now: out of the group
-                    else:
-                        group.refresh()
-            case Removed(item=item):
-                if (widget := self._widgets.pop(id(item), None)) is not None:
-                    _detach(widget)
-                    _discard(widget)
-                self._arrange_soon()
-                self._show_empty_state()
-            case PromptsChanged():
-                self._rebuild_prompts()
             case StatusChanged():
                 self._refresh_status()
-
-    def _widget_for(self, item: Item) -> QWidget:
-        match item:
-            case UserItem():
-                return UserBubble(item)
-            case AssistantItem():
-                return AssistantBubble(item)
-            case ToolItem():
-                return ToolCard(item, self.controller.cancel)
-            case ChecklistItem():
-                return PlanCard(item)
-            case NoticeItem() if item.link is None and is_long(item.text):
-                return Detail(item.text, lines=1, chars=140)  # a new goal's brief
-            case NoticeItem():
-                line = NoticeLine(item)
-                line.linkActivated.connect(self._notice_link)
-                return line
-
-    def _rebuild(self) -> None:
-        for widget in (*self._widgets.values(), *self._groups.values()):
-            _discard(widget)
-        self._widgets.clear()
-        self._groups.clear()
-        for item in self.model.items:
-            self._widgets[id(item)] = self._widget_for(item)
-        self._arrange()
-        self._at_end = True
-        self._rebuild_prompts()
-        self._refresh_status()
-
-    def _arrange_soon(self) -> None:
-        """Arrange once the current burst of changes is in (a page of history, a commit
-        that replaces what streamed), not once per item."""
-        if not self._arrange_pending:
-            self._arrange_pending = True
-            asyncio.get_running_loop().call_soon(self._arrange)
-
-    def _arrange(self) -> None:
-        """Lay the item widgets out as step_segments groups them, keeping each group (and
-        whether it is open) for as long as its first step stays first, and show each item
-        that has something to draw: the one place that decides what of the conversation
-        is visible."""
-        self._arrange_pending = False
-        groups: dict[int, StepGroup] = {}
-        for index, segment in enumerate(step_segments(self.model.items)):
-            if isinstance(segment, list):
-                key = id(next(item for item in segment if isinstance(item, ToolItem)))
-                group = self._groups.get(key) or StepGroup(self.controller.cancel)
-                groups[key] = group
-                group.set_members([self._widgets[id(item)] for item in segment])
-                _place(self.items_layout, index, group)
-                group.show()
-            else:
-                _place(self.items_layout, index, self._widgets[id(segment)])
-        for item in self.model.items:
-            self._widgets[id(item)].setVisible(
-                not isinstance(item, AssistantItem) or item.shown)
-        for key, group in self._groups.items():
-            if key not in groups:
-                _detach(group)
-                _discard(group)
-        self._groups = groups
-
-    @staticmethod
-    def _group_of(widget: QWidget) -> QWidget | None:
-        body = widget.parentWidget()
-        return body.parentWidget() if body is not None else None
-
-    def _rebuild_prompts(self) -> None:
-        while (child := self.prompts.takeAt(0)) is not None:
-            if child.widget() is not None:
-                _discard(child.widget())
-        for request in self.model.prompts.values():
-            self.prompts.addWidget(PermissionCard(request, self.controller.resolve))
-        for proposal in self.model.proposals.values():
-            if not proposal.card:
-                self.prompts.addWidget(ProposalCard(proposal, self.controller.resolve_proposal))
-        if (card := self.model.card) is not None:
-            self.prompts.addWidget(WrapUpCard(card, self.model.proposals, self._choose,
-                                              self.model.close_card))
-
-    def _choose(self, index: int) -> None:
-        if (card := self.model.card) is None:
-            return
-        if card.runs(index, self.model.proposals):
-            self.controller.resolve_proposal(card.call_id, True)
-            self.model.close_card()
-        else:
-            self.controller.send(card.options[index])
-        self.input.setFocus()
-
-    def _show_empty_state(self) -> None:
-        self.empty_state.setVisible(self.model.conversation is not None and not self.model.items
-                                    and not self.model.has_earlier)
+            case _:
+                self.conversation.changed(change)
 
     def _refresh_status(self) -> None:
         model = self.model
-        self.waiting_line.setVisible(model.waiting)
         duty = (duty_status(model.conversation.duty, model.duty_wake_at, model.state,
                             model.help_needed) if model.conversation is not None else None)
         self.duty_label.setText(duty or "")
@@ -2436,9 +2489,7 @@ class MainWindow(QMainWindow):
         self.send_button.setToolTip("Stop (Esc)" if model.busy else "Send (Enter)")
         self.send_button.setAccessibleName("Stop" if model.busy else "Send message")
         self._paint_icons()
-        self._show_empty_state()
-        self.load_earlier.setVisible(model.has_earlier)
-        self.load_earlier.setEnabled(True)
+        self.conversation.refresh()
         reason = self.controller.can_switch()
         for widget in (self.new_button, self.new_action):
             widget.setEnabled(reason is None)
@@ -2725,7 +2776,8 @@ class MainWindow(QMainWindow):
         self.model.on_change = lambda change: None
         self._viewing = viewing
         self.model.on_change = self._changed
-        self._rebuild()
+        self.conversation.rebuild()
+        self._refresh_status()
 
     def open_duty(self) -> None:
         if self.model.conversation is None:
@@ -2807,11 +2859,6 @@ class MainWindow(QMainWindow):
             self.controller.stop()
         else:
             self._send()
-
-    def _load_earlier(self) -> None:
-        self.load_earlier.setEnabled(False)
-        self._at_end = False
-        self.controller.load_earlier()
 
     async def refresh_models(self) -> None:
         try:
