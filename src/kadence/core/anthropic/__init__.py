@@ -522,8 +522,10 @@ def to_messages(messages: Sequence[Message], model: str, system: str = "",
     produced it and while its Prefix is unchanged. A tool Anthropic
     ran is replayed as it came, to the model that ran it while `search` is on, only after
     the user's latest message: its results hold the pages' text, which every later request
-    would pay for again. Earlier ones, and the rest, go as text. `tools` are the request's
-    tool definitions."""
+    would pay for again. Earlier ones, and the rest, go as text, and with them goes the
+    reasoning that followed in the same answer: it is bound to the blocks as they came,
+    which the Prefix of the turns before it does not see. `tools` are the request's tool
+    definitions."""
     out: list[JSON] = []
     prefix = Prefix(system, tools)
     latest = max((i for i, m in enumerate(messages) if m.role is Role.USER
@@ -531,8 +533,15 @@ def to_messages(messages: Sequence[Message], model: str, system: str = "",
     for i, message in enumerate(messages):
         role = "assistant" if message.role is Role.ASSISTANT else "user"
         bound = prefix.of(out) if role == "assistant" else None
-        content = [c for b in message.blocks
-                   for c in _to_content(b, model, bound, search and i > latest)]
+        content: list[JSON] = []
+        rewritten = False  # a tool Anthropic ran went as text: what it thought after is void
+        for b in message.blocks:
+            if rewritten and isinstance(b, Reasoning):
+                continue
+            made = _to_content(b, model, bound, search and i > latest)
+            rewritten = rewritten or (isinstance(b, ServerToolUse) and bool(made)
+                                      and made[0]["type"] == "text")
+            content += made
         if not content:
             continue
         if out and out[-1]["role"] == role:

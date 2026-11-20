@@ -247,7 +247,11 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   compaction). The Anthropic Core stores a fingerprint of those (`Prefix`: SHA-256 of the
   system prompt, the sorted tool definitions and every earlier turn without its thinking)
   in each block's `state["prefix"]` and replays a block only while it matches; a block
-  without one is not replayed. Nothing retries behind it: a request the API still rejects
+  without one is not replayed. The fingerprint is of the turns before the answer, so it
+  does not see a change inside the answer itself: where an answer thought again after a
+  tool Anthropic ran and that tool goes back as text (an earlier turn's search, another
+  model), the reasoning after it in that answer is left out too (`to_messages`). Without
+  that, a new message after such an answer failed with the 400 on every request. Nothing retries behind it: a request the API still rejects
   for that reason fails with the API's message. The API's own
   `prefix_mismatch_behavior: "drop_block"` (beta `thinking-binding-controls-2026-08-01`) was
   not used: it drops every block after the first mismatch on each request unless the

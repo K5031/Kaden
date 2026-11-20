@@ -214,3 +214,34 @@ async def test_another_rejection_while_replaying_searches_is_reported_as_it_is(d
     with pytest.raises(CoreError, match="max_tokens"):
         await collect(driver.core, request(OPUS, [user("q"), answer, tool_results()]))
     assert len(driver.stub.bodies) == sent + 1
+
+
+def thought(index: int, text: str, signature: str) -> list:
+    return block(index, {"type": "thinking", "thinking": "", "signature": ""},
+                 [{"type": "thinking_delta", "thinking": text},
+                  {"type": "signature_delta", "signature": signature}])
+
+
+async def test_thinking_after_a_search_goes_when_the_search_goes_back_as_text(driver):
+    """A reply can think, search and think again. The second thought is bound to the
+    search as it came: once a later question gets the search as text, that thought would
+    be rejected ("bound to a different conversation"), and is left out. The first, with
+    nothing changed before it, stays."""
+    driver.stub.queue(Reply(events=[
+        message_start(), *thought(0, "Search first.", "sig-before"), *search_blocks(1),
+        *thought(3, "They agree.", "sig-after"), *cited_text(4), *searched()]))
+    answer = (await collect(driver.core, request()))[-1].message
+
+    def sent() -> list[str]:
+        replayed = driver.stub.bodies[-1]["messages"][1]["content"]
+        return [c.get("signature") or c["type"] for c in replayed]
+
+    driver.stub.queue(Reply(events=[message_start(), *text_block(0, ["ok"]), *finish("end_turn")]))
+    await collect(driver.core, request(OPUS, [user("Who plays the final?"), answer,
+                                              tool_results()]))  # the same turn: as it came
+    assert sent()[:4] == ["sig-before", "server_tool_use", "web_search_tool_result",
+                          "sig-after"] and set(sent()[4:]) == {"text"}
+    driver.stub.queue(Reply(events=[message_start(), *text_block(0, ["ok"]), *finish("end_turn")]))
+    await collect(driver.core, request(OPUS, [user("Who plays the final?"), answer,
+                                              user("And who is favoured?")]))
+    assert sent()[0] == "sig-before" and set(sent()[1:]) == {"text"}
