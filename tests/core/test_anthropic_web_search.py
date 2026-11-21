@@ -11,6 +11,7 @@ from kadence.api import (
     Role,
     ServerToolUse,
     Text,
+    TextDelta,
     ToolResult,
     ToolSpec,
     ToolStatus,
@@ -95,6 +96,8 @@ async def test_a_search_becomes_a_step_with_its_sources(driver):
     texts = [b.text for b in completed.message.blocks if isinstance(b, Text)]
     assert texts[0] == "Gen.G meets BLG."
     assert texts[-1] == f"\n\nSources: [2026 World Championship]({RESULT[0]['url']})"
+    # What was streamed as text is the text of the message, the sources line included.
+    assert "".join(e.text for e in events if isinstance(e, TextDelta)) == "".join(texts)
     assert completed.usage.extra_cost_usd == pytest.approx(0.01)
 
 

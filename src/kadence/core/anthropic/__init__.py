@@ -263,7 +263,10 @@ class AnthropicCore(Core):
                 turn.next_response()
         except (anthropic.APIError, httpx2.TransportError) as e:
             raise _map_error(e) from e
-        yield turn.completed()
+        done = turn.completed()
+        if turn.sources_line:  # added by `completed`: streamed like the rest of the text
+            yield TextDelta(turn.sources_line)
+        yield done
 
     def _write_premium(self, model: str, body: dict[str, Any]) -> float:
         """USD per token written to the cache, beyond the input price it is counted at."""
@@ -414,6 +417,7 @@ class _Turn:
         blocks: list[Block] = []
         uses: dict[str, JSON] = {}  # server tool uses waiting for their result
         sources: dict[str, str] = {}  # cited page addresses -> titles, in citing order
+        self.sources_line = ""
         # Every server-side block of the turn, in the order it came: they refer to each
         # other (dynamic filtering runs code that calls the search), so they are replayed
         # together, from the first use shown.
@@ -454,7 +458,8 @@ class _Turn:
             blocks[i] = replace(blocks[i], state=state)
         if sources:
             links = " · ".join(f"[{title}]({url})" for url, title in sources.items())
-            blocks.append(Text(f"\n\nSources: {links}"))
+            self.sources_line = f"\n\nSources: {links}"
+            blocks.append(Text(self.sources_line))
         stop = _STOP_REASONS.get(self.stop_reason or "", StopReason.END_TURN)
         return Completed(assistant_message(blocks), self.usage(), stop)
 
