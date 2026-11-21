@@ -121,8 +121,10 @@ class McpTools(Tools):
 
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput:
         server = self._owner.get(call.name)
-        if server is None or server.client is None:
+        if server is None:
             return ToolOutput(f"Unknown tool: {call.name}", is_error=True)
+        if server.client is None:
+            return ToolOutput(f"The MCP server {server.name!r} is not running.", is_error=True)
         result = await server.client.call_tool(server.originals[call.name], call.arguments)
         return ToolOutput(_text(result), is_error=bool(result.is_error))
 
@@ -147,6 +149,11 @@ class McpTools(Tools):
                         break
                 for tool in listed:
                     name = _name(server.name, tool.name)
+                    if name in server.tools:  # two long names cut to the same one
+                        logger.warning("MCP server %s: the tool %s is left out, its name "
+                                       "is taken by %s", server.name, tool.name,
+                                       server.originals[name])
+                        continue
                     server.originals[name] = tool.name
                     server.tools[name] = ToolSpec(
                         name, _describe(server.name, tool), tool.input_schema or {"type": "object"},
@@ -156,8 +163,9 @@ class McpTools(Tools):
                 await server.stop.wait()
         except Exception:
             logger.exception("MCP server %s failed", server.name)
-        finally:
+        finally:  # its tools go with its connection
             server.client = None
+            server.tools.clear()
             server.ready.set()
 
 

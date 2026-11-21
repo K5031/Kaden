@@ -56,6 +56,20 @@ async def test_a_server_that_fails_is_left_out():
         await module.aclose()
 
 
+async def test_a_server_that_ended_offers_no_tools_any_more(tools):
+    """Its tools go with its connection: they are not offered, and a call still on its
+    way to one is told why."""
+    import asyncio
+
+    assert await tools.list_tools()
+    [server] = tools._servers
+    server.task.cancel()  # its connection ends
+    await asyncio.gather(server.task, return_exceptions=True)
+    assert await tools.list_tools() == []
+    out = await run(tools, "mcp__notes__add", a=2, b=3)
+    assert out.is_error and "notes" in out.content and "not running" in out.content
+
+
 def test_a_server_needs_a_command_or_url():
     with pytest.raises(ValueError, match="command or a URL"):
         ServerConfig("x").target()
