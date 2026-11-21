@@ -968,6 +968,7 @@ class Controller:
             asyncio.Queue())
         self._tasks: set[asyncio.Task[Any]] = set()
         self._switching = asyncio.Lock()  # conversation switches, one after another
+        self._wanted: StartOptions | None = None  # the newest switch asked for
         self.folder_picked = False  # the open chat is in a folder the user chose for it
         self.can_delete = True  # False once Memory said it cannot delete conversations
         self.sessions: SubSessions | None = None  # deleted with their conversation
@@ -1090,10 +1091,14 @@ class Controller:
         return self._switch(StartOptions(folder=folder))
 
     def _switch(self, options: StartOptions) -> asyncio.Task[None]:
-        """One after another, so the conversation asked for last is the one left open."""
+        """One after another, and only the newest asked for: a switch that another has
+        taken the place of before its turn came is not made."""
+        self._wanted = options
 
         async def start() -> None:
             async with self._switching:
+                if self._wanted is not options:
+                    return
                 await self.runtime.start(options)
                 self.folder_picked = options != StartOptions()
                 await self._shown()

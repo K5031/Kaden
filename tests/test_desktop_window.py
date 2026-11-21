@@ -1097,6 +1097,29 @@ async def test_the_open_chat_clicked_again_while_another_opens_is_what_stays(
     assert window.conversation_list.currentItem().data(Qt.ItemDataRole.UserRole) == second.id
 
 
+async def test_clicks_in_a_row_open_the_last_one_and_not_each(make, qapp, tmp_path):
+    """Only the newest conversation asked for is opened: the ones clicked past are not
+    loaded on the way."""
+    h: Harness = await make()
+    chats = [await h.chat(name) for name in ("One", "Two", "Three", "Four")]
+    window, controller, _ = await open_window(h)
+    await window.fill_sidebar()
+    started: list[str | None] = []
+    start = h.runtime.start
+
+    async def counted(options: Any) -> Any:
+        started.append(options.conversation_id)
+        return await start(options)
+
+    h.runtime.start = counted  # type: ignore[method-assign]
+    for chat in chats[:3]:
+        window.open_conversation(chat.id)
+    await eventually(lambda: controller.model.conversation.id == chats[2].id
+                     and not window._target.opening)
+    assert started == [chats[2].id]
+    assert window.conversation_list.currentItem().data(Qt.ItemDataRole.UserRole) == chats[2].id
+
+
 async def test_projects_group_the_sidebar_and_fold(make, qapp, tmp_path):
     from kadence.frontends.desktop.window import KIND_ROLE
 
