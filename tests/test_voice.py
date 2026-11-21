@@ -123,6 +123,48 @@ async def test_what_is_said_is_sent_and_the_reply_is_spoken_then_it_listens_agai
     assert voice.state is State.OFF
 
 
+async def test_what_is_said_into_an_interrupted_reply_does_not_bring_it_back():
+    """The reply that was interrupted still streams when the next thing is said: its
+    rest stays unread, and the reply after it is read."""
+    voice, engine, speaker, sent, _states = make("tell me a story", "stop")
+    speaker.hold = asyncio.Event()
+    voice.start()
+    voice.heard(TALK)
+    await eventually(lambda: sent == ["tell me a story"])
+    voice.reply("Once upon a time. There was a fox. ")
+    await eventually(lambda: voice.state is State.SPEAKING)
+    voice.interrupt()
+    speaker.hold = None
+    voice.heard(TALK)
+    await eventually(lambda: sent == ["tell me a story", "stop"])
+    voice.reply("It lived in a den. ")  # still the interrupted reply
+    voice.reply_ended()
+    await asyncio.sleep(0.05)
+    assert engine.spoke == ["Once upon a time."]
+    voice.reply("All right. ")  # the answer to what was said
+    voice.reply_ended()
+    await eventually(lambda: engine.spoke == ["Once upon a time.", "All right."])
+    voice.stop()
+
+
+async def test_a_reply_after_an_interrupted_one_is_read_though_nothing_was_said():
+    voice, engine, speaker, sent, _states = make("tell me a story")
+    speaker.hold = asyncio.Event()
+    voice.start()
+    voice.heard(TALK)
+    await eventually(lambda: sent == ["tell me a story"])
+    voice.reply("Once upon a time. There was a fox. ")
+    await eventually(lambda: voice.state is State.SPEAKING)
+    voice.interrupt()
+    speaker.hold = None
+    voice.reply_ended()
+    voice.agent_idle()
+    voice.reply("The build is done. ")  # one the agent began by itself
+    voice.reply_ended()
+    await eventually(lambda: engine.spoke[-1] == "The build is done.")
+    voice.stop()
+
+
 async def test_nothing_understood_sends_nothing():
     voice, _engine, _speaker, sent, _states = make("  ")
     voice.start()

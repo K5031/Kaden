@@ -95,7 +95,10 @@ class Voice:
             self._to_say.put_nowait(sentence)
 
     def reply_ended(self) -> None:
-        if self.state is State.OFF or self._muted:
+        if self._muted:  # the reply that was interrupted is over: the next one is read
+            self._muted = False
+            return
+        if self.state is State.OFF:
             return
         for sentence in self._sentences.flush():
             self._to_say.put_nowait(sentence)
@@ -135,7 +138,7 @@ class Voice:
         if not text:
             self._listen()
             return
-        self._agent_busy, self._muted = True, False
+        self._agent_busy = True
         self._send(text)
 
     async def _speak(self) -> None:
