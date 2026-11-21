@@ -435,7 +435,7 @@ class ShellFilesTools(Tools):
         path = self._path(args["path"])
         offset = args.get("offset", 1)
         limit = args.get("limit", MAX_READ_LINES)
-        if path.is_dir():
+        if await asyncio.to_thread(path.is_dir):
             raise ToolError(f"{self._display(path)} is a directory")
         if path.suffix.lower() in attachments.IMAGE_TYPES:
             return await asyncio.to_thread(self._read_image, path, ctx)
