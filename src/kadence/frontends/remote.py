@@ -8,6 +8,7 @@ import asyncio
 import inspect
 import itertools
 import json
+import logging
 from collections import deque
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
@@ -54,6 +55,9 @@ def _error(error: dict[str, Any]) -> Exception:
     return kind(error["message"])
 
 
+logger = logging.getLogger(__name__)
+
+
 class ChannelClosed(RuntimeStateError):
     """The child process ended."""
 
@@ -95,18 +99,12 @@ class Channel:
         assert self.process.stdout is not None
         try:
             while line := await self.process.stdout.readline():
-                message = json.loads(line)
-                if message.get("method") == "event":
-                    params = message["params"]
-                    envelope = EventEnvelope(params["seq"], from_json(params["event"]))
-                    for listener in list(self.listeners):
-                        listener(envelope)
-                elif ((future := self._pending.get(message.get("id"))) is not None
-                      and not future.done()):  # done: its caller is being cancelled right now
-                    if "error" in message:
-                        future.set_exception(_error(message["error"]))
-                    else:
-                        future.set_result(message.get("result"))
+                try:
+                    self._received(json.loads(line))
+                except Exception:  # one message that cannot be read or heard is not the end
+                    logger.exception("a message from the child was dropped")
+        except (ValueError, OSError):  # a line over the limit, a broken pipe
+            logger.exception("the channel to the child can no longer be read")
         finally:
             self.ended.set()
             for future in self._pending.values():
@@ -114,6 +112,19 @@ class Channel:
                     future.set_exception(ChannelClosed())
             for listener in list(self.listeners):
                 listener(None)  # type: ignore[arg-type]
+
+    def _received(self, message: dict[str, Any]) -> None:
+        if message.get("method") == "event":
+            params = message["params"]
+            envelope = EventEnvelope(params["seq"], from_json(params["event"]))
+            for listener in list(self.listeners):
+                listener(envelope)
+        elif ((future := self._pending.get(message.get("id"))) is not None
+              and not future.done()):  # done: its caller is being cancelled right now
+            if "error" in message:
+                future.set_exception(_error(message["error"]))
+            else:
+                future.set_result(message.get("result"))
 
     async def _read_stderr(self) -> None:
         assert self.process.stderr is not None

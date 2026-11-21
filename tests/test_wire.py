@@ -69,6 +69,15 @@ def test_values_round_trip(value):
     assert from_json(json.loads(json.dumps(to_json(value)))) == value
 
 
+def test_free_json_that_looks_like_an_api_value_stays_as_it_is():
+    """A tool's arguments are whatever the model wrote: a "type" key in them names
+    nothing of the API."""
+    call = ToolCall("c1", "render", {"block": {"type": "Text", "text": "x"},
+                                     "stop": {"type": "ToolCall"}})
+    assert from_json(to_json(call)) == call
+    assert from_json(to_json(call)).arguments["block"] == {"type": "Text", "text": "x"}
+
+
 def test_an_envelope_and_enums_by_hint():
     envelope = EventEnvelope(3, StateChanged(AgentState.IDLE))
     assert from_json(to_json(envelope)) == envelope
@@ -82,3 +91,29 @@ def test_settings_round_trip():
     decoded = from_json(json.loads(json.dumps(to_json(value))))
     assert isinstance(decoded, Settings)
     assert to_json(decoded) == to_json(value)  # lists come back as tuples
+
+
+async def test_a_message_that_cannot_be_read_does_not_end_the_channel():
+    """The child still runs: one bad line, or a listener that fails, is dropped and said
+    in the log, and what follows is heard."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from kadence.frontends.remote import Channel
+
+    out, err = asyncio.StreamReader(), asyncio.StreamReader()
+    channel = Channel(SimpleNamespace(stdout=out, stderr=err, stdin=None))  # type: ignore[arg-type]
+    heard: list[EventEnvelope | None] = []
+    channel.listeners.append(heard.append)
+    good = {"method": "event", "params": {"seq": 2, "event": to_json(StateChanged(AgentState.IDLE))}}
+    out.feed_data(b"not json\n")
+    out.feed_data(json.dumps({"method": "event", "params": {"seq": 1}}).encode() + b"\n")
+    out.feed_data(json.dumps(good).encode() + b"\n")
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert heard == [EventEnvelope(2, StateChanged(AgentState.IDLE))]
+    assert not channel.ended.is_set()
+    out.feed_eof()
+    err.feed_eof()
+    await channel.ended.wait()
+    assert heard[-1] is None

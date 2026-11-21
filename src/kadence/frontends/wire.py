@@ -58,18 +58,25 @@ def to_json(value: Any) -> Any:
     return value
 
 
-def from_json(value: Any, hint: Any = Any) -> Any:
+_ANY_API_VALUE: Any = object()  # no hint given: whatever the "type" names
+
+
+def from_json(value: Any, hint: Any = _ANY_API_VALUE) -> Any:
     """`value` as the API type `hint` names; with no hint, an object with a known "type"
-    becomes that class (an event, a snapshot)."""
+    becomes that class (an event, a snapshot). Where the API says Any (a tool's
+    arguments, a provider's own data) the value is free JSON and stays as it is,
+    whatever keys it has."""
     if value is None:
         return None
+    if hint is _ANY_API_VALUE:
+        return _object(value) if _tagged(value) else value
     if isinstance(hint, typing.TypeAliasType):
         return from_json(value, hint.__value__)
     origin = typing.get_origin(hint)
     if origin in (typing.Union, types.UnionType):
         return _union(value, typing.get_args(hint))
     if hint is Any:
-        return _object(value) if _tagged(value) else value
+        return value
     if isinstance(hint, type) and dataclasses.is_dataclass(hint):
         return _object(value, hint)
     if isinstance(hint, type) and issubclass(hint, Enum):
