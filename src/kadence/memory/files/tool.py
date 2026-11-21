@@ -77,6 +77,10 @@ def run_command(folder: MemoryFolder, args: dict[str, Any], seen: dict[str, str]
         limit the write stands, as an error that says to rewrite it: what lies beyond is
         not loaded into the next conversation."""
         seen[name] = folder.write(name, text).text
+        return index_note(name, text)
+
+    def index_note(name: str, text: str) -> str:
+        """What is to be said of the index as it now is; raises past its limit."""
         if name != MEMORY_INDEX:
             return ""
         lines, size = len(text.splitlines()), len(text.encode())
@@ -144,8 +148,8 @@ def run_command(folder: MemoryFolder, args: dict[str, Any], seen: dict[str, str]
             old, new = args["old_path"].strip(), args["new_path"].strip()
             text = known(old)
             absent(new)
-            write(new, text)
-            folder.delete(old)
+            seen[new] = folder.write(new, text).text
+            folder.delete(old)  # before anything is said of the index: the rename stands
             del seen[old]
-            return f"Renamed {old} to {new}."
+            return f"Renamed {old} to {new}." + index_note(new, text)
     raise ValueError(f"Unknown command {command!r}.")

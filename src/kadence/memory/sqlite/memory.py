@@ -975,9 +975,9 @@ def _require_note(conn: sqlite3.Connection, note_id: str) -> MemoryNote:
 
 
 def _note_titled(conn: sqlite3.Connection, title: str) -> MemoryNote | None:
-    key = title.strip().casefold()
+    key = " ".join(title.split()).casefold()  # its words, whatever the spacing and case
     return next((n for n in map(_note, conn.execute(_CURRENT_NOTES))
-                 if n.title.casefold() == key), None)
+                 if " ".join(n.title.split()).casefold() == key), None)
 
 
 def _save(conn: sqlite3.Connection, title: str, description: str, text: str,

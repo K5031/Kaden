@@ -42,6 +42,18 @@ async def test_read_note_returns_its_text_and_lists_notes_when_missing(make: Any
     assert "No note is titled 'Music'" in results["m"].content and "- Diet" in results["m"].content
 
 
+async def test_a_note_is_found_by_its_title_whatever_the_spacing(make: Any) -> None:
+    h = await harness(make, Step(calls=[call("read_note", {"title": "tea  time"}, id="r"),
+                                        call("forget_note", {"title": "Tea time"}, id="f")]))
+    await h.runtime.save_note("Tea  time", "When tea is", "At four.")  # two spaces
+    await h.start()
+    await h.turn("when is tea?")
+    results = await h.results()
+    assert "At four." in results["r"].content
+    assert results["f"].status == ToolStatus.OK
+    assert "Tea  time" not in [n.title for n in await h.runtime.notes()]
+
+
 async def test_forget_note_deletes_it_but_not_the_profile(make: Any) -> None:
     h = await harness(make, Step(calls=[call("forget_note", {"title": "Diet"}, id="f"),
                                         call("forget_note", {"title": PROFILE}, id="p")]))

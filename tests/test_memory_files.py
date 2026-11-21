@@ -244,6 +244,15 @@ async def test_an_index_past_what_is_loaded_is_saved_and_reported(tmp_path: Path
     assert wide.is_error and "kB" in wide.content  # few lines, but too many bytes
     # A memory file has no limit of its own.
     assert not (await run(command="create", path="essay.md", file_text="x" * 50_000)).is_error
+    # A file renamed to be the index, past its limit: said the same way, and it is one
+    # file afterwards, not two.
+    await run(command="view", path="MEMORY.md")
+    await run(command="delete", path="MEMORY.md")
+    await run(command="create", path="draft.md", file_text=index(INDEX_MAX_LINES + 5))
+    moved = await run(command="rename", old_path="draft.md", new_path="MEMORY.md")
+    assert moved.is_error and "Saved, but" in moved.content
+    names = {note.title for note in await memory.notes(folder=project)}
+    assert "MEMORY.md" in names and "draft.md" not in names
     await memory.aclose()
 
 

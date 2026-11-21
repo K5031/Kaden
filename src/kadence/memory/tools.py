@@ -148,8 +148,13 @@ async def run_memory_tool(memory: Memory, call: ToolCall, ctx: ToolContext) -> T
 
 
 async def _titled(memory: Memory, title: str) -> MemoryNote | None:
-    key = " ".join(title.split()).casefold()
-    return next((n for n in await memory.notes() if n.title.casefold() == key), None)
+    key = _key(title)
+    return next((n for n in await memory.notes() if _key(n.title) == key), None)
+
+
+def _key(title: str) -> str:
+    """What a title is found by: its words, whatever the spacing and the case."""
+    return " ".join(title.split()).casefold()
 
 
 async def _missing(memory: Memory, title: str) -> ToolOutput:
