@@ -370,6 +370,14 @@ class ShellFilesTools(Tools):
             raise self._outside(path)
         return fd
 
+    def _open_folder(self, path: Path, ctx: ToolContext) -> int:
+        """The folder, open: what is walked is what was opened, whatever is put at its
+        path meanwhile. For a call `confined` let through it must be in the workspace."""
+        try:
+            return self._open(path, os.O_RDONLY | os.O_DIRECTORY, ctx)
+        except NotADirectoryError:
+            raise ToolError(f"{self._display(path)} is not a directory") from None
+
     def _display(self, path: Path) -> str:
         try:
             return path.relative_to(self.root).as_posix()
@@ -569,19 +577,20 @@ class ShellFilesTools(Tools):
         return f"Replaced {count} occurrence(s) in {self._display(path)}"
 
     async def _list_files(self, args: dict[str, Any], ctx: ToolContext) -> str:
-        base = await asyncio.to_thread(self._within, self._path(args.get("path")), ctx)
+        base = self._path(args.get("path"))
         pattern = args.get("pattern", "*")
-        if not base.is_dir():
-            raise ToolError(f"{self._display(base)} is not a directory")
 
         def list_(cancelled: threading.Event) -> list[str]:
             found = []
-            for path in _walk(base, cancelled, ctx):
-                rel = path.relative_to(base).as_posix()
-                if fnmatch(rel if "/" in pattern else path.name, pattern):
-                    found.append(rel)
-                    if len(found) > MAX_LIST_ENTRIES:
-                        break
+            folder = self._open_folder(base, ctx)
+            try:
+                for rel, name, _ in _walk(folder, cancelled, ctx):
+                    if fnmatch(rel if "/" in pattern else name, pattern):
+                        found.append(rel)
+                        if len(found) > MAX_LIST_ENTRIES:
+                            break
+            finally:
+                os.close(folder)
             return found
 
         found = await _cancellable_thread(list_)
@@ -591,35 +600,29 @@ class ShellFilesTools(Tools):
         return "\n".join(lines) if lines else "No files found"
 
     async def _search_files(self, args: dict[str, Any], ctx: ToolContext) -> str:
-        base = await asyncio.to_thread(self._within, self._path(args.get("path")), ctx)
+        base = self._path(args.get("path"))
         name_glob = args.get("glob")
         try:
             regex = re.compile(args["pattern"])
         except re.error as e:
             raise ToolError(f"Invalid regular expression: {e}") from None
-        if not base.is_dir():
-            raise ToolError(f"{self._display(base)} is not a directory")
 
         def search(cancelled: threading.Event) -> list[str]:
             matches: list[str] = []
-            for path in _walk(base, cancelled, ctx):
-                if name_glob and not fnmatch(path.name, name_glob):
-                    continue
-                try:
-                    info = path.lstat()  # links and special files are skipped, not followed
-                    if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_SEARCH_FILE_BYTES:
+            folder = self._open_folder(base, ctx)
+            try:
+                for rel, name, within in _walk(folder, cancelled, ctx):
+                    if name_glob and not fnmatch(name, name_glob):
                         continue
-                    data = path.read_bytes()
-                except OSError:
-                    continue
-                if b"\0" in data[:8192]:
-                    continue
-                rel = path.relative_to(base).as_posix()
-                for n, line in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
-                    if regex.search(line):
-                        matches.append(f"{rel}:{n}: {line[:500]}")
-                        if len(matches) > MAX_SEARCH_MATCHES:
-                            return matches
+                    if (data := _regular_file(name, within)) is None or b"\0" in data[:8192]:
+                        continue
+                    for n, line in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
+                        if regex.search(line):
+                            matches.append(f"{rel}:{n}: {line[:500]}")
+                            if len(matches) > MAX_SEARCH_MATCHES:
+                                return matches
+            finally:
+                os.close(folder)
             return matches
 
         matches = await _cancellable_thread(search)
@@ -683,18 +686,42 @@ async def _terminate_group(proc: asyncio.subprocess.Process) -> None:
         await proc.wait()
 
 
-def _walk(base: Path, cancelled: threading.Event, ctx: ToolContext) -> Iterator[Path]:
-    """Files under base, skipping hidden directories; sends silent heartbeats meanwhile."""
+def _walk(folder: int, cancelled: threading.Event, ctx: ToolContext
+          ) -> Iterator[tuple[str, str, int]]:
+    """The files under the open folder, skipping hidden directories: each its path from
+    there, its name and the open directory it is in. Links to directories are not
+    followed, and nothing is reached by a path that could be swapped meanwhile. Sends
+    silent heartbeats as it goes."""
     last_beat = 0.0
-    for dirpath, dirnames, filenames in os.walk(base):
+    for dirpath, dirnames, filenames, within in os.fwalk(".", dir_fd=folder):
         if cancelled.is_set():
             return
         if (now := time.monotonic()) - last_beat >= HEARTBEAT_INTERVAL:
             ctx.progress("")
             last_beat = now
         dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+        under = dirpath[2:]  # "." or "./a/b"
         for name in sorted(filenames):
-            yield Path(dirpath, name)
+            yield (f"{under}/{name}" if under else name), name, within
+
+
+def _regular_file(name: str, within: int) -> bytes | None:
+    """What an ordinary file in the open directory holds; None for a link, a special
+    file, one too large to search, or one that cannot be read."""
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=within)
+    except OSError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_SEARCH_FILE_BYTES:
+            return None
+        with open(fd, "rb", closefd=False) as f:
+            return f.read()
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
 
 
 async def _cancellable_thread[T](fn: Callable[[threading.Event], T]) -> T:
