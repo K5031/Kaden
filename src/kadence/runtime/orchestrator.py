@@ -12,7 +12,7 @@ import time
 import uuid
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -140,6 +140,7 @@ from kadence.runtime.review import (
     review_messages,
     user_requests,
 )
+from kadence.runtime.settings import runtime_changes
 
 logger = logging.getLogger(__name__)
 
@@ -883,12 +884,11 @@ class Runtime:
         if not changed:
             return await self.settings()
         cfg = self._config
+        own = runtime_changes(u)  # refused before anything is prepared
         saved = await self._modules.prepare(u)
         # Models belong to the running Core; with another one chosen, they are not saved.
         core_pending = ("core" in saved.get("modules", {})
                         or self._modules.chosen["core"] != self._modules.running["core"])
-        if u.system_prompt is not None and not u.system_prompt.strip():
-            raise ValueError("the system prompt is empty")
         budget = cfg.budget if u.budget is None else u.budget
         model = self._model if u.model is None else u.model
         light = cfg.maintenance_model
@@ -905,12 +905,7 @@ class Runtime:
             saved["model"] = model
         if not core_pending and light != cfg.maintenance_model:
             saved["maintenance_model"] = light or ""
-        if u.budget is not None:
-            saved["budget"] = {k: v for k, v in asdict(budget).items() if v is not None}
-        if u.permissions is not None:
-            saved["permissions"] = u.permissions.value
-        if u.system_prompt is not None:
-            saved["system_prompt"] = u.system_prompt
+        saved.update(own)
         await self._modules.commit(u, saved)
 
         # Apply: nothing below can fail.

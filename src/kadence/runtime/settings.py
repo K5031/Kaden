@@ -13,9 +13,45 @@ import keyring
 import keyring.errors
 import tomli_w
 
-from kadence.api import KEYCHAIN_SERVICE
+from kadence.api import KEYCHAIN_SERVICE, Budget, SettingsUpdate
 
 SETTINGS_FILE = "settings.toml"
+BUDGET_INTS = ("max_tokens", "max_tool_calls")  # limits counted in whole things
+BUDGET_NUMBERS = ("max_cost_usd", "max_duration_s")
+
+
+def bad_limit(name: str, value: object) -> str | None:
+    """What is wrong with a limit of the budget, or None: the one test of it, for a
+    value to be saved and for one read from a file."""
+    integral = name in BUDGET_INTS
+    kinds = (int,) if integral else (int, float)
+    if isinstance(value, bool) or not isinstance(value, kinds) or value < 0:
+        return f"{name} must be a non-negative {'integer' if integral else 'number'}"
+    return None
+
+
+def runtime_changes(update: SettingsUpdate) -> dict[str, Any]:
+    """What `update` writes of the budget, the permissions and the system prompt, as the
+    settings file keeps them. ValueError for what the next start would refuse to read."""
+    changes: dict[str, Any] = {}
+    if update.system_prompt is not None:
+        if not update.system_prompt.strip():
+            raise ValueError("the system prompt is empty")
+        changes["system_prompt"] = update.system_prompt
+    if update.budget is not None:
+        changes["budget"] = _limits(update.budget)
+    if update.permissions is not None:
+        changes["permissions"] = update.permissions.value
+    return changes
+
+
+def _limits(budget: Budget) -> dict[str, Any]:
+    limits = {name: getattr(budget, name) for name in (*BUDGET_INTS, *BUDGET_NUMBERS)
+              if getattr(budget, name) is not None}
+    for name, value in limits.items():
+        if (wrong := bad_limit(name, value)) is not None:
+            raise ValueError(f"the limit {wrong}")
+    return limits
 
 
 def read_key(name: str) -> str | None:

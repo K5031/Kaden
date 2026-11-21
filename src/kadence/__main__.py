@@ -50,7 +50,13 @@ from kadence.runtime.modules import (
     mcp_key,
     targets,
 )
-from kadence.runtime.settings import SETTINGS_FILE, read_secret
+from kadence.runtime.settings import (
+    BUDGET_INTS,
+    BUDGET_NUMBERS,
+    SETTINGS_FILE,
+    bad_limit,
+    read_secret,
+)
 
 DEFAULT_DATA_DIR = Path("~/.kadence")
 CONFIG_FILE = "config.toml"
@@ -69,8 +75,6 @@ LAUNCHER_FRONTENDS = {TERMINAL: "tui", WINDOW: "desktop"}
 HEADLESS_FACTORY = "kadence.frontends.headless:factory"
 SAVED_KEYS = ("modules", "model", "maintenance_model", "permissions",
               "system_prompt", "work_folder", "budget", "mcp_servers")
-BUDGET_INTS = ("max_tokens", "max_tool_calls")
-BUDGET_NUMBERS = ("max_cost_usd", "max_duration_s")
 
 
 def read_config(path: Path, *, required: bool,
@@ -151,11 +155,8 @@ def load_runtime(path: Path, data: dict[str, Any]) -> dict[str, Any]:
                              f"{', '.join(PermissionPolicy)}") from None
     budget = table(path, section, "runtime.budget", (*BUDGET_INTS, *BUDGET_NUMBERS))
     for key, value in budget.items():
-        integral = key in BUDGET_INTS
-        kinds = (int,) if integral else (int, float)
-        if isinstance(value, bool) or not isinstance(value, kinds) or value < 0:
-            kind = "integer" if integral else "number"
-            raise SystemExit(f"{path}: [runtime.budget] {key} must be a non-negative {kind}")
+        if (wrong := bad_limit(key, value)) is not None:
+            raise SystemExit(f"{path}: [runtime.budget] {wrong}")
     if budget:
         settings["budget"] = Budget(**budget)
     return settings

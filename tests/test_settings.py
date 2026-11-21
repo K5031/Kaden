@@ -317,3 +317,19 @@ async def test_settings_before_start_need_the_provider_only_for_models(make):
     h.core.list_error = RuntimeError("no key yet")
     s = await h.runtime.update_settings(SettingsUpdate(system_prompt="Be brief."))
     assert s.system_prompt == "Be brief."
+
+
+@pytest.mark.parametrize("budget", [
+    Budget(max_tokens=-5), Budget(max_cost_usd=-1.0), Budget(max_tool_calls=2.5),  # type: ignore[arg-type]
+    Budget(max_duration_s=True),
+])
+async def test_a_limit_that_would_stop_the_next_start_is_refused(make, tmp_path, budget):
+    """What is saved is read back at the next start, which refuses it: so it is refused
+    here, and neither applied nor written."""
+    h = await make()
+    before = await h.runtime.settings()
+    with pytest.raises(ValueError, match="must be"):
+        await h.runtime.update_settings(SettingsUpdate(budget=budget))
+    assert (await h.runtime.settings()).budget == before.budget
+    saved = h.runtime._config.data_dir / "settings.toml"
+    assert not saved.exists() or "budget" not in saved.read_text()
