@@ -1828,7 +1828,7 @@ async def test_dropped_files_wait_above_the_message_box_and_go_with_the_message(
     assert window.attachments.paths() == [str(picture)]
     window.attachments.add([str(note)])
     window._paste_image(image)  # a picture copied from elsewhere
-    assert len(window.attachments.paths()) == 3
+    await eventually(lambda: len(window.attachments.paths()) == 3)
     window.input.setPlainText("what are these?")
     QTest.keyClick(window.input, Qt.Key.Key_Return)
     assert window.attachments.paths() == [] and window.attachments.isHidden()

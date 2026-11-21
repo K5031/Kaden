@@ -2831,11 +2831,17 @@ class MainWindow(QMainWindow):
 
     def _paste_image(self, image: QImage) -> None:
         """A picture pasted from the clipboard: saved as a file, then attached like one."""
-        if self._pasted is None:
-            self._pasted = Path(tempfile.mkdtemp(prefix="kadence-pasted-"))
-        path = self._pasted / f"pasted-{len(list(self._pasted.iterdir())) + 1}.png"
-        if image.save(str(path), "PNG"):
-            self.attachments.add([str(path)])
+        def save() -> str | None:  # off the event loop: encoding a screenshot takes a while
+            if self._pasted is None:
+                self._pasted = Path(tempfile.mkdtemp(prefix="kadence-pasted-"))
+            path = self._pasted / f"pasted-{len(list(self._pasted.iterdir())) + 1}.png"
+            return str(path) if image.save(str(path), "PNG") else None
+
+        async def attach() -> None:
+            if (path := await asyncio.to_thread(save)) is not None:
+                self.attachments.add([path])
+
+        _spawn(attach())
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if _local_files(event.mimeData()):
