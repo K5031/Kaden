@@ -480,6 +480,27 @@ async def test_thinking_is_shown_by_default_on_models_that_always_think(
     assert anthropic.stub.bodies[-1].get("thinking") == sent
 
 
+@pytest.mark.parametrize("maintenance, sent", [
+    # The runtime's own requests (a title, a summary) take the options set for them, over
+    # the model's: the same model may think as an agent and not for a summary.
+    (True, {"type": "disabled"}),
+    (False, {"type": "adaptive", "display": "omitted"}),
+])
+async def test_maintenance_options_apply_only_to_maintenance(
+        maintenance: bool, sent: dict) -> None:
+    model = "claude-haiku-5-5"
+    anthropic = AnthropicDriver(
+        maintenance_options={"thinking": {"type": "disabled"}},
+        models={model: ModelConfig(context_window=200_000, options={
+            "thinking": {"type": "adaptive", "display": "omitted"}})})
+    anthropic.queue_text()
+    await collect(anthropic.core, InferenceRequest(model, "", [user("hi")], [],
+                                                   max_output_tokens=256,
+                                                   maintenance=maintenance))
+    await anthropic.core.aclose()
+    assert anthropic.stub.bodies[-1].get("thinking") == sent
+
+
 @pytest.mark.parametrize("options, maintenance, sent", [
     # A conversation resends everything said so far with each request: cached, the
     # earlier part is read at a fraction of the price.

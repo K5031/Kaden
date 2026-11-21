@@ -148,8 +148,8 @@ def _cached(body: dict[str, Any], request: InferenceRequest) -> dict[str, Any]:
 
 
 def factory(options: dict[str, Any], paths: InstancePaths) -> AnthropicCore:
-    """Options: api_key (default ANTHROPIC_API_KEY), base_url, options, models,
-    default_max_tokens; see AnthropicCore."""
+    """Options: api_key (default ANTHROPIC_API_KEY), base_url, options, maintenance_options,
+    models, default_max_tokens; see AnthropicCore."""
     return AnthropicCore(**options)
 
 
@@ -159,7 +159,9 @@ factory.key_name = "ANTHROPIC_API_KEY"  # type: ignore[attr-defined]
 
 class AnthropicCore(Core):
     """`options` are merged verbatim into every request body (thinking, temperature,
-    tool_choice, ...); `models` adds per-model options, context windows and prices."""
+    tool_choice, ...); `models` adds per-model options, context windows and prices;
+    `maintenance_options` are merged over both in the runtime's own one-off requests
+    (InferenceRequest.maintenance)."""
 
     def __init__(
         self,
@@ -168,6 +170,7 @@ class AnthropicCore(Core):
         base_url: str | None = None,
         client: anthropic.AsyncAnthropic | None = None,
         options: Mapping[str, Any] | None = None,
+        maintenance_options: Mapping[str, Any] | None = None,
         models: Mapping[str, ModelConfig | Mapping[str, Any]] | None = None,
         default_max_tokens: int = 8192,
     ) -> None:
@@ -179,6 +182,7 @@ class AnthropicCore(Core):
         client = client or anthropic.AsyncAnthropic(api_key=api_key, base_url=base_url)
         self._client = client.with_options(max_retries=0)  # the runtime owns retries
         self._options = dict(options or {})
+        self._maintenance_options = dict(maintenance_options or {})
         self._models = merged_configs(_PRICES, model_configs(models))
         self._default_max_tokens = default_max_tokens
         self._search = True  # False once the account turned out to have it switched off
@@ -225,13 +229,14 @@ class AnthropicCore(Core):
         tools = self._tools(request.tools, request.model)
         turns, bound = to_messages(request.messages, request.model, request.system, tools,
                                    search=self._search)
+        options = request_options(self._options, self._models.get(request.model))
+        if request.maintenance:
+            options = {**options, **self._maintenance_options}
         params: dict[str, Any] = {
             "model": request.model,
             "messages": turns,
             "max_tokens": request.max_output_tokens or self._default_max_tokens,
-            "extra_body": _cached(_thinking_shown(
-                request.model, request_options(self._options, self._models.get(request.model))),
-                request),
+            "extra_body": _cached(_thinking_shown(request.model, options), request),
         }
         if request.system:
             params["system"] = request.system

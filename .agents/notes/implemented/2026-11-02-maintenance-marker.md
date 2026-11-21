@@ -19,8 +19,10 @@ would silently think.
 - The OpenAI-compatible Core applies its profile's `maintenance_options` when the flag is
   set; user `options` still win over them (see
   [DeepSeek profiles](2026-10-30-deepseek-openai-compatible-profiles.md)).
-- The Anthropic Core ignores the field: it has no maintenance-specific options. Per-model
-  `options` can still turn thinking off for a dedicated maintenance model.
+- The Anthropic Core leaves such a request uncached and merges its `maintenance_options`
+  (a Core option, empty by default) over the model's options: thinking can be off for a
+  summary and on for a turn of the same model. It is a setting, not a default, because
+  some models refuse `thinking: disabled` (Opus 5.5, Sonnet 5.5, Fable, Mythos).
 
 ## Alternatives considered
 

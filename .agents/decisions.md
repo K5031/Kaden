@@ -877,6 +877,7 @@ The design is in [the note](notes/implemented/2026-11-12-voice-conversation.md);
 |---|---|
 | Default | For models that always think (`claude-opus-5*`, `claude-sonnet-5*`, `claude-haiku-5*`, Fable, Mythos), a request without `thinking` in the merged options gets `{"type": "adaptive", "display": "summarized"}` (`anthropic._thinking_shown`). The API's default, `omitted`, streams empty thinking blocks, and on Opus 5.5 the notes between tool calls come back as thinking too: a long silence, then the whole answer. `display` changes what is shown, not what is billed |
 | Configured | Any `thinking` in the Core's or the model's options is sent as it is |
+| Maintenance | The Core option `maintenance_options` is merged over the Core's and the model's options in the runtime's own requests (`InferenceRequest.maintenance`: titles, summaries, the save pass, permission reviews), so `thinking = { type = "disabled" }` there leaves the same model thinking in a turn. Not a built-in default: Opus 5.5, Sonnet 5.5, Fable and Mythos answer 400 to `disabled` |
 | Not `updates` | `display: "updates"` (a beta) would show only the notes between tool calls; `summarized` also shows the reasoning, which the Thinking section already holds |
 | Desktop | The Thinking button reads "Thinking…" while the reply has no text and is not final |
 

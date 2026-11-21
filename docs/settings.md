@@ -193,6 +193,17 @@ summary of the thinking to be streamed, so you see it under **Thinking…** as i
 To change that, set `thinking` in the Core's options for that model, for example
 `thinking = { type = "adaptive", display = "omitted" }`.
 
+Titles, summaries and permission reviews are short jobs where thinking adds cost and delay.
+To switch it off for those only, leaving the same model thinking when it works:
+
+```toml
+[core.options]
+maintenance_options = { thinking = { type = "disabled" } }
+```
+
+Haiku 5.5, Sonnet 5 and Opus 5 accept this. Opus 5.5, Sonnet 5.5 and Fable cannot switch
+thinking off and refuse the request, so use it only with a maintenance model that can.
+
 With Claude, Kadence asks Anthropic to cache each conversation, so every request after the
 first pays about a tenth or less for what was already sent. The cache lasts five minutes
 after the last request. For work with longer pauses (a duty that checks in every half
