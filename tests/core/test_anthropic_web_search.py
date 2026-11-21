@@ -271,3 +271,22 @@ async def test_thinking_after_a_search_goes_when_the_search_goes_back_as_text(dr
     await collect(driver.core, request(OPUS, [user("Who plays the final?"), answer,
                                               user("And who is favoured?")]))
     assert sent()[0] == "sig-before" and set(sent()[1:]) == {"text"}
+
+
+async def test_an_answer_after_a_fallback_is_bound_to_the_request_that_was_sent(driver):
+    """Its thinking goes back with the next request of the turn: it is bound to the
+    body the API took, not to the one it refused."""
+    driver.stub.queue(Reply(status=400, json_body={"type": "error", "error": {
+        "type": "invalid_request_error",
+        "message": "Web search is not enabled for your organization."}}))
+    driver.stub.queue(Reply(events=[
+        message_start(), *thought(0, "Let me check.", "sig-1"),
+        *block(1, {"type": "tool_use", "id": "toolu_1", "name": "get_weather", "input": {}},
+               [{"type": "input_json_delta", "partial_json": "{}"}]),
+        *finish("tool_use")]))
+    answer = (await collect(driver.core, request()))[-1].message
+    driver.stub.queue(Reply(events=[message_start(), *text_block(0, ["ok"]), *finish("end_turn")]))
+    await collect(driver.core, request(OPUS, [user("Who plays the final?"), answer,
+                                              tool_results()]))
+    replayed = driver.stub.bodies[-1]["messages"][1]["content"]
+    assert replayed[0].get("signature") == "sig-1"
