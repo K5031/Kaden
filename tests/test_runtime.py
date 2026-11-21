@@ -170,6 +170,13 @@ async def test_permission_ceiling(make: Any, clean_env: pytest.MonkeyPatch) -> N
     h: Harness = await make(permissions=PermissionPolicy.ASK)
     assert os.environ[PERMISSION_CEILING_ENV] == "ask"
     await h.close()
+    # What it exported was for what it launched, and ends with it: a runtime made after
+    # it in the same process (Restart now) is not held to the first one's policy.
+    assert PERMISSION_CEILING_ENV not in os.environ
+    looser: Harness = await make(permissions=PermissionPolicy.AUTO)
+    await looser.start()
+    assert looser.runtime.snapshot().config.permissions == PermissionPolicy.AUTO
+    await looser.close()
 
     clean_env.setenv(PERMISSION_CEILING_ENV, "deny")
     tools = perm_tools()

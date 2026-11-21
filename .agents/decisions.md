@@ -446,7 +446,10 @@ PySide6 is 244 MB. Not built yet: the Flatpak (needs `flatpak-builder`) and the 
 **Permission ceiling.** The runtime reads the inherited ceiling once, at construction and
 before exporting its own policy, and `update_settings` clamps to that. Clamping to the
 environment at update time would clamp to the runtime's own export, and permissions could
-never be loosened in a running instance (`test_permissions_loosen_past_the_policy_this_runtime_exported`).
+never be loosened in a running instance (`test_permissions_loosen_past_the_policy_this_runtime_exported`). At
+shutdown the runtime puts back what it inherited: the export is for what it launches, and
+the runtime that Restart now builds next in the same process would otherwise read it as
+its ceiling and could not be loosened either.
 
 ## Free in the work folder
 

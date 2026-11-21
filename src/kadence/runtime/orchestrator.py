@@ -332,7 +332,10 @@ class Runtime:
         self._frontend = frontend
         self._config = config
         config.data_dir.mkdir(parents=True, exist_ok=True)
-        # Read before exporting our own policy, which must not clamp later changes.
+        # Read before exporting our own policy, which must not clamp later changes. What
+        # was inherited is put back at shutdown: the export is for what this runtime
+        # launches, and the next runtime of the process (Restart now) is not held to it.
+        self._inherited = os.environ.get(PERMISSION_CEILING_ENV)
         self._ceiling = PermissionPolicy.inherited_ceiling()
         self._permissions = _effective_policy(config.permissions, self._ceiling)
         os.environ[PERMISSION_CEILING_ENV] = self._permissions.value
@@ -824,6 +827,10 @@ class Runtime:
         if self._started:
             self._budget.save()
             await self._budget.flush()
+        if self._inherited is None:
+            os.environ.pop(PERMISSION_CEILING_ENV, None)
+        else:
+            os.environ[PERMISSION_CEILING_ENV] = self._inherited
         self._lock.release()
         self._log.close()
 
