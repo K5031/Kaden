@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import re
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -186,6 +186,8 @@ class AnthropicCore(Core):
         self._models = merged_configs(_PRICES, model_configs(models))
         self._default_max_tokens = default_max_tokens
         self._search = True  # False once the account turned out to have it switched off
+        # The ids of the server tool uses the API would not take back: they go as text.
+        self._refused: set[str] = set()
 
     async def list_tools(self) -> Sequence[ToolSpec]:
         return [WEB_SEARCH] if self._search else []
@@ -210,14 +212,12 @@ class AnthropicCore(Core):
         except (anthropic.APIError, httpx2.TransportError) as e:
             raise _map_error(e) from e
 
-    def _body(self, request: InferenceRequest, *, as_text: bool = False
-              ) -> tuple[list[JSON], list[JSON], str]:
+    def _body(self, request: InferenceRequest) -> tuple[list[JSON], list[JSON], str]:
         """The request's tools and turns as they go to the API, and the Prefix the
-        answer's reasoning is bound to. `as_text`: the tools Anthropic ran earlier go as
-        text, which the API always takes."""
+        answer's reasoning is bound to."""
         tools = self._tools(request.tools, request.model)
         turns, bound = to_messages(request.messages, request.model, request.system, tools,
-                                   search=self._search and not as_text)
+                                   search=self._search, refused=self._refused)
         return tools, turns, bound
 
     async def count_tokens(self, request: InferenceRequest) -> int:
@@ -252,7 +252,6 @@ class AnthropicCore(Core):
         turn = _Turn(request.model, bound, self._write_premium(request.model,
                                                                params["extra_body"]))
         paused: list[JSON] = []  # what the turn had when the API paused it, sent back
-        as_text = False  # the API refused earlier server tool blocks in this request
         try:
             for continuation in range(MAX_CONTINUATIONS + 1):
                 try:
@@ -260,8 +259,8 @@ class AnthropicCore(Core):
                 except anthropic.BadRequestError as e:
                     # A 400 that says what the request can do without: once more, as the
                     # same request without it. Any other 400 is the request's own.
-                    as_text = self._does_without(e, params["messages"]) or as_text
-                    tools, turns, turn.bound = self._body(request, as_text=as_text)
+                    self._does_without(e, turns)
+                    tools, turns, turn.bound = self._body(request)
                     params["messages"] = [*turns, *paused]
                     if tools:
                         params["tools"] = tools
@@ -294,20 +293,22 @@ class AnthropicCore(Core):
         share = _WRITE_PREMIUM.get(control.get("ttl", ""), _WRITE_PREMIUM_DEFAULT)
         return config.input_usd_per_mtok * share / 1_000_000
 
-    def _does_without(self, error: anthropic.BadRequestError, turns: Sequence[JSON]) -> bool:
-        """Whether the request is to go again with earlier server tool blocks as text
-        (True), or as it is with web search switched off for the instance (False). Raises
-        the error when it names neither."""
+    def _does_without(self, error: anthropic.BadRequestError, turns: Sequence[JSON]) -> None:
+        """Note what a 400 says the request can go again without: web search, switched
+        off for the account, or the server tool blocks `turns` sent back as they came,
+        which go as text from now on. Raises the error when it names neither."""
         text = str(error)
+        replayed = {c["id"] for t in turns for c in t["content"]
+                    if c.get("type") == "server_tool_use"}
         if self._search and any(m in text.lower() for m in _SEARCH_OFF):
             logger.warning("web search is switched off for this account; using Kadence's")
             self._search = False
-            return False
-        if _replays_server_blocks(turns) and any(m in text for m in _SERVER_BLOCK_ERROR):
+        elif replayed and any(m in text for m in _SERVER_BLOCK_ERROR):
             logger.warning("earlier server tool blocks rejected, replaying them as text: %s",
                            error)
-            return True
-        raise error
+            self._refused |= replayed
+        else:
+            raise error
 
     async def aclose(self) -> None:
         await self._client.close()
@@ -494,10 +495,6 @@ def _server_use(use: JSON, result: JSON, model: str) -> ServerToolUse:
     return ServerToolUse(use["id"], name, query, summary, readable[:4000], error is not None)
 
 
-def _replays_server_blocks(turns: Sequence[JSON]) -> bool:
-    return any(c.get("type") == "server_tool_use" for t in turns for c in t["content"])
-
-
 def search_tool(model: str) -> JSON:
     """Anthropic's web search for `model`, at most MAX_SEARCHES uses per request."""
     version = ("web_search_20260209" if model.startswith(_DYNAMIC_FILTERING)
@@ -529,8 +526,8 @@ class Prefix:
 
 
 def to_messages(messages: Sequence[Message], model: str, system: str = "",
-                tools: Sequence[JSON] = (), *, search: bool = True
-                ) -> tuple[list[JSON], str]:
+                tools: Sequence[JSON] = (), *, search: bool = True,
+                refused: Collection[str] = ()) -> tuple[list[JSON], str]:
     """Kadence messages to Anthropic turns, and the Prefix the answer's reasoning is bound
     to. Tool results ride in user turns, and adjacent same-role turns are merged with tool
     results first, as the API requires. Reasoning is replayed only to the model that
@@ -540,7 +537,8 @@ def to_messages(messages: Sequence[Message], model: str, system: str = "",
     would pay for again. Earlier ones, and the rest, go as text, and with them goes the
     reasoning that followed in the same answer: it is bound to the blocks as they came,
     which the Prefix of the turns before it does not see. `tools` are the request's tool
-    definitions."""
+    definitions; `refused`, the ids of server tool uses the API would not take back,
+    which go as text too."""
     out: list[JSON] = []
     prefix = Prefix(system, tools)
     latest = max((i for i, m in enumerate(messages) if m.role is Role.USER
@@ -553,7 +551,7 @@ def to_messages(messages: Sequence[Message], model: str, system: str = "",
         for b in message.blocks:
             if rewritten and isinstance(b, Reasoning):
                 continue
-            made = _to_content(b, model, bound, search and i > latest)
+            made = _to_content(b, model, bound, search and i > latest, refused)
             rewritten = rewritten or (isinstance(b, ServerToolUse) and bool(made)
                                       and made[0]["type"] == "text")
             content += made
@@ -571,7 +569,8 @@ def to_messages(messages: Sequence[Message], model: str, system: str = "",
 _USER_ORDER = {"tool_result": 0, "document": 1}
 
 
-def _to_content(block: Block, model: str, bound: str | None, search: bool) -> list[JSON]:
+def _to_content(block: Block, model: str, bound: str | None, search: bool,
+                refused: Collection[str] = ()) -> list[JSON]:
     match block:
         case Text(text=text):
             return [{"type": "text", "text": text}] if text else []
@@ -586,7 +585,8 @@ def _to_content(block: Block, model: str, bound: str | None, search: bool) -> li
         case Reasoning():
             return []  # unsigned reasoning cannot be replayed
         case ServerToolUse(state={"provider": "anthropic", "model": ran_on, "blocks": raw}) \
-                if search and ran_on == model:
+                if search and ran_on == model and not any(
+                    c.get("id") in refused for c in raw if c.get("type") == "server_tool_use"):
             return list(raw)  # the turn's server blocks ride on its first shown use
         case ServerToolUse():
             return [{"type": "text", "text": server_tool_text(block)}]
@@ -597,7 +597,8 @@ def _to_content(block: Block, model: str, bound: str | None, search: bool) -> li
             content: str | list[JSON] = result_text(block)
             if attached:  # what the tool returned to look at, inside its result
                 content = [{"type": "text", "text": content},
-                           *(c for a in attached for c in _to_content(a, model, bound, search))]
+                           *(c for a in attached
+                             for c in _to_content(a, model, bound, search, refused))]
             return [{"type": "tool_result",
                      "tool_use_id": _INVALID_ID_CHARS.sub("_", call_id),
                      "content": content, "is_error": status in ERROR_STATUSES}]

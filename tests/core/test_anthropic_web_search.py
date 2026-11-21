@@ -218,6 +218,13 @@ async def test_searches_the_api_will_not_take_back_go_back_as_text(driver):
     assert events[-1].message.blocks[0].text == "ok"
     retried = driver.stub.bodies[-1]["messages"][1]["content"]
     assert retried[0]["type"] == "text" and "Searched the web for" in retried[0]["text"]
+    # The same turn goes on: what was refused is not sent as it came a second time.
+    sent = len(driver.stub.bodies)
+    driver.stub.queue(Reply(events=[message_start(), *text_block(0, ["ok"]), *finish("end_turn")]))
+    await collect(driver.core, request(OPUS, [user("q"), answer, tool_results()]))
+    assert len(driver.stub.bodies) == sent + 1
+    again = driver.stub.bodies[-1]["messages"][1]["content"]
+    assert again[0]["type"] == "text" and "Searched the web for" in again[0]["text"]
 
 
 async def test_another_rejection_while_replaying_searches_is_reported_as_it_is(driver):
