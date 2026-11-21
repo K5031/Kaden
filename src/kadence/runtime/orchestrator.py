@@ -253,12 +253,8 @@ class _Stream:
     def estimate(self) -> Usage:
         """Per dimension, the larger of the last report and the runtime's own estimate."""
         r = self.report or Usage()
-        return Usage(
-            max(r.input_tokens, self.input_estimate),
-            max(r.output_tokens, self.output_estimate),
-            r.cached_tokens,
-            r.cost_usd,
-        )
+        return replace(r, input_tokens=max(r.input_tokens, self.input_estimate),
+                       output_tokens=max(r.output_tokens, self.output_estimate))
 
 
 class _Completion:

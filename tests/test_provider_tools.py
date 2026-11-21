@@ -72,3 +72,14 @@ def test_a_use_is_stored_and_searchable():
     text = codec.searchable_text(raw)
     assert "worlds 2026 final" in text and "World Championship" in text
     assert "srv_1" not in text and "provider" not in text
+
+
+def test_an_answer_cut_short_keeps_what_the_provider_charged_beyond_tokens():
+    """Stop, a limit or an error after the first report charges an estimate: the larger
+    token counts, and still the searches and the cache write the provider billed."""
+    from kadence.runtime.orchestrator import _Stream
+
+    stream = _Stream(input_estimate=500, output_estimate=40)
+    stream.report = Usage(100, 10, cached_tokens=7, cost_usd=0.5, extra_cost_usd=0.01)
+    assert stream.estimate() == Usage(500, 40, cached_tokens=7, cost_usd=0.5,
+                                      extra_cost_usd=0.01)
