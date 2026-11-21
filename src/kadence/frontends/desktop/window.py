@@ -1798,6 +1798,12 @@ class ConversationView(QScrollArea):
         self._at_end = True
         self._rebuild_prompts()
 
+    def to_end(self) -> None:
+        """Show the latest of the conversation, and stay with it as it grows."""
+        self._at_end = True
+        bar = self.verticalScrollBar()
+        bar.setValue(bar.maximum())
+
     def refresh(self) -> None:
         """How the conversation stands: whether the agent thinks, whether there is more
         above, and whether nothing was said yet."""
