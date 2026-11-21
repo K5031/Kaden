@@ -322,6 +322,15 @@ type Change = (Reset | Inserted | Updated | Removed | PromptsChanged | StatusCha
                | ConversationListChanged | MemoryListChanged)
 
 
+def _from_its_call(page: Sequence[Message], has_earlier: bool) -> Sequence[Message]:
+    """The page without the results it begins with, when a page before it is still to
+    come: their calls are there, and they are loaded again with it."""
+    if not has_earlier:
+        return page
+    first = next((i for i, m in enumerate(page) if m.role is not Role.TOOL), len(page))
+    return page[first:] if first < len(page) else page
+
+
 class ConversationModel:
     def __init__(self, on_change: Callable[[Change], None] = lambda change: None) -> None:
         self.on_change = on_change
@@ -411,6 +420,7 @@ class ConversationModel:
         self.permissions = snapshot.config.permissions if snapshot.config else None
         self.failure = None
         self.has_earlier = len(history) >= page
+        history = _from_its_call(history, self.has_earlier)
         self._oldest_id = history[0].id if history else None
         for message in history:
             self._render(message)
@@ -437,6 +447,8 @@ class ConversationModel:
 
     def prepend(self, page: Sequence[Message], *, page_size: int = HISTORY_PAGE) -> None:
         """Add an earlier history page above what is shown."""
+        self.has_earlier = len(page) >= page_size
+        page = _from_its_call(page, self.has_earlier)
         self._insert_at = 0
         try:
             for message in page:
@@ -445,7 +457,6 @@ class ConversationModel:
             self._insert_at = None
         if page:
             self._oldest_id = page[0].id
-        self.has_earlier = len(page) >= page_size
         self.on_change(StatusChanged())
 
     # ── events ────────────────────────────────────────────────────────────

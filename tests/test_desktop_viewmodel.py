@@ -460,6 +460,25 @@ def test_a_reopened_conversation_shows_no_checklist_unless_the_agent_is_working(
     assert model.items[-1] is of(model, ChecklistItem)[0]
 
 
+def test_a_page_that_begins_with_a_result_leaves_it_to_the_page_before():
+    """A tool's result may fall on a newer page than its call. It is shown with the
+    call, when the earlier page is loaded, and never as a step of its own."""
+    from kadence.frontends.desktop.viewmodel import ToolItem
+
+    call_ = ToolCall("c1", "read_file", {"path": "a.txt"})
+    older = [Message("u1", Role.USER, (Text("read it"),), 0.0),
+             Message("a1", Role.ASSISTANT, (call_,), 0.0)]
+    newer = [Message("t1", Role.TOOL, (ToolResult("c1", ToolStatus.OK, "the text"),), 0.0),
+             Message("a2", Role.ASSISTANT, (Text("Done."),), 0.0)]
+    model = ConversationModel()
+    model.load(_snapshot(), newer, page=2)
+    assert not of(model, ToolItem) and model.has_earlier
+    assert model.oldest_id == "a2"  # the result is asked for again, with the page before
+    model.prepend([*older, newer[0]], page_size=3)
+    [step] = of(model, ToolItem)
+    assert (step.name, step.content) == ("read_file", "the text")
+
+
 def test_thinking_before_and_after_a_plan_update_is_one_line():
     """A plan update is not shown as a step, so the thinking on both sides of it would be
     two Thinking lines one under the other."""
