@@ -200,6 +200,29 @@ async def test_a_path_swapped_for_a_link_after_the_check_is_refused(tools, works
     assert secret.read_text() == "PRIVATE KEY\n" and "PRIVATE KEY" not in out.content
 
 
+@pytest.mark.parametrize("name, args", [
+    ("list_files", {"path": "sub"}),
+    ("search_files", {"path": "sub", "pattern": "PRIVATE"}),
+    ("write_file", {"path": "sub/new/file.txt", "content": "pwned"}),
+])
+async def test_a_folder_swapped_for_a_link_after_the_check_is_refused(tools, workspace, tmp_path,
+                                                                      name, args):
+    """The call was let through for a folder inside the work folder; what stands there
+    when it runs leads outside, and nothing outside is read, listed or made."""
+    secret = outside_secret(tmp_path)
+    call = ToolCall("c", name, args)
+    (workspace / "sub").mkdir()
+    judged = await tools.confined(call)
+    assert judged
+    (workspace / "sub").rmdir()
+    (workspace / "sub").symlink_to(secret.parent, target_is_directory=True)
+    before = sorted(p.name for p in secret.parent.iterdir())
+    out = await tools.execute(call, ctx(tmp_path, confined=judged))
+    assert out.is_error and "outside the work folder" in out.content
+    assert "PRIVATE KEY" not in out.content and secret.name not in out.content
+    assert sorted(p.name for p in secret.parent.iterdir()) == before  # nothing was made there
+
+
 async def test_a_call_that_was_not_confined_may_still_reach_outside(tools, tmp_path):
     secret = outside_secret(tmp_path)  # the user was asked and allowed it
     out = await run(tools, tmp_path, "read_file", path=str(secret))

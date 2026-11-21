@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
-import contextvars
 import io
 import os
 import re
@@ -71,7 +70,6 @@ class ToolError(Exception):
 
 # Set while a call that `confined` judged inside runs (ToolContext.confined): its files must
 # really be in the workspace, wherever a link that appeared since the check leads.
-_must_stay_inside = contextvars.ContextVar("must_stay_inside", default=False)
 
 
 def _object(properties: dict[str, Any], required: Sequence[str] = ()) -> dict[str, Any]:
@@ -319,7 +317,6 @@ class ShellFilesTools(Tools):
             jsonschema.validate(call.arguments, spec.parameters)
         except jsonschema.ValidationError as e:
             return ToolOutput(f"Invalid arguments: {e.message}", is_error=True)
-        token = _must_stay_inside.set(ctx.confined)
         try:
             result = await self._handlers[call.name](call.arguments, ctx)
             return result if isinstance(result, ToolOutput) else ToolOutput(result)
@@ -330,8 +327,6 @@ class ShellFilesTools(Tools):
                               is_error=True)
         except OSError as e:
             return ToolOutput(f"{type(e).__name__}: {e}", is_error=True)
-        finally:
-            _must_stay_inside.reset(token)
 
     async def _screenshot(self, args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
         return await self._screen.run()
@@ -346,17 +341,33 @@ class ShellFilesTools(Tools):
         path = Path(raw or ".").expanduser()
         return path if path.is_absolute() else self.root / path
 
-    def _open(self, path: Path, flags: int) -> int:
+    def _outside(self, path: Path) -> ToolError:
+        return ToolError(f"{self._display(path)} leads outside the work folder; set it up "
+                         "again inside the folder or ask the user")
+
+    def _within(self, path: Path, ctx: ToolContext) -> Path:
+        """Where the path leads, links followed. For a call `confined` let through, that
+        must be in the workspace now, whatever stood there when it was judged."""
+        resolved = path.resolve()
+        if ctx.confined and not resolved.is_relative_to(self.root):
+            raise self._outside(path)
+        return resolved
+
+    def _open(self, path: Path, flags: int, ctx: ToolContext) -> int:
         """os.open, for a call `confined` allowed only if the file opened is in the
         workspace: checked on the open file, so a link swapped in after the check (or
         between this check and the read or write) cannot lead outside."""
-        if not _must_stay_inside.get():
+        if not ctx.confined:
             return os.open(path, flags, 0o644)
-        fd = os.open(path.resolve(), flags | os.O_NOFOLLOW, 0o644)
-        if not Path(os.readlink(f"/proc/self/fd/{fd}")).is_relative_to(self.root):
+        fd = os.open(self._within(path, ctx), flags | os.O_NOFOLLOW, 0o644)
+        try:
+            inside = Path(os.readlink(f"/proc/self/fd/{fd}")).is_relative_to(self.root)
+        except OSError:
             os.close(fd)
-            raise ToolError(f"{self._display(path)} leads outside the work folder; set it "
-                            "up again inside the folder or ask the user")
+            raise
+        if not inside:
+            os.close(fd)
+            raise self._outside(path)
         return fd
 
     def _display(self, path: Path) -> str:
@@ -419,16 +430,16 @@ class ShellFilesTools(Tools):
         if path.is_dir():
             raise ToolError(f"{self._display(path)} is a directory")
         if path.suffix.lower() in attachments.IMAGE_TYPES:
-            return await asyncio.to_thread(self._read_image, path)
+            return await asyncio.to_thread(self._read_image, path, ctx)
         if path.suffix.lower() == ".pdf":
             return await asyncio.to_thread(self._read_pdf, path, args.get("pages"),
-                                           args.get("view") is True)
+                                           args.get("view") is True, ctx)
 
         def source() -> IO[str]:
             """The file as text; a Word, Excel or PowerPoint file converted first."""
             if path.suffix.lower() not in office.KINDS:
-                return open(self._open(path, os.O_RDONLY), encoding="utf-8", errors="replace")
-            with open(self._open(path, os.O_RDONLY), "rb") as raw:
+                return open(self._open(path, os.O_RDONLY, ctx), encoding="utf-8", errors="replace")
+            with open(self._open(path, os.O_RDONLY, ctx), "rb") as raw:
                 try:
                     return io.StringIO(office.to_text(raw, path.suffix) + "\n")
                 except ValueError as e:
@@ -457,9 +468,9 @@ class ShellFilesTools(Tools):
 
         return await asyncio.to_thread(read)
 
-    def _read_image(self, path: Path) -> ToolOutput:
+    def _read_image(self, path: Path, ctx: ToolContext) -> ToolOutput:
         """The picture itself, for the model to look at."""
-        with open(self._open(path, os.O_RDONLY), "rb") as f:
+        with open(self._open(path, os.O_RDONLY, ctx), "rb") as f:
             if os.fstat(f.fileno()).st_size > attachments.MAX_IMAGE_BYTES:
                 raise ToolError(f"{self._display(path)} is too large to look at: pictures "
                                 f"up to {attachments.MAX_IMAGE_BYTES // 2 ** 20} MB can be.")
@@ -468,11 +479,12 @@ class ShellFilesTools(Tools):
                       base64.b64encode(raw).decode(), path.name)
         return ToolOutput(f"[Image {self._display(path)}]", attachments=(image,))
 
-    def _read_pdf(self, path: Path, pages: str | None, view: bool) -> ToolOutput:
+    def _read_pdf(self, path: Path, pages: str | None, view: bool,
+                  ctx: ToolContext) -> ToolOutput:
         """A PDF's pages, all or those `pages` names: their text, each under its number, up
         to MAX_READ_CHARS; with `view`, at most PDF_PAGES_PER_READ of the pages themselves
         as a document of their own, which a model that reads PDFs sees as they look."""
-        with open(self._open(path, os.O_RDONLY), "rb") as f:
+        with open(self._open(path, os.O_RDONLY, ctx), "rb") as f:
             try:
                 reader = pypdf.PdfReader(f)
                 total = len(reader.pages)
@@ -523,8 +535,8 @@ class ShellFilesTools(Tools):
         content: str = args["content"]
 
         def write() -> None:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self._open(path, os.O_WRONLY | os.O_CREAT), "w", encoding="utf-8") as f:
+            self._within(path.parent, ctx).mkdir(parents=True, exist_ok=True)
+            with open(self._open(path, os.O_WRONLY | os.O_CREAT, ctx), "w", encoding="utf-8") as f:
                 f.truncate()
                 f.write(content)
 
@@ -537,7 +549,7 @@ class ShellFilesTools(Tools):
         replace_all = args.get("replace_all", False)
 
         def edit() -> int:
-            with open(self._open(path, os.O_RDWR), "r+", encoding="utf-8") as f:
+            with open(self._open(path, os.O_RDWR, ctx), "r+", encoding="utf-8") as f:
                 text = f.read()
                 count = text.count(old)
                 if count == 1 or (count > 1 and replace_all):
@@ -557,7 +569,7 @@ class ShellFilesTools(Tools):
         return f"Replaced {count} occurrence(s) in {self._display(path)}"
 
     async def _list_files(self, args: dict[str, Any], ctx: ToolContext) -> str:
-        base = self._path(args.get("path"))
+        base = await asyncio.to_thread(self._within, self._path(args.get("path")), ctx)
         pattern = args.get("pattern", "*")
         if not base.is_dir():
             raise ToolError(f"{self._display(base)} is not a directory")
@@ -579,7 +591,7 @@ class ShellFilesTools(Tools):
         return "\n".join(lines) if lines else "No files found"
 
     async def _search_files(self, args: dict[str, Any], ctx: ToolContext) -> str:
-        base = self._path(args.get("path"))
+        base = await asyncio.to_thread(self._within, self._path(args.get("path")), ctx)
         name_glob = args.get("glob")
         try:
             regex = re.compile(args["pattern"])
