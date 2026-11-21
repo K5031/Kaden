@@ -210,10 +210,18 @@ class AnthropicCore(Core):
         except (anthropic.APIError, httpx2.TransportError) as e:
             raise _map_error(e) from e
 
-    async def count_tokens(self, request: InferenceRequest) -> int:
+    def _body(self, request: InferenceRequest, *, as_text: bool = False
+              ) -> tuple[list[JSON], list[JSON], str]:
+        """The request's tools and turns as they go to the API, and the Prefix the
+        answer's reasoning is bound to. `as_text`: the tools Anthropic ran earlier go as
+        text, which the API always takes."""
         tools = self._tools(request.tools, request.model)
-        turns, _ = to_messages(request.messages, request.model, request.system, tools,
-                               search=self._search)
+        turns, bound = to_messages(request.messages, request.model, request.system, tools,
+                                   search=self._search and not as_text)
+        return tools, turns, bound
+
+    async def count_tokens(self, request: InferenceRequest) -> int:
+        tools, turns, _ = self._body(request)
         params: dict[str, Any] = {"model": request.model, "messages": turns}
         if request.system:
             params["system"] = request.system
@@ -226,9 +234,7 @@ class AnthropicCore(Core):
         return result.input_tokens
 
     async def stream(self, request: InferenceRequest) -> AsyncIterator[CoreEvent]:
-        tools = self._tools(request.tools, request.model)
-        turns, bound = to_messages(request.messages, request.model, request.system, tools,
-                                   search=self._search)
+        tools, turns, bound = self._body(request)
         options = request_options(self._options, self._models.get(request.model))
         if request.maintenance:
             options = {**options, **self._maintenance_options}
@@ -245,9 +251,21 @@ class AnthropicCore(Core):
 
         turn = _Turn(request.model, bound, self._write_premium(request.model,
                                                                params["extra_body"]))
+        paused: list[JSON] = []  # what the turn had when the API paused it, sent back
+        as_text = False  # the API refused earlier server tool blocks in this request
         try:
             for continuation in range(MAX_CONTINUATIONS + 1):
-                response = await self._open(params, request)
+                try:
+                    response = await self._client.messages.create(**params, stream=True)
+                except anthropic.BadRequestError as e:
+                    # A 400 that says what the request can do without: once more, as the
+                    # same request without it. Any other 400 is the request's own.
+                    as_text = self._does_without(e, params["messages"]) or as_text
+                    tools, turns, turn.bound = self._body(request, as_text=as_text)
+                    params["messages"] = [*turns, *paused]
+                    if tools:
+                        params["tools"] = tools
+                    response = await self._client.messages.create(**params, stream=True)
                 async with response as events:
                     async for event in events:
                         for out in turn.feed(event):
@@ -257,9 +275,8 @@ class AnthropicCore(Core):
                 if turn.stop_reason != "pause_turn" or continuation == MAX_CONTINUATIONS:
                     break
                 # The API paused a long server-side turn: send it back to be continued.
-                if continuation == 0:
-                    turns = params["messages"]
-                params["messages"] = [*turns, {"role": "assistant", "content": turn.content()}]
+                paused = [{"role": "assistant", "content": turn.content()}]
+                params["messages"] = [*turns, *paused]
                 turn.next_response()
         except (anthropic.APIError, httpx2.TransportError) as e:
             raise _map_error(e) from e
@@ -277,32 +294,20 @@ class AnthropicCore(Core):
         share = _WRITE_PREMIUM.get(control.get("ttl", ""), _WRITE_PREMIUM_DEFAULT)
         return config.input_usd_per_mtok * share / 1_000_000
 
-    async def _open(self, params: dict[str, Any], request: InferenceRequest) -> Any:
-        """Start the stream; on a 400 that says what the request can do without (web search
-        the account has switched off, server tool blocks the API will not take back), once
-        more without it. Any other 400 is the request's own."""
-        try:
-            return await self._client.messages.create(**params, stream=True)
-        except anthropic.BadRequestError as e:
-            text = str(e)
-            as_text = False
-            if self._search and any(m in text.lower() for m in _SEARCH_OFF):
-                logger.warning("web search is switched off for this account; using Kadence's")
-                self._search = False
-            elif _replays_server_blocks(params["messages"]) and any(
-                    m in text for m in _SERVER_BLOCK_ERROR):
-                logger.warning("earlier server tool blocks rejected, replaying them as text: "
-                               "%s", e)
-                as_text = True
-            else:
-                raise
-            tools = self._tools(request.tools, request.model)
-            if tools:
-                params["tools"] = tools
-            params["messages"], _ = to_messages(
-                request.messages, request.model, request.system, tools,
-                search=self._search and not as_text)
-            return await self._client.messages.create(**params, stream=True)
+    def _does_without(self, error: anthropic.BadRequestError, turns: Sequence[JSON]) -> bool:
+        """Whether the request is to go again with earlier server tool blocks as text
+        (True), or as it is with web search switched off for the instance (False). Raises
+        the error when it names neither."""
+        text = str(error)
+        if self._search and any(m in text.lower() for m in _SEARCH_OFF):
+            logger.warning("web search is switched off for this account; using Kadence's")
+            self._search = False
+            return False
+        if _replays_server_blocks(turns) and any(m in text for m in _SERVER_BLOCK_ERROR):
+            logger.warning("earlier server tool blocks rejected, replaying them as text: %s",
+                           error)
+            return True
+        raise error
 
     async def aclose(self) -> None:
         await self._client.close()

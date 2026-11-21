@@ -156,6 +156,22 @@ async def test_switched_off_search_falls_back_to_kadences(driver):
     assert await driver.core.list_tools() == []
 
 
+async def test_a_continuation_that_is_refused_is_sent_again_as_a_continuation(driver):
+    """The fallback redoes the request it stands for: a paused turn sent back to be
+    continued goes back with what it had so far, not from the start."""
+    driver.stub.queue(Reply(events=[message_start(), *search_blocks(0), *searched("pause_turn")]))
+    driver.stub.queue(Reply(status=400, json_body={"type": "error", "error": {
+        "type": "invalid_request_error",
+        "message": "Web search is not enabled for your organization."}}))
+    driver.stub.queue(Reply(events=[message_start(), *text_block(0, ["ok"]), *finish("end_turn")]))
+    events = await collect(driver.core, request())
+    assert len(driver.stub.bodies) == 3
+    again = driver.stub.bodies[2]["messages"]
+    assert again[-1]["role"] == "assistant"  # what the turn had when it was paused
+    assert again[:-1] == driver.stub.bodies[0]["messages"]
+    assert any(isinstance(b, Text) and b.text == "ok" for b in events[-1].message.blocks)
+
+
 def tool_results() -> Message:
     """The results of the client tools the answer also called: the same turn goes on."""
     return Message("r", Role.TOOL, (ToolResult("toolu_1", ToolStatus.OK, "done"),), 0.0)
