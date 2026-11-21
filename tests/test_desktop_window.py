@@ -1044,6 +1044,59 @@ async def test_a_sub_session_sits_under_its_conversation_and_opens_in_place(
     assert window.model.conversation.id == h.conversation.id
 
 
+async def test_the_windows_own_conversation_is_heard_while_a_sub_session_shows(
+        make, qapp, tmp_path, child_env):
+    """What is the window's (the list of conversations, whether a new chat can start)
+    follows its own conversation, whatever the conversation area shows."""
+    from kadence.frontends.desktop.window import KIND_ROLE
+    from tests.test_sub_sessions import finish, parent
+
+    h, sessions = await parent(make, tmp_path, [
+        Step(calls=[call("start_session", {"task": "Write a haiku"}, id="s")]),
+        Step(text="Started.")],
+        [finish("Haiku written."), {"text": "Here is the haiku."}])
+    controller = Controller(h.runtime, ConversationModel())
+    window = MainWindow(h.runtime, controller, sessions=sessions)
+    asyncio.create_task(controller.run())
+    await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
+    window.show()
+    await h.turn("Get me a haiku")
+    await eventually(lambda: sessions.sessions and sessions.sessions[0].state == "done",
+                     timeout=30)
+    await window.fill_sidebar()
+    window._conversation_chosen(window.conversation_list.item(2))
+    await eventually(lambda: window.controller is not window.home, timeout=15)
+
+    def titles() -> list[str]:
+        return [window.conversation_list.item(i).text()
+                for i in range(window.conversation_list.count())
+                if window.conversation_list.item(i).data(KIND_ROLE) == "conversation"]
+
+    await h.runtime.rename_conversation(h.conversation.id, "Poems")  # as the sidebar does
+    await eventually(lambda: titles() == ["Poems"])
+    # The window's own conversation is idle: a new chat can start, whatever the
+    # sub-session on screen is doing.
+    assert window.new_button.isEnabled() and not window.switch_reason.isVisibleTo(window)
+
+
+async def test_the_open_chat_clicked_again_while_another_opens_is_what_stays(
+        make, qapp, tmp_path):
+    """Last click wins: back to the chat that is open, before the other one has loaded."""
+    h: Harness = await make()
+    first = await h.chat("First")
+    second = await h.chat("Second")
+    window, controller, _ = await open_window(h)
+    await window.fill_sidebar()
+    assert controller.model.conversation.id == second.id
+    window.open_conversation(first.id)
+    window.open_conversation(second.id)  # changed their mind before it opened
+    await eventually(lambda: window._target.conversation is None
+                     and not window._target.opening)
+    await asyncio.sleep(0.2)
+    assert controller.model.conversation.id == second.id
+    assert window.conversation_list.currentItem().data(Qt.ItemDataRole.UserRole) == second.id
+
+
 async def test_projects_group_the_sidebar_and_fold(make, qapp, tmp_path):
     from kadence.frontends.desktop.window import KIND_ROLE
 

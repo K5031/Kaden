@@ -1924,7 +1924,7 @@ class MainWindow(QMainWindow):
         self.sessions = sessions  # the sub-sessions this window hosts
         controller.sessions = sessions
         self._collapsed: set[str] = set()  # sidebar groups the user folded
-        self.model.on_change = self._changed
+        self.home.model.on_change = self._home_changed  # for as long as the window is
         self._dialog: QDialog | None = None
         self.memory_dialog: MemoryDialog | None = None
         self.mcp_dialog: McpDialog | None = None
@@ -2225,7 +2225,7 @@ class MainWindow(QMainWindow):
         self.file_dialog.open()
 
     def _choose_folder(self) -> None:
-        if reason := self.controller.can_switch():
+        if reason := self.home.can_switch():
             self.model.notify(reason)
             return
         folder = self.model.conversation.folder if self.model.conversation else None
@@ -2263,6 +2263,7 @@ class MainWindow(QMainWindow):
         if not folder or (self.model.conversation is not None and self.controller.folder_picked
                           and folder == self.model.conversation.folder):
             return
+        self._leave_session()  # the chat starts in the window's own conversation
         task = self.home.new_in_folder(folder)
         task.add_done_callback(lambda _: (self.input.setFocus(), _spawn(self.fill_sidebar())))
 
@@ -2412,7 +2413,8 @@ class MainWindow(QMainWindow):
                           seed_from: str | None = None) -> None:
         self._leave_session()
         own = self.home.model.conversation
-        if own is not None and conversation_id == own.id and seed_from is None:
+        if (own is not None and conversation_id == own.id and seed_from is None
+                and not self._target.opening):  # one that is opening would take its place
             self._open()  # open here already
         elif reason := self.home.can_switch():
             self._open()
@@ -2438,20 +2440,36 @@ class MainWindow(QMainWindow):
 
     # ── view model changes ────────────────────────────────────────────────
 
-    def _changed(self, change: Change) -> None:
+    def _home_changed(self, change: Change) -> None:
+        """A change in the window's own conversation. What is the window's (the list of
+        conversations, memory, whether another chat can start) follows it always; the
+        conversation area only while it shows this conversation."""
         match change:
             case Reset():
-                self.conversation.rebuild()
-                self._refresh_status()
                 _spawn(self.fill_sidebar())
                 _spawn(self.refresh_models())
             case ConversationListChanged():
                 _spawn(self.fill_sidebar())
+                return
             case MemoryListChanged():
                 if self.memory_dialog is not None and self.memory_dialog.isVisible():
                     self.memory_dialog.refresh()
+                return
+        if self._viewing is None:
+            self._pane_changed(change)
+        elif isinstance(change, StatusChanged):
+            self._refresh_status()  # the permissions shown, and whether a chat can start
+
+    def _pane_changed(self, change: Change) -> None:
+        """A change in the conversation the conversation area shows."""
+        match change:
+            case Reset():
+                self.conversation.rebuild()
+                self._refresh_status()
             case StatusChanged():
                 self._refresh_status()
+            case ConversationListChanged() | MemoryListChanged():
+                pass  # a sub-session's own: the window lists the home's
             case _:
                 self.conversation.changed(change)
 
@@ -2496,7 +2514,7 @@ class MainWindow(QMainWindow):
         self.send_button.setAccessibleName("Stop" if model.busy else "Send message")
         self._paint_icons()
         self.conversation.refresh()
-        reason = self.controller.can_switch()
+        reason = self.home.can_switch()  # another chat opens in the window's own runtime
         for widget in (self.new_button, self.new_action):
             widget.setEnabled(reason is None)
         self.switch_reason.setText(reason or "")
@@ -2779,9 +2797,11 @@ class MainWindow(QMainWindow):
 
     def _show(self, viewing: Viewing | None) -> None:
         """Put a sub-session on screen, or (None) the window's own conversation."""
-        self.model.on_change = lambda change: None
+        if self._viewing is not None:
+            self._viewing.controller.model.on_change = lambda change: None
         self._viewing = viewing
-        self.model.on_change = self._changed
+        if viewing is not None:
+            viewing.controller.model.on_change = self._pane_changed
         self.conversation.rebuild()
         self._refresh_status()
 
