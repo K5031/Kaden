@@ -27,13 +27,14 @@ import subprocess
 import threading
 import time
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import IO, Any
 
 import httpx2
 import jsonschema
+import pathspec
 import pypdf
 import pypdf.errors
 
@@ -156,8 +157,8 @@ FILE_SPECS: tuple[ToolSpec, ...] = (
         name="list_files",
         description=(
             "List files under a directory (default: workspace root), skipping hidden "
-            "directories. `pattern` is a glob matched against the file name, or against the "
-            "relative path when it contains '/'."
+            "directories and what .gitignore files leave out. `pattern` is a glob matched "
+            "against the file name, or against the relative path when it contains '/'."
         ),
         parameters=_object({"path": _STRING, "pattern": _STRING}),
         read_only=True,
@@ -166,11 +167,17 @@ FILE_SPECS: tuple[ToolSpec, ...] = (
         name="search_files",
         description=(
             "Search text files under a directory for a Python regular expression. Returns "
-            "`path:line: text` matches. `glob` filters file names. Hidden directories, "
-            "binary files and files over 1 MB are skipped."
+            "`path:line: text` matches, with `context` lines before and after each as "
+            "`path-line- text`; `output` \"files\" lists only the files that match and "
+            "\"count\" how many lines match in each. `glob` filters file names. Hidden "
+            "directories, what .gitignore files leave out, binary files and files over 1 MB "
+            "are skipped."
         ),
         parameters=_object(
-            {"pattern": {"type": "string", "minLength": 1}, "path": _STRING, "glob": _STRING},
+            {"pattern": {"type": "string", "minLength": 1}, "path": _STRING, "glob": _STRING,
+             "ignore_case": {"type": "boolean"},
+             "context": {"type": "integer", "minimum": 0, "maximum": 10},
+             "output": {"enum": ["content", "files", "count"]}},
             ["pattern"],
         ),
         read_only=True,
@@ -378,6 +385,26 @@ class ShellFilesTools(Tools):
         except NotADirectoryError:
             raise ToolError(f"{self._display(path)} is not a directory") from None
 
+    def _ignored_above(self, base: Path) -> list[_Rules]:
+        """The .gitignore files of the folders from the workspace down to `base`, above
+        it, as they apply to what is under `base`. Blocking."""
+        try:
+            below = base.resolve().relative_to(self.root)
+        except (ValueError, OSError):
+            return []  # outside the workspace: only its own .gitignore files count
+        rules = []
+        folder = self.root
+        for depth, part in enumerate((None, *below.parts)):
+            if part is not None:
+                folder = folder / part
+            if depth == len(below.parts):
+                break  # base's own is read as it is walked
+            spec = _gitignore((folder / ".gitignore").read_text
+                              if (folder / ".gitignore").is_file() else None)
+            if spec is not None:
+                rules.append(_Rules("", "/".join(below.parts[depth:]), spec))
+        return rules
+
     def _display(self, path: Path) -> str:
         try:
             return path.relative_to(self.root).as_posix()
@@ -584,7 +611,7 @@ class ShellFilesTools(Tools):
             found = []
             folder = self._open_folder(base, ctx)
             try:
-                for rel, name, _ in _walk(folder, cancelled, ctx):
+                for rel, name, _ in _walk(folder, cancelled, ctx, self._ignored_above(base)):
                     if fnmatch(rel if "/" in pattern else name, pattern):
                         found.append(rel)
                         if len(found) > MAX_LIST_ENTRIES:
@@ -602,8 +629,10 @@ class ShellFilesTools(Tools):
     async def _search_files(self, args: dict[str, Any], ctx: ToolContext) -> str:
         base = self._path(args.get("path"))
         name_glob = args.get("glob")
+        output, context = args.get("output", "content"), args.get("context", 0)
         try:
-            regex = re.compile(args["pattern"])
+            regex = re.compile(args["pattern"],
+                               re.IGNORECASE if args.get("ignore_case") else 0)
         except re.error as e:
             raise ToolError(f"Invalid regular expression: {e}") from None
 
@@ -611,16 +640,24 @@ class ShellFilesTools(Tools):
             matches: list[str] = []
             folder = self._open_folder(base, ctx)
             try:
-                for rel, name, within in _walk(folder, cancelled, ctx):
+                for rel, name, within in _walk(folder, cancelled, ctx,
+                                               self._ignored_above(base)):
                     if name_glob and not fnmatch(name, name_glob):
                         continue
                     if (data := _regular_file(name, within)) is None or b"\0" in data[:8192]:
                         continue
-                    for n, line in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
-                        if regex.search(line):
-                            matches.append(f"{rel}:{n}: {line[:500]}")
-                            if len(matches) > MAX_SEARCH_MATCHES:
-                                return matches
+                    lines = data.decode("utf-8", "replace").splitlines()
+                    hits = [n for n, line in enumerate(lines, 1) if regex.search(line)]
+                    if not hits:
+                        continue
+                    if output == "files":
+                        matches.append(rel)
+                    elif output == "count":
+                        matches.append(f"{rel}:{len(hits)}")
+                    else:
+                        matches += _with_context(rel, lines, hits, context)
+                    if len(matches) > MAX_SEARCH_MATCHES:
+                        return matches
             finally:
                 os.close(folder)
             return matches
@@ -686,12 +723,40 @@ async def _terminate_group(proc: asyncio.subprocess.Process) -> None:
         await proc.wait()
 
 
-def _walk(folder: int, cancelled: threading.Event, ctx: ToolContext
-          ) -> Iterator[tuple[str, str, int]]:
-    """The files under the open folder, skipping hidden directories: each its path from
-    there, its name and the open directory it is in. Links to directories are not
-    followed, and nothing is reached by a path that could be swapped meanwhile. Sends
+@dataclass(frozen=True)
+class _Rules:
+    """A .gitignore file's patterns, for the paths under `scope` (from where the walk
+    starts; "" for all), each seen from the file's own folder as `offset` + the rest."""
+
+    scope: str
+    offset: str
+    spec: pathspec.GitIgnoreSpec
+
+    def ignore(self, rel: str, folder: bool) -> bool:
+        if self.scope and not rel.startswith(self.scope + "/"):
+            return False
+        rest = rel[len(self.scope) + 1:] if self.scope else rel
+        path = f"{self.offset}/{rest}" if self.offset else rest
+        return self.spec.match_file(path + ("/" if folder else ""))
+
+
+def _gitignore(read: Callable[[], str] | None) -> pathspec.GitIgnoreSpec | None:
+    if read is None:
+        return None
+    try:
+        return pathspec.GitIgnoreSpec.from_lines(read().splitlines())
+    except (OSError, ValueError):
+        return None
+
+
+def _walk(folder: int, cancelled: threading.Event, ctx: ToolContext,
+          rules: Sequence[_Rules] = ()) -> Iterator[tuple[str, str, int]]:
+    """The files under the open folder, skipping hidden directories and what the
+    .gitignore files (`rules` from above it, and each folder's own) leave out: each its
+    path from there, its name and the open directory it is in. Links to directories are
+    not followed, and nothing is reached by a path that could be swapped meanwhile. Sends
     silent heartbeats as it goes."""
+    rules = list(rules)
     last_beat = 0.0
     for dirpath, dirnames, filenames, within in os.fwalk(".", dir_fd=folder):
         if cancelled.is_set():
@@ -699,10 +764,40 @@ def _walk(folder: int, cancelled: threading.Event, ctx: ToolContext
         if (now := time.monotonic()) - last_beat >= HEARTBEAT_INTERVAL:
             ctx.progress("")
             last_beat = now
-        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
         under = dirpath[2:]  # "." or "./a/b"
+        if (".gitignore" in filenames and (text := _regular_file(".gitignore", within))
+                and (spec := _gitignore(lambda text=text: text.decode("utf-8", "replace")))):
+            rules.append(_Rules(under, "", spec))
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith(".")
+                             and not _ignored(rules, f"{under}/{d}" if under else d, True))
         for name in sorted(filenames):
-            yield (f"{under}/{name}" if under else name), name, within
+            rel = f"{under}/{name}" if under else name
+            if not _ignored(rules, rel, False):
+                yield rel, name, within
+
+
+def _ignored(rules: Sequence[_Rules], rel: str, folder: bool) -> bool:
+    return any(rule.ignore(rel, folder) for rule in rules)
+
+
+def _with_context(rel: str, lines: Sequence[str], hits: Sequence[int],
+                  context: int) -> list[str]:
+    """The lines that match, as `path:line: text`, each with `context` lines around it as
+    `path-line- text`; "--" between groups that do not touch."""
+    if not context:
+        return [f"{rel}:{n}: {lines[n - 1][:500]}" for n in hits]
+    out: list[str] = []
+    shown = set(hits)
+    last = 0
+    for n in hits:
+        first, end = max(1, n - context), min(len(lines), n + context)
+        if last and first > last + 1:
+            out.append("--")
+        for m in range(max(first, last + 1), end + 1):
+            sep = ":" if m in shown else "-"
+            out.append(f"{rel}{sep}{m}{sep} {lines[m - 1][:500]}")
+        last = max(last, end)
+    return out
 
 
 def _regular_file(name: str, within: int) -> bytes | None:

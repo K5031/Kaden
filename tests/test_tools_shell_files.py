@@ -269,6 +269,39 @@ async def test_search_files_skips_hidden(tools, tmp_path):
     assert out.is_error
 
 
+async def test_listing_and_searching_leave_out_what_git_ignores(tools, workspace, tmp_path):
+    """As git sees the project: the .gitignore files from the work folder down to where
+    the search starts, and those below it, each for its own folder."""
+    (workspace / ".gitignore").write_text("node_modules/\n*.log\n")
+    (workspace / "node_modules" / "lib").mkdir(parents=True)
+    (workspace / "node_modules" / "lib" / "index.js").write_text("answer = 1\n")
+    (workspace / "debug.log").write_text("answer in a log\n")
+    (workspace / "pkg" / ".gitignore").write_text("generated.py\n")
+    (workspace / "pkg" / "generated.py").write_text("def answer(): pass\n")
+    listed = (await run(tools, tmp_path, "list_files")).content.splitlines()
+    assert listed == [".gitignore", "hello.txt", "pkg/.gitignore", "pkg/mod.py"]
+    found = await run(tools, tmp_path, "search_files", pattern="answer")
+    assert found.content == "pkg/mod.py:1: def answer():"
+    inside = await run(tools, tmp_path, "search_files", pattern="answer", path="pkg")
+    assert inside.content == "mod.py:1: def answer():"  # pkg's own .gitignore holds here
+
+
+async def test_search_can_ignore_case_show_context_and_list_only_files(tools, workspace,
+                                                                        tmp_path):
+    (workspace / "notes.md").write_text("one\nTODO: first\nthree\nfour\ntodo: second\n")
+    assert (await run(tools, tmp_path, "search_files", pattern="todo")).content == (
+        "notes.md:5: todo: second")
+    found = await run(tools, tmp_path, "search_files", pattern="todo", ignore_case=True)
+    assert found.content == "notes.md:2: TODO: first\nnotes.md:5: todo: second"
+    around = await run(tools, tmp_path, "search_files", pattern="first", context=1)
+    assert around.content == "notes.md-1- one\nnotes.md:2: TODO: first\nnotes.md-3- three"
+    files = await run(tools, tmp_path, "search_files", pattern="o", output="files")
+    assert files.content == "hello.txt\nnotes.md"
+    counts = await run(tools, tmp_path, "search_files", pattern="o", output="count",
+                       ignore_case=True)
+    assert counts.content == "hello.txt:2\nnotes.md:4"
+
+
 # ── confined to the work folder ──
 
 BWRAP = pytest.mark.skipif(shutil.which("bwrap") is None, reason="needs bubblewrap")
