@@ -88,7 +88,13 @@ comes back as the result of that step. Several can run at once.
 - **The agent hears back.** When a sub-session stops working (it is done, asks something,
   or answered you) and the agent was not already waiting for it, the agent gets a short
   notice in its conversation, which wakes it.
-
+- **It can work on its own branch.** In a git repository, the agent can give a sub-session
+  a worktree of its own (`isolation: "worktree"`, as in Claude Code): a separate checkout in
+  `.claude/worktrees/` of the repository, on a new branch from the last commit, so its
+  changes don't mix with yours or another sub-session's. When it ends, a worktree it left
+  unchanged is removed with its branch; one it changed is kept, and its path and branch come
+  back with its report. Deleting the sub-session keeps a changed worktree: the code is yours.
+  Outside a git repository the agent is told it can't.
 - **A spending limit is up to you.** A sub-session has none unless you set a limit per
   sub-session in Settings, or the agent gives one a limit of its own. With yours set, a
   sub-session gets that much unless the agent gives it less, and never more; it is not

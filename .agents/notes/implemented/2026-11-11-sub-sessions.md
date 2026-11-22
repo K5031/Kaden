@@ -29,8 +29,8 @@ listing and peeking are trivial. In Kadence the user-facing host is the frontend
 `kadence.frontends.sessions.SubSessions`, a Tools module with no UI code, which the
 desktop app creates and offers. It offers:
 
-- `Agent(description, prompt, run_in_background, budget_usd)`, Claude Code's subagent
-  tool ([all of Claude Code's tools](2026-11-22-all-of-claude-codes-tools.md)):
+- `Agent(description, prompt, run_in_background, budget_usd, isolation)`, Claude Code's
+  subagent tool ([all of Claude Code's tools](2026-11-22-all-of-claude-codes-tools.md)):
   starts a child, a separate Kadence agent with its own context, in the conversation's
   work folder, on `prompt` as a goal, titled `description`. The agent calls it when the
   user asked for the work; when it is its own idea it proposes the call
@@ -38,6 +38,8 @@ desktop app creates and offers. It offers:
   proposes. The call waits for the child, or with `run_in_background` runs in the
   background, and returns the child's report when the goal is reached, or its question
   when it asks for help.
+  With `isolation: "worktree"` it works in a git worktree of its own
+  ([subagents in worktrees](2026-11-22-subagents-in-worktrees.md)).
 - `SendMessage(to, message)`: answers a question or adds an instruction, then waits
   the same way.
 - A child is stopped with `TaskStop` on the call that waits for it.

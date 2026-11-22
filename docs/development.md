@@ -65,7 +65,8 @@ src/kadence/tools/                     Tools
   mcp/                                tools of MCP servers
 src/kadence/frontends/                 Frontends; common.py is what every frontend shows the same way,
                                       headless.py, remote.py and wire.py the headless channel,
-                                      sessions.py the sub-sessions a frontend hosts
+                                      sessions.py the sub-sessions a frontend hosts, worktrees.py
+                                      their git worktrees
   desktop/                            desktop app: viewmodel.py (no Qt), window.py, voice/ (speech), assets
 src/kadence/skills/                    the skills Kadence comes with (runtime/skills.py loads them)
 src/kadence/window.py                  the window launcher
