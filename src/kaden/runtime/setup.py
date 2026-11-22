@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import fields, replace
-from typing import NoReturn
+from typing import Any, NoReturn
 
 from kaden.api import (
     AgentState,
@@ -12,7 +12,6 @@ from kaden.api import (
     CallId,
     ConversationId,
     ConversationInfo,
-    Decision,
     Duty,
     EventEnvelope,
     MemoryNote,
@@ -69,7 +68,7 @@ class SetupRuntime:
 
     def snapshot(self) -> RuntimeSnapshot:
         return RuntimeSnapshot(self._bus.seq, AgentState.NOT_STARTED, None, None,
-                               self._config.model, UsageSnapshot(Usage(), 0, 0.0), [], [], [])
+                               self._config.model, UsageSnapshot(Usage(), 0, 0.0), [], [])
 
     async def settings(self) -> Settings:
         cfg = self._config
@@ -176,24 +175,15 @@ class SetupRuntime:
     async def delete_note(self, note_id: str) -> None:
         self._refuse()
 
-    async def resolve_proposal(self, proposal_id: CallId, accept: bool) -> None:
-        self._refuse()
-
     async def set_duty(self, duty: Duty | None) -> None:
         self._refuse()
 
     async def set_plan(self, plan: Sequence[PlanItem]) -> None:
         self._refuse()
 
-    async def resolve_permission(self, request_id: str, decision: Decision) -> None:
-        self._refuse()
-
-    async def answer_question(self, call_id: str, answers: Mapping[str, str]) -> None:
+    async def respond(self, prompt_id: str, reply: Any) -> None:
         self._refuse()
 
     async def set_plan_mode(self, on: bool) -> None:
         self._refuse()
 
-    async def resolve_plan(self, call_id: str, approve: bool, feedback: str | None = None,
-                           permissions: PermissionPolicy | None = None) -> None:
-        self._refuse()

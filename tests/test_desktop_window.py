@@ -2150,3 +2150,17 @@ async def test_zooming_rescales_the_sidebar_with_the_text(make, qapp, unzoomed):
     await asyncio.sleep(0.05)
     assert splitter.sizes()[0] == pytest.approx(400 / 1.1, abs=2)
     window.close()
+
+
+def test_a_prompt_of_a_kind_the_app_does_not_know_is_answered_in_words(qapp):
+    from kaden.api import Prompt
+    from kaden.frontends.desktop.window import AnyPromptCard
+
+    replies: list[tuple[str, Any]] = []
+    card = AnyPromptCard(Prompt("p1", "survey", "How did it go?"),
+                         lambda prompt_id, reply: replies.append((prompt_id, reply)))
+    assert any(label.text() == "How did it go?" for label in card.findChildren(QLabel))
+    card.reply.setText("Well")
+    [send] = buttons(card, "Send")
+    send.click()
+    assert replies == [("p1", "Well")] and not card.isEnabled()

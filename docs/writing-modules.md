@@ -101,12 +101,12 @@ Optional: `list_tools` (tools your provider runs itself, such as its web search)
 `run(runtime)` is your whole program; when it returns, Kaden quits. You get a
 `RuntimeAPI`:
 
-- **Commands**: `start` a conversation, `send` a message, `stop`, `resolve_permission`,
+- **Commands**: `start` a conversation, `send` a message, `stop`, `respond` to what waits,
   and about two dozen more for conversations, settings, memory and duties. Use the ones
   your interface offers.
 - **Events**: `runtime.events()` yields everything that happens, each with a sequence
   number. A small interface needs `MessageCommitted` (a finished message), `StateChanged`
-  (working or idle), `PermissionRequested` (answer it, or the agent waits) and `Failure`.
+  (working or idle), `PromptOpened` (answer it, or the agent waits) and `Failure`.
   `TextDelta` and `ToolStarted` make it feel live.
 - **Catching up**: `runtime.snapshot()` plus `runtime.history(...)` rebuild the screen;
   a gap in the sequence numbers means you missed events and should do that.

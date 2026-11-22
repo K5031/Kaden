@@ -24,7 +24,7 @@ allow workspace, auto.
   runs.
 - Every other call is **reviewed**: one request decides whether it runs without asking.
   "Allow" runs it; anything else opens the usual prompt, with the reviewer's reason in
-  `PermissionRequest.reason`. With a non-interactive frontend that call is refused.
+  the permission prompt's `reason`. With a non-interactive frontend that call is refused.
 
 ### The review
 
@@ -60,7 +60,7 @@ allow workspace, auto.
 - Stop cancels a running review; the call is not started.
 - The outcome is logged (`permission_review`, and the permission record with
   `by: "review"`), without the reason text; an allowed call emits
-  `PermissionResolved(ALLOW_ONCE)`.
+  an `ALLOW_ONCE` decision in the event log.
 
 ### Frontends
 

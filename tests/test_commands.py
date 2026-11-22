@@ -17,14 +17,13 @@ from kaden.api import (
     MessageQueued,
     ModelSelected,
     PermissionPolicy,
-    PermissionRequested,
-    PermissionResolved,
+    PromptClosed,
     RuntimeStateError,
     StartOptions,
     Text,
     Usage,
 )
-from tests.conftest import Harness, eventually
+from tests.conftest import Harness, asked, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
 
@@ -51,7 +50,7 @@ TABLE: dict[str, dict[Any, str]] = {
     "activate": {N: RAISE, I: OK, T: RAISE, R: RAISE, A: RAISE, S: RAISE, X: OK, F: OK},
     "stop": {N: NOOP, I: NOOP, T: OK, R: OK, A: OK, S: NOOP, X: NOOP, F: NOOP},
     "select_model": {N: OK, I: OK, T: OK, R: OK, A: OK, S: OK, X: OK, F: OK},
-    "resolve_permission": {N: RAISE, I: RAISE, T: RAISE, R: RAISE, A: OK, S: RAISE, X: RAISE,
+    "respond": {N: RAISE, I: RAISE, T: RAISE, R: RAISE, A: OK, S: RAISE, X: RAISE,
                            F: RAISE},
 }
 
@@ -107,10 +106,9 @@ async def run_command(h: Harness, command: str) -> None:
             await rt.stop()
         case "select_model":
             await rt.select_model("fake-2")
-        case "resolve_permission":
-            requests = h.rec.of(PermissionRequested)
-            await rt.resolve_permission(requests[-1].request.id if requests else "bogus",
-                                        Decision.ALLOW_ONCE)
+        case "respond":
+            requests = asked(h.rec)
+            await rt.respond(requests[-1].id if requests else "bogus", Decision.ALLOW_ONCE)
 
 
 @pytest.mark.parametrize("state", STATES, ids=str)
@@ -149,8 +147,8 @@ async def test_command_state_cell(make: Any, command: str, state: Any) -> None:
     elif key == ("select_model", OK):
         assert ModelSelected("fake-2") in new
         assert h.runtime.snapshot().model == "fake-2"
-    elif key == ("resolve_permission", OK):
-        assert any(isinstance(e, PermissionResolved) for e in new)
+    elif key == ("respond", OK):
+        assert any(isinstance(e, PromptClosed) for e in new)
     elif key == ("start", OK):
         assert h.runtime.snapshot().conversation is not None
     else:
@@ -214,14 +212,14 @@ async def test_failed_model_allows_activate(make: Any) -> None:
     assert len(core.requests) == 2
 
 
-async def test_resolve_permission_unknown_and_twice(make: Any) -> None:
+async def test_respond_unknown_and_twice(make: Any) -> None:
     h = await enter(make, A)
-    request = h.rec.of(PermissionRequested)[-1].request
+    request = asked(h.rec)[-1]
     with pytest.raises(RuntimeStateError):
-        await h.runtime.resolve_permission("unknown", Decision.ALLOW_ONCE)
-    await h.runtime.resolve_permission(request.id, Decision.DENY)
+        await h.runtime.respond("unknown", Decision.ALLOW_ONCE)
+    await h.runtime.respond(request.id, Decision.DENY)
     with pytest.raises(RuntimeStateError):
-        await h.runtime.resolve_permission(request.id, Decision.ALLOW_ONCE)
+        await h.runtime.respond(request.id, Decision.ALLOW_ONCE)
 
 
 async def test_cancel_operation_requires_running_call(make: Any) -> None:

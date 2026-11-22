@@ -12,13 +12,11 @@ from kaden.api import (
     AgentState,
     OperationResult,
     PermissionPolicy,
-    PermissionRequested,
-    ProposalMade,
-    ProposalResolved,
+    PromptClosed,
     RuntimeStateError,
     ToolStatus,
 )
-from tests.conftest import Harness, eventually
+from tests.conftest import Harness, asked, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
 from tests.test_desktop_window import qapp  # noqa: F401 - a fixture
@@ -50,11 +48,11 @@ async def test_a_proposal_returns_at_once_and_shows_a_card(make):
     results = await h.results()
     assert results["p"].status == ToolStatus.BACKGROUNDED
     assert "dismissed" in results["p"].content  # tells the agent what comes back
-    [made] = h.rec.of(ProposalMade)
-    proposal = made.proposal
-    assert (proposal.id, proposal.call.name, proposal.reason) == ("p", "write",
+    [made] = asked(h.rec, "proposal")
+    proposal = made
+    assert (proposal.id, proposal.call.name, proposal.details["reason"]) == ("p", "write",
                                                                    "They are messy")
-    assert h.runtime.snapshot().proposals == (proposal,)
+    assert tuple(p for p in h.runtime.snapshot().prompts if p.kind == "proposal") == (proposal,)
     assert h.runtime.snapshot().state == AgentState.IDLE
     assert h.tools.started == []  # nothing ran
 
@@ -64,15 +62,15 @@ async def test_approving_runs_exactly_that_call_without_a_prompt(make):
         Step(calls=[call("propose", {"call": WRITE, "reason": "Messy"}, id="p")]),
         Step(text="Proposed."), Step(text="Done tidying.")])
     await h.turn("hi")
-    await h.runtime.resolve_proposal("p", True)
+    await h.runtime.respond("p", True)
     result = await eventually(lambda: outcomes(h).get("p"))
     assert result.status == ToolStatus.OK and "written" in result.content
     [received] = h.tools.received
     assert received.arguments == {"path": "notes.md"}  # the step sentence removed
-    assert h.rec.of(PermissionRequested) == []  # the click was the permission
-    assert h.rec.of(ProposalResolved)[-1] == ProposalResolved("p", True)
+    assert asked(h.rec) == []  # the click was the permission
+    assert h.rec.of(PromptClosed)[-1] == PromptClosed("p", True)
     await eventually(lambda: len(h.core.requests) == 3)  # the outcome woke the agent
-    assert h.runtime.snapshot().proposals == ()
+    assert tuple(p for p in h.runtime.snapshot().prompts if p.kind == "proposal") == ()
 
 
 async def test_dismissing_tells_the_agent(make):
@@ -80,12 +78,12 @@ async def test_dismissing_tells_the_agent(make):
         Step(calls=[call("propose", {"call": WRITE, "reason": "Messy"}, id="p")]),
         Step(text="Proposed."), Step(text="Fine, leaving them.")])
     await h.turn("hi")
-    await h.runtime.resolve_proposal("p", False)
+    await h.runtime.respond("p", False)
     result = await eventually(lambda: outcomes(h).get("p"))
     assert "dismissed" in result.content and h.tools.started == []
     await eventually(lambda: len(h.core.requests) == 3)
     with pytest.raises(RuntimeStateError):
-        await h.runtime.resolve_proposal("p", True)
+        await h.runtime.respond("p", True)
 
 
 async def test_invalid_proposals_are_errors(make):
@@ -98,7 +96,7 @@ async def test_invalid_proposals_are_errors(make):
     results = await h.results()
     assert results["a"].status == ToolStatus.ERROR and "nope" in results["a"].content
     assert results["b"].status == ToolStatus.ERROR
-    assert h.rec.of(ProposalMade) == []
+    assert asked(h.rec, "proposal") == []
 
 
 async def test_a_pending_proposal_does_not_hold_back_other_wake_ups(make):
@@ -108,7 +106,7 @@ async def test_a_pending_proposal_does_not_hold_back_other_wake_ups(make):
         Step(text="Waiting."), Step(text="Fetched.")], permissions=PermissionPolicy.ALLOW_READ_ONLY)
     await h.turn("hi")
     await eventually(lambda: len(h.core.requests) == 3)  # woken by fetch alone
-    assert h.runtime.snapshot().proposals  # still pending
+    assert tuple(p for p in h.runtime.snapshot().prompts if p.kind == "proposal")  # still pending
 
 
 async def test_withdrawing_and_stop_remove_the_card(make):
@@ -120,12 +118,12 @@ async def test_withdrawing_and_stop_remove_the_card(make):
         Step(text="Proposed again.")])
     await h.turn("hi")
     await h.turn("never mind")
-    await eventually(lambda: ProposalResolved("p", None) in h.rec.of(ProposalResolved))
+    await eventually(lambda: PromptClosed("p", None) in h.rec.of(PromptClosed))
     await h.turn("one more")
-    await eventually(lambda: h.runtime.snapshot().proposals)
+    await eventually(lambda: tuple(p for p in h.runtime.snapshot().prompts if p.kind == "proposal"))
     await h.runtime.stop()
-    await eventually(lambda: ProposalResolved("q", None) in h.rec.of(ProposalResolved))
-    assert h.runtime.snapshot().proposals == ()
+    await eventually(lambda: PromptClosed("q", None) in h.rec.of(PromptClosed))
+    assert tuple(p for p in h.runtime.snapshot().prompts if p.kind == "proposal") == ()
     await asyncio.sleep(0)
     assert h.tools.started == []
 

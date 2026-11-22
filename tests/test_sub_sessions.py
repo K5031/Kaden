@@ -138,12 +138,12 @@ async def test_a_childs_permission_prompt_waits_for_the_user(make, tmp_path, chi
                              and sessions.sessions[0], timeout=30)
     assert child.summary.startswith("Needs your approval")
     remote = await sessions.open(child)
-    [request] = remote.snapshot().pending_permissions
+    [request] = remote.snapshot().prompts
     assert request.call.name == "lookup"
-    await remote.resolve_permission(request.id, Decision.ALLOW_ONCE)
+    await remote.respond(request.id, Decision.ALLOW_ONCE)
     await eventually(lambda: not child.approvals, timeout=10)
     with pytest.raises(RuntimeStateError) as again:  # the child's refusal, with its reason
-        await remote.resolve_permission(request.id, Decision.ALLOW_ONCE)
+        await remote.respond(request.id, Decision.ALLOW_ONCE)
     assert again.value.reason is Refusal.NOT_PENDING
     result = await eventually(lambda: outcome(h.store.conversations[h.conversation.id]
                                               .messages, "s"), timeout=30)
@@ -243,7 +243,7 @@ async def test_an_idea_of_the_agents_is_proposed_and_starts_on_approval(
         [finish("Tidied."), {"text": "Done."}])
     await h.turn("Hi")
     assert sessions.sessions == []  # nothing starts before the user approves
-    await h.runtime.resolve_proposal("p", True)
+    await h.runtime.respond("p", True)
     result = await eventually(lambda: outcome(h.store.conversations[h.conversation.id]
                                               .messages, "p"), timeout=30)
     assert "Tidied." in result.content

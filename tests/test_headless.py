@@ -152,11 +152,10 @@ async def test_permission_prompts_go_out_and_are_answered(make, clients):
     await client.run(h.runtime)
     await client.request("start")
     await client.request("send", text="write it")
-    [asked] = await eventually(lambda: client.events("PermissionRequested"))
-    request = asked["request"]
-    assert request["call"]["name"] == "write"
-    await client.request("resolve_permission", request_id=request["id"],
-                         decision="allow_once")
+    [asked] = await eventually(lambda: client.events("PromptOpened"))
+    request = asked["prompt"]
+    assert request["kind"] == "permission" and request["call"]["name"] == "write"
+    await client.request("respond", prompt_id=request["id"], reply="allow_once")
     await eventually(lambda: (h.store.conversations and any(
         getattr(b, "status", None) == "ok" for m in next(iter(
             h.store.conversations.values())).messages for b in m.blocks)))
@@ -294,14 +293,16 @@ async def test_plan_mode_is_driven_over_the_channel(make, clients):
     assert (await client.request("set_plan_mode", on=True))["result"] is None
     await eventually(lambda: client.events("PlanModeChanged"))
     await client.request("send", text="plan it")
-    [proposed] = await eventually(lambda: client.events("PlanProposed"))
-    assert proposed == {"type": "PlanProposed", "call_id": "x", "plan": "1. Do it"}
-    assert (await client.request("snapshot"))["result"]["pending_plan"]["call_id"] == "x"
-    reply = await client.request("resolve_plan", call_id="x", approve=True,
-                                 permissions="allow_workspace")
+    [opened] = await eventually(lambda: client.events("PromptOpened"))
+    proposed = opened["prompt"]
+    assert (proposed["id"], proposed["kind"], proposed["details"]) == (
+        "x", "plan", {"plan": "1. Do it"})
+    assert (await client.request("snapshot"))["result"]["prompts"][0]["id"] == "x"
+    reply = await client.request("respond", prompt_id="x",
+                                 reply={"approve": True, "permissions": "allow_workspace"})
     assert reply["result"] is None
-    [resolved] = await eventually(lambda: client.events("PlanResolved"))
-    assert resolved["approved"] is True
+    [resolved] = await eventually(lambda: client.events("PromptClosed"))
+    assert resolved["reply"]["approve"] is True
     snapshot = (await client.request("snapshot"))["result"]
     assert snapshot["plan_mode"] is False
     assert (await h.runtime.settings()).permissions == PermissionPolicy.ALLOW_WORKSPACE

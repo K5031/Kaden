@@ -23,15 +23,9 @@ from kaden.api import (
     MessageQueued,
     ModelSelected,
     OperationInfo,
-    PermissionRequested,
-    PermissionResolved,
     PlanModeChanged,
-    PlanProposed,
-    PlanResolved,
-    ProposalMade,
-    ProposalResolved,
-    QuestionAnswered,
-    QuestionAsked,
+    PromptClosed,
+    PromptOpened,
     Refusal,
     RuntimeAPI,
     RuntimeSnapshot,
@@ -262,16 +256,8 @@ def _applied(snap: RuntimeSnapshot, envelope: EventEnvelope) -> RuntimeSnapshot:
             return replace(snap, duty_wake_at=wake_at)
         case HelpNeeded(question=question):
             return replace(snap, help_needed=question)
-        case QuestionAsked():
-            return replace(snap, pending_question=envelope.event)
-        case QuestionAnswered():
-            return replace(snap, pending_question=None)
         case PlanModeChanged(on=on):
             return replace(snap, plan_mode=on)
-        case PlanProposed():
-            return replace(snap, pending_plan=envelope.event)
-        case PlanResolved():
-            return replace(snap, pending_plan=None)
         case ToolStarted(call=call):
             return replace(snap, operations=(*snap.operations, OperationInfo(call, 0.0)))
         case ToolProgress(call_id=call_id, text=text):
@@ -285,16 +271,10 @@ def _applied(snap: RuntimeSnapshot, envelope: EventEnvelope) -> RuntimeSnapshot:
         case ToolFinished(result=result):
             return replace(snap, operations=tuple(
                 o for o in snap.operations if o.call.id != result.call_id))
-        case PermissionRequested(request=request):
-            return replace(snap, pending_permissions=(*snap.pending_permissions, request))
-        case PermissionResolved(request_id=request_id):
-            return replace(snap, pending_permissions=tuple(
-                r for r in snap.pending_permissions if r.id != request_id))
-        case ProposalMade(proposal=proposal):
-            return replace(snap, proposals=(*snap.proposals, proposal))
-        case ProposalResolved(proposal_id=proposal_id):
-            return replace(snap, proposals=tuple(
-                p for p in snap.proposals if p.id != proposal_id))
+        case PromptOpened(prompt=prompt):
+            return replace(snap, prompts=(*snap.prompts, prompt))
+        case PromptClosed(prompt_id=prompt_id):
+            return replace(snap, prompts=tuple(p for p in snap.prompts if p.id != prompt_id))
         case MessageQueued():
             return replace(snap, queued_messages=(*snap.queued_messages, envelope.event))
         case MessageCommitted(message=message):

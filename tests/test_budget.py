@@ -15,13 +15,12 @@ from kaden.api import (
     Failure,
     FailureKind,
     PermissionPolicy,
-    PermissionRequested,
     ToolFinished,
     ToolStatus,
     TransientCoreError,
     Usage,
 )
-from tests.conftest import Harness, eventually
+from tests.conftest import Harness, asked, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
 
@@ -94,9 +93,9 @@ async def test_duration_excludes_permission_wait_and_backoff(make: Any) -> None:
                             budget=Budget(max_duration_s=100))
     await h.start()
     await h.runtime.send("go")
-    request = (await h.rec.wait_for(lambda r: r.of(PermissionRequested)))[0].request
+    request = (await h.rec.wait_for(lambda r: asked(r)))[0]
     await asyncio.sleep(0.4)
-    await h.runtime.resolve_permission(request.id, Decision.ALLOW_ONCE)
+    await h.runtime.respond(request.id, Decision.ALLOW_ONCE)
     await h.rec.wait_state(AgentState.IDLE, count=2)
     assert h.runtime.snapshot().usage.elapsed_s < 0.3
 

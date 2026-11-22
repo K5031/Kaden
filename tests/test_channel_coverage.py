@@ -48,7 +48,7 @@ async def test_a_kaden_that_could_not_start_says_so_whatever_is_sent(tmp_path, m
     setup = SetupRuntime(RuntimeConfig(data_dir=tmp_path), "terminal", "no API key")
     for command in (setup.send("look", files=["a.png"], spoken=True), setup.notify("x"),
                     setup.set_plan([]), setup.set_duty(None),
-                    setup.resolve_proposal("p", True)):
+                    setup.respond("p", True)):
         with pytest.raises(RuntimeStateError, match="could not start: no API key") as refused:
             await command
         assert refused.value.reason is Refusal.UNAVAILABLE

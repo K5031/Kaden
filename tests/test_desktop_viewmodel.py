@@ -27,7 +27,6 @@ from kaden.api import (
     ModuleChoice,
     ModuleInfo,
     PermissionPolicy,
-    PermissionRequested,
     PlanStatus,
     ReasoningDelta,
     Refusal,
@@ -79,7 +78,7 @@ from kaden.frontends.desktop.viewmodel import (
     settings_update,
     user_message,
 )
-from tests.conftest import Harness, eventually
+from tests.conftest import Harness, asked, eventually
 from tests.fakes.core import Step, call
 from tests.fakes.settings import settings as fake_settings
 
@@ -136,11 +135,11 @@ async def test_permission_prompt_is_answered_and_removed(make):
     await eventually(lambda: model.prompts)
     assert model.state is AgentState.AWAITING_PERMISSION
     (request,) = model.prompts.values()
-    assert request.call.name == "write" and not request.read_only
+    assert request.call.name == "write" and not request.details["read_only"]
     (waiting,) = of(model, ToolItem)  # nothing runs until the user answers
     assert waiting.phase is Phase.WAITING and waiting.state_label == "waiting"
     assert not waiting.cancellable
-    controller.resolve(request.id, Decision.ALLOW_ONCE)
+    controller.respond(request.id, Decision.ALLOW_ONCE)
     await eventually(lambda: not model.prompts and not model.busy)
     (tool,) = of(model, ToolItem)
     assert tool.status is ToolStatus.OK and not hasattr(tool, "notes")  # no permission line
@@ -154,7 +153,7 @@ async def test_denied_call_is_shown_as_declined(make):
     model, controller, _ = await attach(h)
     controller.send("write")
     await eventually(lambda: model.prompts)
-    controller.resolve(next(iter(model.prompts)), Decision.DENY)
+    controller.respond(next(iter(model.prompts)), Decision.DENY)
     await eventually(lambda: not model.busy and of(model, ToolItem)[0].status is not None)
     assert of(model, ToolItem)[0].state_label == "declined"
 
@@ -234,7 +233,7 @@ async def test_attach_mid_cycle_restores_tools_prompts_and_queue(make):
     h.core.add(Step(calls=[call("index")]), Step(calls=[call("write")]), Step(text="ok"))
     await h.start()
     await h.runtime.send("index and write")
-    await h.rec.wait_for(lambda r: r.of(PermissionRequested))
+    await h.rec.wait_for(lambda r: asked(r))
     await h.runtime.send("queued meanwhile")
     await eventually(lambda: any(op.last_progress for op in h.runtime.snapshot().operations))
     model, controller, _ = await attach(h)
@@ -244,7 +243,7 @@ async def test_attach_mid_cycle_restores_tools_prompts_and_queue(make):
     assert len(model.prompts) == 1 and model.state is AgentState.AWAITING_PERMISSION
     assert [(u.text, u.queued) for u in of(model, UserItem)] == [
         ("index and write", False), ("queued meanwhile", True)]
-    controller.resolve(next(iter(model.prompts)), Decision.ALLOW_ONCE)
+    controller.respond(next(iter(model.prompts)), Decision.ALLOW_ONCE)
     await eventually(lambda: not model.prompts and write.status is ToolStatus.OK)
     await eventually(lambda: not of(model, UserItem)[1].queued)
 
@@ -414,7 +413,7 @@ CONVERSATION = ConversationInfo("c", None, 0.0, 0.0)
 def _snapshot(seq: int = 0) -> RuntimeSnapshot:
     return RuntimeSnapshot(seq=seq, state=AgentState.IDLE, conversation=CONVERSATION,
                            config=None, model="m", usage=UsageSnapshot(Usage(), 0, 0.0),
-                           operations=(), pending_permissions=(), queued_messages=())
+                           operations=(), queued_messages=())
 
 
 def _plan(call_id: str, *steps: tuple[str, str]) -> ToolCall:

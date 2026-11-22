@@ -25,10 +25,8 @@ from kaden.api import (
     MessageCommitted,
     MessageQueued,
     OpaqueBlock,
-    PermissionRequested,
-    PlanProposed,
-    QuestionAnswered,
-    QuestionAsked,
+    PromptClosed,
+    PromptOpened,
     ReasoningDelta,
     RuntimeEvent,
     SettingsChanged,
@@ -60,16 +58,12 @@ def _logged(event: RuntimeEvent) -> dict[str, Any]:
         case ToolFinished(result=result, duration_s=duration_s):
             return {"call_id": result.call_id, "status": result.status,
                     "duration_s": duration_s}
-        case QuestionAsked(call_id=call_id, questions=questions):
-            return {"call_id": call_id, "questions": len(questions)}
-        case QuestionAnswered(call_id=call_id, answers=answers):
-            return {"call_id": call_id, "answered": answers is not None}
-        case PlanProposed(call_id=call_id, plan=plan):
-            return {"call_id": call_id, "plan_chars": len(plan)}
-        case PermissionRequested(request=request):
-            return {"request_id": request.id, "call_id": request.call.id,
-                    "name": request.call.name, "read_only": request.read_only,
-                    "confined": request.confined}
+        case PromptOpened(prompt=prompt):
+            return {"prompt_id": prompt.id, "kind": prompt.kind,
+                    "call_id": prompt.call.id if prompt.call else None,
+                    "name": prompt.call.name if prompt.call else None}
+        case PromptClosed(prompt_id=prompt_id, reply=reply):
+            return {"prompt_id": prompt_id, "answered": reply is not None}
     data = dataclasses.asdict(event)
     match event:
         case SettingsChanged():

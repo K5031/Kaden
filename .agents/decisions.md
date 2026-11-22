@@ -59,7 +59,7 @@ Event log records:
 `data` holds the event's dataclass fields, except that content is replaced: `MessageCommitted`
 has `message_id`, `role`, `author`, `blocks` (type tags) and `stop`; `MessageQueued` has
 `author` and `chars`;
-`ToolStarted`, `ToolFinished` and `PermissionRequested` name the call without arguments or
+`ToolStarted`, `ToolFinished` and `PromptOpened` name the call without arguments or
 output; `SettingsChanged` has `system_prompt_chars`; `ConversationUpdated` has no title or
 preview.
 
@@ -696,7 +696,7 @@ Design: [Agent Note](notes/implemented/2026-11-11-headless-units.md).
 | Encoding | Dataclasses as objects with `"type": <class name>` and their fields; enums as values; tuples as lists. Requests take plain JSON (a duty and plan items as objects without `type`) |
 | Events | Every envelope, deltas included, as an `event` notification with `seq` |
 | Start-up | With `start` the frontend starts (a new conversation with a duty); a failure is written to stderr as `kaden: <message>` and the unit quits |
-| Prompts | `interactive_permissions=True`: prompts wait for `resolve_permission` like a person's |
+| Prompts | `interactive_permissions=True`: prompts wait for `respond` like a person's |
 | Quit | stdin closing: requests already read are answered, then `run()` returns |
 
 ## Sub-sessions
@@ -733,7 +733,7 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Operation | The proposal is an operation with the `propose` call's id, backgrounded at once (no initial wait), spec timeout none while it waits. The proposed call gets the id `<propose id>-call`. On approval its tool's own timeout (else the default) applies |
 | Approval | The click is the permission: no gate, logged as a `permission` decision `by="proposal"`. A tool call is reserved from the budget only on approval. Waiting is not activity for the duration budget |
 | Wake-up | Pending proposals are left out of the wake set; a finished proposal operation sets a flag that wakes an idle agent, cleared when the next request is built |
-| Withdrawn | `TaskStop` on its id, Stop, and `start()` (switching conversations) cancel pending proposals: `ProposalResolved(id, None)`. Pending proposals are not in `RuntimeSnapshot.operations` nor counted in `StateChanged.pending_ops` |
+| Withdrawn | `TaskStop` on its id, Stop, and `start()` (switching conversations) cancel pending proposals: `PromptClosed(id, None)`. Pending proposals are not in `RuntimeSnapshot.operations` nor counted in `StateChanged.pending_ops` |
 | Results | Approved: the call's own output. Dismissed: "The user dismissed the proposal; it did not run." (OK status) |
 | Cards | Desktop: `ProposalCard` with the permission cards ("Kaden proposes: <step sentence>", the reason, other arguments; a `Agent` shows its task), Approve and Dismiss |
 

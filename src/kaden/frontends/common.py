@@ -33,10 +33,9 @@ from kaden.api import (
     ModuleChoice,
     OperationResult,
     PermissionPolicy,
-    PermissionRequest,
     PlanItem,
     PlanStatus,
-    Proposal,
+    Prompt,
     ServerToolUse,
     Settings,
     SettingsUpdate,
@@ -58,7 +57,7 @@ PERMISSION_LABELS = {
 @dataclass(frozen=True, slots=True)
 class Card:
     """What a SUGGESTION_TOOLS call shows under the answer. `action` is the index of the
-    option that runs a call: the card Proposal with id `call_id`, while it is pending."""
+    option that runs a call: the card's PROPOSAL prompt, with id `call_id`, while it is open."""
 
     call_id: str
     recap: str
@@ -108,16 +107,18 @@ def notice_of(message: Message | MessageQueued) -> str | None:
     return "".join(b.text for b in message.blocks if isinstance(b, Text)).strip()
 
 
-def proposal_parts(proposal: Proposal) -> tuple[str, str]:
-    """A proposal for its card: the headline ("Kaden proposes: …") and the call's other
-    arguments."""
-    headline, detail = call_parts(proposal.call.arguments)
-    if proposal.call.name == "Agent":
-        arguments = proposal.call.arguments
+def proposal_parts(proposal: Prompt) -> tuple[str, str]:
+    """A PROPOSAL prompt for its card: the headline ("Kaden proposes: …") and the call's
+    other arguments."""
+    call = proposal.call
+    if call is None:
+        return f"Kaden proposes: {proposal.text}", ""
+    headline, detail = call_parts(call.arguments)
+    if call.name == "Agent":
         headline = headline or (
-            f"Start a subagent: {arguments.get('description') or arguments.get('prompt')}")
+            f"Start a subagent: {call.arguments.get('description') or call.arguments.get('prompt')}")
         detail = ""
-    headline = headline or tool_sentence(proposal.call.name, proposal.call.arguments)
+    headline = headline or tool_sentence(call.name, call.arguments)
     return f"Kaden proposes: {headline}", detail
 
 
@@ -130,15 +131,17 @@ PERMISSION_SHORT = {  # for a picker: a word or two
 }
 
 
-def request_note(request: PermissionRequest) -> str:
-    """What a call that asks for permission does, and why it asks, for the prompt."""
-    if request.confined:
-        note = ("It only reads, inside the work folder." if request.read_only
+def request_note(request: Prompt) -> str:
+    """What a call that asks for permission (a PERMISSION prompt) does, and why it asks."""
+    details = request.details
+    read_only, reason = bool(details.get("read_only")), details.get("reason")
+    if details.get("confined"):
+        note = ("It only reads, inside the work folder." if read_only
                 else "It may change things inside the work folder.")
     else:
-        note = ("It only reads, but can reach outside the work folder." if request.read_only
+        note = ("It only reads, but can reach outside the work folder." if read_only
                 else "It may change things, and can reach outside the work folder.")
-    return f"{note} Why it asks: {request.reason}" if request.reason else note
+    return f"{note} Why it asks: {reason}" if reason else note
 
 
 # Verbs a step description starts with, as the model writes them (imperative), and their

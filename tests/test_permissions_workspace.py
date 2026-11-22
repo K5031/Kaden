@@ -35,7 +35,7 @@ async def prompts(h: Harness) -> list[Any]:
     await h.start()
     await h.runtime.send("go")
     await eventually(lambda: h.runtime.snapshot().state == AgentState.AWAITING_PERMISSION)
-    return list(h.runtime.snapshot().pending_permissions)
+    return list(h.runtime.snapshot().prompts)
 
 
 async def test_confined_calls_run_and_the_rest_ask(make: Any) -> None:
@@ -43,9 +43,9 @@ async def test_confined_calls_run_and_the_rest_ask(make: Any) -> None:
     h: Harness = await make(core=core(), tools=tools,
                             permissions=PermissionPolicy.ALLOW_WORKSPACE)
     [request] = await prompts(h)
-    assert request.call.id == "o" and not request.confined  # reading outside asks too
+    assert request.call.id == "o" and not request.details["confined"]  # reading outside asks too
     assert tools.started == ["i"]
-    await h.runtime.resolve_permission(request.id, Decision.ALLOW_ONCE)
+    await h.runtime.respond(request.id, Decision.ALLOW_ONCE)
     await eventually(lambda: h.runtime.snapshot().state == AgentState.IDLE)
     assert {r.status for r in (await h.results()).values()} == {ToolStatus.OK}
 
@@ -71,7 +71,7 @@ async def test_a_call_runs_with_the_verdict_it_was_judged_by(make: Any) -> None:
 async def test_a_prompt_says_whether_the_call_is_confined(make: Any) -> None:
     h: Harness = await make(core=core(), tools=two_tools(), permissions=PermissionPolicy.ASK)
     [request] = await prompts(h)
-    assert request.call.id == "i" and request.confined
+    assert request.call.id == "i" and request.details["confined"]
 
 
 async def test_tools_that_cannot_tell_ask_for_everything(make: Any) -> None:
@@ -84,7 +84,7 @@ async def test_tools_that_cannot_tell_ask_for_everything(make: Any) -> None:
     h: Harness = await make(core=core(), tools=tools,
                             permissions=PermissionPolicy.ALLOW_WORKSPACE)
     [request] = await prompts(h)
-    assert request.call.id == "i" and not request.confined
+    assert request.call.id == "i" and not request.details["confined"]
     assert await Tools.confined(tools, ToolCall("x", "inside", {})) is False  # the default
 
 
@@ -114,11 +114,11 @@ async def test_a_grant_for_a_confined_call_does_not_cover_one_that_reaches_outsi
     h: Harness = await make(core=script, tools=tools, permissions=PermissionPolicy.ASK)
     [first] = await prompts(h)
     assert first.call.id == "a"
-    await h.runtime.resolve_permission(first.id, Decision.ALLOW_CONVERSATION)
-    await eventually(lambda: [p.call.id for p in h.runtime.snapshot().pending_permissions]
+    await h.runtime.respond(first.id, Decision.ALLOW_CONVERSATION)
+    await eventually(lambda: [p.call.id for p in h.runtime.snapshot().prompts]
                      == ["c"])
     assert tools.started == ["a", "b"]  # b ran on the grant; c reaches outside and asks
-    [outside] = h.runtime.snapshot().pending_permissions
-    await h.runtime.resolve_permission(outside.id, Decision.ALLOW_CONVERSATION)
+    [outside] = h.runtime.snapshot().prompts
+    await h.runtime.respond(outside.id, Decision.ALLOW_CONVERSATION)
     await eventually(lambda: h.runtime.snapshot().state == AgentState.IDLE)
     assert tools.started == ["a", "b", "c", "d"]  # d ran on the wider grant

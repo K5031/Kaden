@@ -41,6 +41,7 @@ from kaden.api import (
     Failure,
     Message,
     MessageCommitted,
+    PromptKind,
     ReasoningDelta,
     Refusal,
     Role,
@@ -189,8 +190,9 @@ class SubSession:
 
     @property
     def approvals(self) -> int:
-        """Its permission prompts open."""
-        return len(snap.pending_permissions) if (snap := self.snapshot) is not None else 0
+        """What waits on the person in it: its prompts open, proposals aside."""
+        snap = self.snapshot
+        return sum(p.kind != PromptKind.PROPOSAL for p in snap.prompts) if snap else 0
 
     @property
     def agent_state(self) -> AgentState | None:

@@ -27,8 +27,7 @@ from kaden.api import (
     ModelSelected,
     OperationResult,
     PermissionPolicy,
-    PermissionRequested,
-    PermissionResolved,
+    PromptClosed,
     Refusal,
     Role,
     RuntimeStateError,
@@ -44,7 +43,7 @@ from kaden.api import (
     TransientCoreError,
 )
 from kaden.runtime.config import ACTIVATION_NOTICE, VOICE_ON_NOTICE
-from tests.conftest import Harness, eventually
+from tests.conftest import Harness, asked, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
 
@@ -71,10 +70,7 @@ async def test_permission_deny_policy(make: Any) -> None:
     results = await h.results()
     assert results["r"].status == results["w"].status == ToolStatus.REFUSED
     assert results["b"].status == ToolStatus.OK  # built-ins are never gated
-    assert h.rec.of(PermissionRequested) == []
-    resolved = {e.call_id: e.decision for e in h.rec.of(PermissionResolved)}
-    assert resolved == {"r": Decision.DENY, "w": Decision.DENY}
-    assert len({e.request_id for e in h.rec.of(PermissionResolved)}) == 2
+    assert asked(h.rec) == []
     refused = [e for e in h.rec.of(ToolFinished) if e.result.status == ToolStatus.REFUSED]
     assert len(refused) == 2
     assert not any(e.call.id in ("r", "w") for e in h.rec.of(ToolStarted))
@@ -90,27 +86,25 @@ async def test_permission_ask_policy_and_grants(make: Any) -> None:
     h: Harness = await make(core=core, tools=perm_tools(), permissions=PermissionPolicy.ASK)
     await h.start()
     await h.runtime.send("go")
-    req = (await h.rec.wait_for(lambda r: r.of(PermissionRequested)))[0].request
-    assert req.call.id == "r1" and req.read_only
+    req = (await h.rec.wait_for(lambda r: asked(r)))[0]
+    assert req.call.id == "r1" and req.details["read_only"]
     assert h.runtime.snapshot().state == AgentState.AWAITING_PERMISSION
-    assert h.runtime.snapshot().pending_permissions == [req]
-    await h.runtime.resolve_permission(req.id, Decision.ALLOW_ONCE)
-    req2 = (await h.rec.wait_for(lambda r: r.of(PermissionRequested)[1:]))[0].request
+    assert list(h.runtime.snapshot().prompts) == [req]
+    await h.runtime.respond(req.id, Decision.ALLOW_ONCE)
+    req2 = (await h.rec.wait_for(lambda r: asked(r)[1:]))[0]
     assert req2.call.id == "r2"
-    await h.runtime.resolve_permission(req2.id, Decision.ALLOW_CONVERSATION)
+    await h.runtime.respond(req2.id, Decision.ALLOW_CONVERSATION)
     await h.rec.wait_state(AgentState.IDLE, count=2)
-    assert len(h.rec.of(PermissionRequested)) == 2  # r3 covered by the grant
-    auto = [e for e in h.rec.of(PermissionResolved) if e.call_id == "r3"]
-    assert auto[0].decision == Decision.ALLOW_CONVERSATION
+    assert len(asked(h.rec)) == 2  # r3 covered by the grant
     assert all(r.status == ToolStatus.OK for r in (await h.results()).values())
 
     # Grants are per conversation.
     core.add(Step(calls=[call("read", id="r4")]), Step(text="ok"))
     await h.start()
     await h.runtime.send("new conversation")
-    req4 = (await h.rec.wait_for(lambda r: r.of(PermissionRequested)[2:]))[0].request
+    req4 = (await h.rec.wait_for(lambda r: asked(r)[2:]))[0]
     assert req4.call.id == "r4"
-    await h.runtime.resolve_permission(req4.id, Decision.DENY)
+    await h.runtime.respond(req4.id, Decision.DENY)
     await h.rec.wait_state(AgentState.IDLE, count=3)
     assert (await h.results())["r4"].status == ToolStatus.REFUSED
 
@@ -125,19 +119,17 @@ async def test_permission_allow_read_only_policy(make: Any) -> None:
     h: Harness = await make(core=core, tools=tools, initial_wait_s=0.1)
     await h.start()
     await h.runtime.send("go")
-    req = (await h.rec.wait_for(lambda r: r.of(PermissionRequested)))[0].request
-    assert req.call.id == "w" and not req.read_only
+    req = (await h.rec.wait_for(lambda r: asked(r)))[0]
+    assert req.call.id == "w" and not req.details["read_only"]
     # Read-only calls need no prompt; the backgrounded scan keeps running during the prompt.
     assert {e.call.id for e in h.rec.of(ToolStarted)} == {"s", "r"}
     snap = h.runtime.snapshot()
     assert snap.state == AgentState.AWAITING_PERMISSION
     assert [o.call.id for o in snap.operations] == ["s"]
-    await h.runtime.resolve_permission(req.id, Decision.ALLOW_ONCE)
+    await h.runtime.respond(req.id, Decision.ALLOW_ONCE)
     await h.rec.wait_state(AgentState.IDLE, count=2)
     statuses = {cid: r.status for cid, r in (await h.results()).items()}
     assert statuses == {"s": ToolStatus.BACKGROUNDED, "r": ToolStatus.OK, "w": ToolStatus.OK}
-    auto = {e.call_id: e.decision for e in h.rec.of(PermissionResolved)}
-    assert auto["s"] == auto["r"] == Decision.ALLOW_ONCE
 
 
 async def test_permission_non_interactive_frontend(make: Any) -> None:
@@ -149,7 +141,7 @@ async def test_permission_non_interactive_frontend(make: Any) -> None:
     results = await h.results()
     assert results["r"].status == ToolStatus.OK
     assert results["w"].status == ToolStatus.REFUSED
-    assert h.rec.of(PermissionRequested) == []
+    assert asked(h.rec) == []
 
 
 async def test_permission_stop_denies_prompts(make: Any) -> None:
@@ -157,13 +149,12 @@ async def test_permission_stop_denies_prompts(make: Any) -> None:
     h: Harness = await make(core=core, tools=perm_tools())
     await h.start()
     await h.runtime.send("go")
-    req = (await h.rec.wait_for(lambda r: r.of(PermissionRequested)))[0].request
+    req = (await h.rec.wait_for(lambda r: asked(r)))[0]
     await h.runtime.stop()
     await h.rec.wait_state(AgentState.STOPPED)
-    resolved = h.rec.of(PermissionResolved)
-    assert resolved[-1] == PermissionResolved(req.id, Decision.DENY, "w")
+    assert h.rec.of(PromptClosed)[-1] == PromptClosed(req.id, Decision.DENY)
     assert (await h.results())["w"].status == ToolStatus.REFUSED
-    assert h.runtime.snapshot().pending_permissions == []
+    assert not h.runtime.snapshot().prompts
 
 
 async def test_permission_ceiling(make: Any, clean_env: pytest.MonkeyPatch) -> None:
@@ -515,8 +506,7 @@ async def test_a_refusal_says_why_in_a_word(make: Any) -> None:
     info = await h.chat()
     assert await refused(h.runtime.delete_conversation(info.id)) is Refusal.CONVERSATION_OPEN
     assert await refused(h.runtime.cancel_operation("nope")) is Refusal.NOT_PENDING
-    assert await refused(h.runtime.resolve_proposal("nope", True)) is Refusal.NOT_PENDING
-    assert await refused(h.runtime.resolve_permission("nope", Decision.DENY)) \
+    assert await refused(h.runtime.respond("nope", Decision.DENY)) \
         is Refusal.NOT_PENDING
     await h.runtime.send("go")
     await eventually(lambda: core.requests)

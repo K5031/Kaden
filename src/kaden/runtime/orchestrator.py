@@ -72,20 +72,14 @@ from kaden.api import (
     OperationInfo,
     OperationResult,
     PermissionPolicy,
-    PermissionRequest,
-    PermissionRequested,
-    PermissionResolved,
     PermissionRule,
     PlanItem,
     PlanModeChanged,
-    PlanProposed,
-    PlanResolved,
     PlanStatus,
-    Proposal,
-    ProposalMade,
-    ProposalResolved,
-    QuestionAnswered,
-    QuestionAsked,
+    Prompt,
+    PromptClosed,
+    PromptKind,
+    PromptOpened,
     Reasoning,
     ReasoningDelta,
     Refusal,
@@ -170,11 +164,15 @@ _NO_MEMORY_EDITING = "this memory module cannot edit memories"
 _NO_DELETION = "this memory module cannot delete conversations"
 _NO_DUTIES = "this memory module cannot keep duties"
 @dataclass
-class _UserWait:
-    """A call that waits for the user: what it asked, and what the answer settles."""
+class _Open:
+    """A prompt before the person, and what its reply settles."""
 
-    event: QuestionAsked | PlanProposed
+    prompt: Prompt
     answered: asyncio.Future[Any]
+
+
+_SAME = object()  # _close_prompt: the future gets the reply itself
+_IN_WORDS = object()  # a question answered by the person's message that follows
 
 
 def _definition(spec: ToolSpec) -> dict[str, Any]:
@@ -407,7 +405,8 @@ class Runtime:
         self._pending_results: list[tuple[OperationResult, ToolFinished]] = []
         self._ops: dict[CallId, Operation] = {}  # running
         self._known_ops: dict[CallId, Operation] = {}  # launched by this process
-        self._prompts: dict[str, tuple[PermissionRequest, asyncio.Future[Decision]]] = {}
+        # What waits on the person (Prompt), by id, and what each reply settles.
+        self._open: dict[str, _Open] = {}
         # Tool name -> whether the grant also covers calls that reach outside the work
         # folder: one given for a confined call covers confined calls only.
         self._grants: dict[str, bool] = {}
@@ -430,19 +429,13 @@ class Runtime:
         self._reminded = 0.0
         self._sent_back = False  # this cycle: the agent was told to finish its plan
         self._help: str | None = None  # the agent's open question (ask_for_help)
-        # Proposals waiting for the user, by the propose call's id (also their operation's).
-        self._proposals: dict[CallId, tuple[Proposal, asyncio.Future[bool]]] = {}
         self._proposal_ops: set[CallId] = set()  # operations that are proposals
         self._proposal_done = False  # a proposal's outcome the model has not seen
         self._uncounted: set[CallId] = set()  # operations not counted as activity yet
         self._specs: dict[str, ToolSpec] = {}  # offered in the latest request
         self._deferred: dict[str, ToolSpec] = {}  # offered by name only (ToolSearch)
         self._searchable: dict[str, ToolSpec] = {}  # what ToolSearch finds: loaded ones too
-        # Calls that wait for the user, by what they wait for (QuestionAsked, PlanProposed).
-        self._waits: dict[type, _UserWait] = {}
-        # Plan mode for the open conversation, and the ExitPlanMode that waits: its answer
-        # is (approved, feedback).
-        self._plan_mode = False
+        self._plan_mode = False  # for the open conversation
         self._loaded: dict[str, set[str]] = {}  # per conversation: deferred tools loaded
         self._flush_tasks: set[asyncio.Task[None]] = set()
         self._duration_task: asyncio.Task[None] | None = None
@@ -465,15 +458,12 @@ class Runtime:
             model=self._model,
             usage=self._budget.snapshot(),
             operations=[OperationInfo(op.call, op.started_at, op.last_progress, op.backgrounded)
-                        for op in self._ops.values() if op.call.id not in self._proposals],
-            pending_permissions=[req for req, _ in self._prompts.values()],
+                        for op in self._ops.values() if op.call.id not in self._proposals()],
             queued_messages=list(self._inbox),
             duty_wake_at=self._duty_wake_at,
             help_needed=self._help,
-            pending_question=self._awaited(QuestionAsked),
             plan_mode=self._plan_mode,
-            pending_plan=self._awaited(PlanProposed),
-            proposals=tuple(p for p, _ in self._proposals.values()),
+            prompts=tuple(o.prompt for o in self._open.values()),
         )
 
     async def list_models(self) -> Sequence[ModelInfo]:
@@ -607,10 +597,8 @@ class Runtime:
                    spoken: bool = False) -> None:
         self._sendable()
         if not files and text.strip():  # it answers what waits, and is the user's message
-            if QuestionAsked in self._waits:
-                self._settle_question(None, in_words=text.strip())
-            elif PlanProposed in self._waits:
-                self._settle_plan(False, None, in_words=True)
+            for entry in [o for o in self._open.values() if o.prompt.words]:
+                self._answered_in_words(entry.prompt, text.strip())
         attached = tuple([await self._attach(path) for path in files])
         self._answered()
         self._queue(MessageQueued(_new_id(), text, attached, spoken), "user message")
@@ -675,10 +663,9 @@ class Runtime:
         self._cycle_requested = False
         self._wake_set, self._immediate_wake = None, False
         self._log.decision("stop", state=state, operations=list(self._ops))
-        for request_id, (request, future) in list(self._prompts.items()):
-            del self._prompts[request_id]
-            self._emit(PermissionResolved(request_id, Decision.DENY, request.call.id))
-            future.set_result(Decision.DENY)
+        for entry in list(self._open.values()):
+            if entry.prompt.kind == PromptKind.PERMISSION:
+                self._close_prompt(entry.prompt.id, Decision.DENY)
         for op in self._ops.values():
             op.request_cancel()
         self._update_state()
@@ -829,18 +816,86 @@ class Runtime:
             raise NotImplementedError(_NO_DUTIES) from None
         self._conversation_updated(info)
 
-    async def resolve_permission(self, request_id: str, decision: Decision) -> None:
-        if self._state() != AgentState.AWAITING_PERMISSION:
-            raise RuntimeStateError("no permission prompt is open", Refusal.NOT_PENDING)
-        entry = self._prompts.pop(request_id, None)
+    async def respond(self, prompt_id: str, reply: Any) -> None:
+        entry = self._open.get(prompt_id)
         if entry is None:
-            raise RuntimeStateError(f"unknown or already resolved request {request_id}",
-                                    Refusal.NOT_PENDING)
-        request, future = entry
-        self._log.decision("permission", call_id=request.call.id, outcome=decision, by="user")
-        self._emit(PermissionResolved(request_id, decision, request.call.id))
-        future.set_result(decision)
+            raise RuntimeStateError(f"nothing waits as {prompt_id}", Refusal.NOT_PENDING)
+        prompt = entry.prompt
+        call_id = prompt.call.id if prompt.call is not None else prompt.id
+        match prompt.kind:
+            case PromptKind.PERMISSION:
+                decision = Decision(reply)
+                self._log.decision("permission", call_id=call_id, outcome=decision, by="user")
+                self._close_prompt(prompt_id, decision)
+            case PromptKind.QUESTION:
+                if not isinstance(reply, Mapping):
+                    raise ValueError("a question's reply is its answers by question")  # noqa: TRY004 - the contract's error
+                answers = {str(k): str(v) for k, v in reply.items()}
+                self._log.decision("question_answered", call_id=call_id, in_words=False)
+                self._close_prompt(prompt_id, answers)
+            case PromptKind.PLAN:
+                if not isinstance(reply, Mapping) or not isinstance(reply.get("approve"), bool):
+                    raise ValueError("a plan's reply is {approve, feedback, permissions}")  # noqa: TRY004 - the contract's error
+                feedback = str(reply.get("feedback") or "").strip() or None
+                permissions = reply.get("permissions")
+                if reply["approve"] and permissions is not None:
+                    await self.update_settings(
+                        SettingsUpdate(permissions=PermissionPolicy(permissions)))
+                    if prompt_id not in self._open:
+                        raise RuntimeStateError(f"nothing waits as {prompt_id}",
+                                                Refusal.NOT_PENDING)
+                self._settle_plan(prompt_id, reply["approve"], feedback)
+            case PromptKind.PROPOSAL:
+                if not isinstance(reply, bool):
+                    raise ValueError("a proposal's reply is true or false")  # noqa: TRY004 - the contract's error
+                self._log.decision("permission", call_id=call_id, by="proposal",
+                                   outcome=Decision.ALLOW_ONCE if reply else Decision.DENY)
+                self._close_prompt(prompt_id, reply)
+            case _:
+                raise ValueError(f"no reply is known for {prompt.kind!r}")
+
+    def _open_prompt(self, prompt: Prompt) -> asyncio.Future[Any]:
+        """Put `prompt` before the person; the future settles with what answers it."""
+        answered: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        self._open[prompt.id] = _Open(prompt, answered)
+        self._log.decision("prompt", prompt_id=prompt.id, kind=prompt.kind)
+        self._emit(PromptOpened(prompt))
         self._update_state()
+        return answered
+
+    def _close_prompt(self, prompt_id: str, reply: Any, outcome: Any = _SAME) -> None:
+        """Settle it with `reply` (None: unanswered); its future gets `outcome`, the reply
+        unless given."""
+        entry = self._open.pop(prompt_id, None)
+        if entry is None:
+            return
+        self._emit(PromptClosed(prompt_id, reply))
+        if not entry.answered.done():
+            entry.answered.set_result(reply if outcome is _SAME else outcome)
+        self._update_state()
+
+    async def _wait_for_person(self, prompt: Prompt) -> Any:
+        """Open `prompt` and wait for its reply; closed unanswered if the wait ends first
+        (Stop)."""
+        answered = self._open_prompt(prompt)
+        try:
+            return await answered
+        finally:
+            self._close_prompt(prompt.id, None)
+
+    def _answered_in_words(self, prompt: Prompt, text: str) -> None:
+        """A message answers `prompt` (one that takes words): its result says the answer
+        is the person's message that follows."""
+        if prompt.kind == PromptKind.QUESTION:
+            self._log.decision("question_answered", call_id=prompt.id, in_words=True)
+            self._close_prompt(prompt.id, {q["question"]: text
+                                           for q in prompt.details.get("questions", ())},
+                               outcome=_IN_WORDS)
+        elif prompt.kind == PromptKind.PLAN:
+            self._settle_plan(prompt.id, False, None, in_words=True)
+
+    def _proposals(self) -> dict[str, _Open]:
+        return {i: o for i, o in self._open.items() if o.prompt.kind == PromptKind.PROPOSAL}
 
     async def aclose(self) -> None:
         """Graceful shutdown: running calls end as by Stop (cancelled or abandoned), never
@@ -890,12 +945,12 @@ class Runtime:
         if self._stopping:
             return AgentState.STOPPING
         if self._cycle_active or self._cycle_requested:
-            return (AgentState.AWAITING_PERMISSION
-                    if self._prompts or self._waits else self._phase)
+            holds = any(o.prompt.kind != PromptKind.PROPOSAL for o in self._open.values())
+            return AgentState.AWAITING_PERMISSION if holds else self._phase
         return self._base
 
     def _update_state(self) -> None:
-        current = (self._state(), len(self._ops) - len(self._proposals))
+        current = (self._state(), len(self._ops) - len(self._proposals()))
         if current != self._emitted:
             self._emitted = current
             self._emit(StateChanged(current[0], current[1]))
@@ -1287,7 +1342,7 @@ class Runtime:
         waiting = len(self._inbox[:count])
         if not waiting:
             return False
-        if any(p.card for p, _ in self._proposals.values()):
+        if any(o.prompt.details.get("card") for o in self._proposals().values()):
             # The user wrote instead of clicking: its outcome goes before their message.
             await self._withdraw_proposals(cards_only=True)
             if self._cycle_active:
@@ -1963,7 +2018,6 @@ class Runtime:
 
         def auto(decision: Decision, why: str) -> None:
             self._log.decision("permission", call_id=call.id, outcome=decision, by=why)
-            self._emit(PermissionResolved(_new_id(), decision, call.id))
 
         if policy == PermissionPolicy.DENY:
             auto(Decision.DENY, "policy")
@@ -2001,13 +2055,12 @@ class Runtime:
         if not self._frontend.interactive_permissions:
             auto(Decision.DENY, "non-interactive frontend")
             return "Refused: this call needs permission and the frontend cannot ask."
-        request = PermissionRequest(_new_id(), call, spec.read_only, confined, reason)
-        future: asyncio.Future[Decision] = asyncio.get_running_loop().create_future()
-        self._prompts[request.id] = (request, future)
-        self._emit(PermissionRequested(request))
-        self._update_state()
-        decision = await future
-        self._update_state()
+        description = call.arguments.get(DESCRIPTION_ARG)
+        decision = Decision(await self._open_prompt(Prompt(
+            _new_id(), PromptKind.PERMISSION,
+            description if isinstance(description, str) and description else call.name,
+            call, {"read_only": spec.read_only, "confined": confined,
+                               "reason": reason})))
         if decision in (Decision.ALLOW_ALWAYS, Decision.DENY_ALWAYS):
             await self._save_rule(PermissionRule.for_call(
                 bare, allow=decision is Decision.ALLOW_ALWAYS))
@@ -2095,65 +2148,52 @@ class Runtime:
             return f"{proposed.name!r} {what}. Propose a call of an action tool."
         if error := self._validate(proposed, self._specs):
             return f"The proposed call: {error}"
-        proposal = Proposal(call.id, proposed, reason, card)
-        decided: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
-        self._proposals[call.id] = (proposal, decided)
+        decided = self._open_prompt(Prompt(call.id, PromptKind.PROPOSAL, reason, proposed,
+                                           {"reason": reason, "card": card}))
         self._proposal_ops.add(call.id)
         spec = self._specs[proposed.name]
         # Waiting for the user is not activity (the duration budget), as a prompt is not.
         self._uncounted.add(call.id)
         op = self._launch(call, replace(BUILTIN_TOOLS["propose"], timeout=math.inf),
-                          execute=lambda ctx: self._proposal_outcome(proposal, decided, spec,
-                                                                     ctx))
+                          execute=lambda ctx: self._proposal_outcome(call.id, proposed,
+                                                                     decided, spec, ctx))
         op.backgrounded = True
         self._log.decision("proposal", call_id=call.id, tool=proposed.name, card=card)
-        self._emit(ProposalMade(proposal))
         self._emit(ToolBackgrounded(call.id))
         return None
 
-    async def _proposal_outcome(self, proposal: Proposal, decided: asyncio.Future[bool],
-                                spec: ToolSpec, ctx: Context) -> ToolOutput:
+    async def _proposal_outcome(self, proposal_id: CallId, call: ToolCall,
+                                decided: asyncio.Future[Any], spec: ToolSpec,
+                                ctx: Context) -> ToolOutput:
         try:
             accepted = await decided
         except asyncio.CancelledError:
-            if self._proposals.pop(proposal.id, None) is not None:
-                self._log.decision("proposal_withdrawn", call_id=proposal.id)
-                self._emit(ProposalResolved(proposal.id, None))
+            if proposal_id in self._open:
+                self._log.decision("proposal_withdrawn", call_id=proposal_id)
+                self._close_prompt(proposal_id, None)
             raise
         if not accepted:
             return ToolOutput("The user dismissed the proposal; it did not run.")
         if reason := self._budget.reserve_tool_call():
             return ToolOutput(f"Approved, but refused: budget {reason}.", is_error=True)
-        self._uncounted.discard(proposal.id)
+        self._uncounted.discard(proposal_id)
         self._budget.begin_activity()
         self._emit(UsageUpdated(self._budget.snapshot()))
-        owner = self._tool_owner.get(proposal.call.name)
+        owner = self._tool_owner.get(call.name)
         if owner is None:
-            return ToolOutput(f"Approved, but {proposal.call.name!r} is no longer offered.",
+            return ToolOutput(f"Approved, but {call.name!r} is no longer offered.",
                               is_error=True)
         timeout = spec.timeout or self._config.default_tool_timeout_s
         try:
             async with asyncio.timeout(None if math.isinf(timeout) else timeout):
-                return await owner.execute(self._bare(proposal.call), ctx)
+                return await owner.execute(self._bare(call), ctx)
         except TimeoutError:
             return ToolOutput(f"Approved, but it timed out after {timeout:g} s.",
                               is_error=True)
 
-    async def resolve_proposal(self, proposal_id: CallId, accept: bool) -> None:
-        entry = self._proposals.pop(proposal_id, None)
-        if entry is None:
-            raise RuntimeStateError(f"no proposal {proposal_id} is pending",
-                                    Refusal.NOT_PENDING)
-        proposal, decided = entry
-        self._log.decision("permission", call_id=proposal.call.id, by="proposal",
-                           outcome=Decision.ALLOW_ONCE if accept else Decision.DENY)
-        self._emit(ProposalResolved(proposal_id, accept))
-        decided.set_result(accept)
-        self._update_state()
-
     async def _withdraw_proposals(self, cards_only: bool = False) -> None:
-        pending = [self._ops[i] for i, (p, _) in self._proposals.items()
-                   if i in self._ops and (p.card or not cards_only)]
+        pending = [self._ops[i] for i, o in self._proposals().items()
+                   if i in self._ops and (o.prompt.details.get("card") or not cards_only)]
         for op in pending:
             op.request_cancel()
         supervisors = {op.supervisor for op in pending if op.supervisor is not None}
@@ -2362,49 +2402,17 @@ class Runtime:
                 return ToolStatus.OK, skill_files.render(loaded, args.get("args", ""))
         return ToolStatus.ERROR, f"Unknown built-in {call.name!r}."
 
-    async def _wait_for_user(self, event: QuestionAsked | PlanProposed,
-                             unanswered: RuntimeEvent) -> Any:
-        """Emit `event` and wait until the user settles it (_settle); on Stop, `unanswered`
-        is emitted. Its kind (the event's class) is AWAITING_PERMISSION meanwhile."""
-        wait = _UserWait(event, asyncio.get_running_loop().create_future())
-        self._waits[type(event)] = wait
-        self._emit(event)
-        self._update_state()
-        try:
-            return await wait.answered
-        finally:
-            if self._waits.get(type(event)) is wait:
-                del self._waits[type(event)]
-                self._emit(unanswered)
-            self._update_state()
-
-    def _awaited(self, kind: type) -> Any:
-        """The event of the call that waits for the user for `kind`, or None."""
-        wait = self._waits.get(kind)
-        return wait.event if wait is not None else None
-
-    def _settle(self, kind: type, call_id: CallId | None, answer: Any,
-                settled: RuntimeEvent) -> None:
-        """Answer the call that waits for `kind` (any, with call_id None); RuntimeStateError
-        when none, or another, waits."""
-        wait = self._waits.get(kind)
-        if wait is None or call_id not in (None, wait.event.call_id):
-            raise RuntimeStateError(f"nothing waits as {call_id}", Refusal.NOT_PENDING)
-        del self._waits[kind]
-        self._emit(settled)
-        if not wait.answered.done():
-            wait.answered.set_result(answer)
-        self._update_state()
-
     async def _ask(self, call: ToolCall) -> str:
-        """Wait for the user's answers to the call's questions (answer_question, or a
-        message, which is their answer in their own words) and say them as Claude Code's
-        AskUserQuestion does."""
+        """Wait for the person's answers to the call's questions (respond, or a message,
+        which answers in their own words) and say them as Claude Code's AskUserQuestion
+        does."""
         questions = tuple(call.arguments["questions"])
         self._log.decision("question", call_id=call.id, questions=len(questions))
-        answers = await self._wait_for_user(QuestionAsked(call.id, questions),
-                                            QuestionAnswered(call.id, None))
-        if answers is None:
+        more = f" (and {len(questions) - 1} more)" if len(questions) > 1 else ""
+        answers = await self._wait_for_person(Prompt(
+            call.id, PromptKind.QUESTION, f"{questions[0]['question']}{more}", call,
+            {"questions": questions}, words=True))
+        if answers is _IN_WORDS:
             return ("The user answered in their own words, in the message that follows. "
                     "You can now continue with the user's answers in mind.")
         said = ", ".join(f'"{q["question"]}"="{answers.get(q["question"], "(no answer)")}"'
@@ -2412,27 +2420,15 @@ class Runtime:
         return (f"User has answered your questions: {said}. You can now continue with the "
                 "user's answers in mind.")
 
-    async def answer_question(self, call_id: CallId, answers: Mapping[str, str]) -> None:
-        self._settle_question(dict(answers), call_id)
-
-    def _settle_question(self, answers: Mapping[str, str] | None,
-                         call_id: CallId | None = None, *, in_words: str = "") -> None:
-        """None, with `in_words`: the user answers in their own words, in a message of
-        theirs; QuestionAnswered has those words for each question."""
-        asked = self._awaited(QuestionAsked)
-        answered_id = asked.call_id if asked is not None else call_id or ""
-        self._log.decision("question_answered", call_id=answered_id, in_words=answers is None)
-        said = answers if answers is not None else {
-            q["question"]: in_words for q in (asked.questions if asked else ())}
-        self._settle(QuestionAsked, call_id, answers, QuestionAnswered(answered_id, said))
-
     # ── Plan mode ────────────────────────────────────────────────────────
 
     async def set_plan_mode(self, on: bool) -> None:
         if self._conversation is None:
             raise RuntimeStateError("not started", Refusal.NOT_STARTED)
-        if not on and PlanProposed in self._waits:
-            self._settle_plan(True, None)  # leaving plan mode approves the waiting plan
+        waiting = next((o for o in self._open.values() if o.prompt.kind == PromptKind.PLAN),
+                       None)
+        if not on and waiting is not None:
+            self._settle_plan(waiting.prompt.id, True, None)  # leaving approves the plan
             return
         self._set_plan_mode(on, "user")
 
@@ -2444,12 +2440,12 @@ class Runtime:
         self._emit(PlanModeChanged(on))
 
     async def _propose_plan(self, call: ToolCall) -> tuple[ToolStatus, str]:
-        """Wait for the user to approve the plan or send it back, and say which as Claude
+        """Wait for the person to approve the plan or send it back, and say which as Claude
         Code's ExitPlanMode does."""
         plan = call.arguments["plan"]
         self._log.decision("plan_proposed", call_id=call.id, plan_chars=len(plan))
-        approved, feedback, in_words = await self._wait_for_user(
-            PlanProposed(call.id, plan), PlanResolved(call.id, None))
+        approved, feedback, in_words = await self._wait_for_person(Prompt(
+            call.id, PromptKind.PLAN, "Approve the plan", call, {"plan": plan}, words=True))
         if approved:
             return ToolStatus.OK, ("User has approved your plan. You can now start coding. "
                                    "Start with updating your todo list if applicable.\n\n"
@@ -2464,26 +2460,14 @@ class Runtime:
             "The user did not approve the plan and wants to keep planning; you are still in "
             "plan mode. Stop and wait for them to say how to go on.")
 
-    async def resolve_plan(self, call_id: CallId, approve: bool, feedback: str | None = None,
-                           permissions: PermissionPolicy | None = None) -> None:
-        proposed = self._awaited(PlanProposed)
-        if proposed is None or proposed.call_id != call_id:
-            raise RuntimeStateError(f"no plan {call_id} is waiting", Refusal.NOT_PENDING)
-        if approve and permissions is not None:
-            await self.update_settings(SettingsUpdate(permissions=permissions))
-        self._settle_plan(approve, feedback.strip() if feedback and feedback.strip() else None,
-                          call_id=call_id)
-
-    def _settle_plan(self, approved: bool, feedback: str | None, *, in_words: bool = False,
-                     call_id: CallId | None = None) -> None:
-        proposed = self._awaited(PlanProposed)
-        resolved_id = proposed.call_id if proposed is not None else call_id or ""
-        self._log.decision("plan_resolved", call_id=resolved_id, approved=approved,
+    def _settle_plan(self, prompt_id: str, approved: bool, feedback: str | None, *,
+                     in_words: bool = False) -> None:
+        self._log.decision("plan_resolved", call_id=prompt_id, approved=approved,
                            feedback=feedback is not None or in_words)
         if approved:
             self._set_plan_mode(False, "approval")
-        self._settle(PlanProposed, call_id, (approved, feedback, in_words),
-                     PlanResolved(resolved_id, approved, feedback))
+        self._close_prompt(prompt_id, {"approve": approved, "feedback": feedback},
+                           outcome=(approved, feedback, in_words))
 
     def _describe(self, op: Operation) -> str:
         name = f"Operation {op.call.id} ({op.call.name})"

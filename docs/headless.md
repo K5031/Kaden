@@ -38,11 +38,8 @@ drives its sub-sessions this way:
 | `select_model` | `model_id` |
 | `set_duty` | `duty`: `{instruction, kind ("duty" or "goal"), min_interval_s, max_interval_s}` or `null` to end it |
 | `set_plan` | `plan`: a list of `{text, status, due, note}` |
-| `resolve_permission` | `request_id`, `decision` (`allow_once`, `allow_conversation`, `deny`) |
-| `resolve_proposal` | `proposal_id`, `accept` (true or false) |
-| `answer_question` | `call_id`, `answers`: for each question (by its text), the labels chosen (several joined with ", ") or your own words |
+| `respond` | `prompt_id`, `reply`: shaped by the prompt's `kind` (below) |
 | `set_plan_mode` | `on` (true or false) |
-| `resolve_plan` | `call_id`, `approve` (true or false), optional `feedback`, optional `permissions` (a permission level to set first when approving) |
 | `snapshot` | none |
 | `history` | `conversation_id`, optional `before`, `limit` |
 | `list_conversations` | optional `include_archived` |
@@ -60,7 +57,7 @@ conversation) is error `-32000` with the runtime's message and `data.type`, such
 
 **Events** come as notifications: `{"method": "event", "params": {"seq": 12, "event":
 {...}}}`, every event the runtime emits, in order. Values are JSON objects with their kind
-under `"type"`, such as `MessageCommitted`, `StateChanged`, `PermissionRequested`,
+under `"type"`, such as `MessageCommitted`, `StateChanged`, `PromptOpened`,
 `HelpNeeded` and `DutyScheduled`. A jump in `seq` means events were dropped: take a
 `snapshot`, ignore events up to its `seq`, and read `history`.
 
@@ -74,20 +71,29 @@ or `kaden` for what Kaden itself wrote for the agent (a check-in, a reminder,
 background results). Its `text` is exactly what was written. To tell the agent something
 that is not the user's words, use `notify` with a `text` instead of `send`.
 
-**Prompts reach the program.** A tool call that needs approval comes as
-`PermissionRequested`: answer it with `resolve_permission`. A call the agent proposes
-comes as `ProposalMade`: answer it with `resolve_proposal`. A question the agent asks
-with its work paused comes as `HelpNeeded`: answer it with `send`. Questions with choices
-that the agent waits on come as `QuestionAsked`: answer them with `answer_question`, or
-with `send`, which answers them all in your words. In plan mode (`PlanModeChanged`), a
-plan the agent waits to have approved comes as `PlanProposed`: answer it with
-`resolve_plan`, or with `send`, which sends it back with your words as feedback.
+**Prompts reach the program.** Whatever waits on you comes as `PromptOpened` with a
+`prompt`: its `id`, `kind`, a one-line `text`, the tool `call` it is about and the kind's
+`details`. Answer it with `respond(prompt_id, reply)`; `PromptClosed` follows (also,
+with `reply` null, when it ended unanswered). The snapshot lists the open ones as
+`prompts`.
+
+| `kind` | `details` | `reply` |
+|---|---|---|
+| `permission` | `read_only`, `confined`, `reason` | `allow_once`, `allow_conversation`, `allow_always`, `deny` or `deny_always` |
+| `question` | `questions` (AskUserQuestion's) | `{question: answer}`, the labels chosen (several joined with ", ") or your own words |
+| `plan` | `plan` (markdown) | `{"approve": true}`, optionally with `"permissions"` (a level to set first), or `{"approve": false, "feedback": "…"}` |
+| `proposal` | `reason`, `card` | `true` runs the call, `false` dismisses it |
+
+A prompt with `words: true` (a question, a plan) is also answered by `send`: your
+message answers it in your own words and follows it in the conversation. A kind you do not
+know is shown by its `text`. A question the agent asks its supervisor while running
+continuously comes as `HelpNeeded`: answer it with `send`.
 
 **The wrap-up card is a tool call.** A turn that leaves a decision may end with a `wrap_up` call:
 `question`, up to three `options` with the agent's pick first, and an optional `recap` (an `ask_for_help` call
 may carry `replies` the same way). Answer with `send`, using an option's `label` or anything
 else. An option with a `call` is also a pending proposal with `card: true` and the
-`wrap_up` call's id: `resolve_proposal(id, true)` runs it. Sending a message withdraws it.
+`wrap_up` call's id: `respond(id, true)` runs it. Sending a message withdraws it.
 
 ## Example
 

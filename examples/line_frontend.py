@@ -18,7 +18,8 @@ from kaden.api import (
     FrontendInfo,
     InstancePaths,
     MessageCommitted,
-    PermissionRequested,
+    PromptKind,
+    PromptOpened,
     Role,
     RuntimeAPI,
     StartOptions,
@@ -70,9 +71,9 @@ class LineFrontend(Frontend):
                             self._show(block.text)
                 case ToolStarted(call=call):
                     self._show(f"[{call.name} {call.arguments}]")
-                case PermissionRequested(request=request):
-                    self._show(f"[not allowed here: {request.call.name}]")
-                    await runtime.resolve_permission(request.id, Decision.DENY)
+                case PromptOpened(prompt=prompt) if prompt.kind == PromptKind.PERMISSION:
+                    self._show(f"[not allowed here: {prompt.text}]")
+                    await runtime.respond(prompt.id, Decision.DENY)
                 case Failure(message=message):
                     self._show(f"[failed: {message}]")
                     idle.set()

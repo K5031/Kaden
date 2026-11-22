@@ -27,7 +27,6 @@ from kaden.api import (
     InstancePaths,
     Memory,
     PermissionPolicy,
-    PermissionRequested,
     Role,
     StartOptions,
     Text,
@@ -43,6 +42,7 @@ from kaden.memory.sqlite import SqliteMemory
 from kaden.runtime import InstanceConfig, ModuleSpec, load_module, run_instance
 from kaden.runtime.config import DEFAULT_SYSTEM_PROMPT
 from kaden.tools.shell_files import ShellFilesTools
+from tests.conftest import asked
 from tests.fakes.core import Step, call
 
 COMMAND = "echo wired > out.txt && cat out.txt"
@@ -355,8 +355,8 @@ async def test_instance_runs_on_the_scripted_core(workspace, tmp_path):
         recorder = frontend.recorder
         await runtime.start(StartOptions())
         await runtime.send("make the file")
-        [request] = await recorder.wait_for(lambda r: r.of(PermissionRequested))
-        await runtime.resolve_permission(request.request.id, Decision.ALLOW_ONCE)
+        [request] = await recorder.wait_for(lambda r: asked(r))
+        await runtime.respond(request.id, Decision.ALLOW_ONCE)
         await recorder.wait_state(AgentState.IDLE, count=2)  # after start, after the turn
 
     data_dir = tmp_path / "data"

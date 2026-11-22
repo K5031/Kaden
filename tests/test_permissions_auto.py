@@ -13,14 +13,13 @@ from kaden.api import (
     Decision,
     InferenceRequest,
     PermissionPolicy,
-    PermissionResolved,
     Text,
     ToolStatus,
     Usage,
 )
 from kaden.runtime import RuntimeConfig
 from kaden.runtime.review import REVIEW_PROMPT
-from tests.conftest import Harness, eventually
+from tests.conftest import Harness, asked, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
 
@@ -68,7 +67,7 @@ async def test_an_allowed_call_runs_without_a_prompt(make: Any) -> None:
     [request] = reviewer.requests
     assert request.maintenance and not request.tools and request.system == REVIEW_PROMPT
     assert "please run outside" in reviewer.seen() and "`outside`" in reviewer.seen()
-    assert [e.decision for e in h.rec.of(PermissionResolved)] == [Decision.ALLOW_ONCE]
+    assert not asked(h.rec)  # allowed without a prompt
     assert h.runtime.snapshot().usage.usage.input_tokens > 200  # the review was charged
 
 
@@ -76,11 +75,11 @@ async def test_ask_opens_a_prompt_with_the_reason(make: Any) -> None:
     h = await auto(make, Reviewer("ASK\nIt deletes files you did not mention."))
     await h.start()
     await h.runtime.send("go")
-    await eventually(lambda: h.runtime.snapshot().pending_permissions)
-    [request] = h.runtime.snapshot().pending_permissions
-    assert request.reason == "It deletes files you did not mention."
+    await eventually(lambda: h.runtime.snapshot().prompts)
+    [request] = h.runtime.snapshot().prompts
+    assert request.details["reason"] == "It deletes files you did not mention."
     assert h.tools.started == []
-    await h.runtime.resolve_permission(request.id, Decision.ALLOW_ONCE)
+    await h.runtime.respond(request.id, Decision.ALLOW_ONCE)
     await eventually(lambda: h.runtime.snapshot().state == AgentState.IDLE)
     assert h.tools.started == ["o"]
 
@@ -91,9 +90,9 @@ async def test_a_failed_or_unclear_review_asks(make: Any) -> None:
         h = await auto(make, Reviewer(answer))
         await h.start()
         await h.runtime.send("go")
-        await eventually(lambda h=h: h.runtime.snapshot().pending_permissions)
-        [request] = h.runtime.snapshot().pending_permissions
-        assert reason in (request.reason or ""), request.reason
+        await eventually(lambda h=h: h.runtime.snapshot().prompts)
+        [request] = h.runtime.snapshot().prompts
+        assert reason in (request.details["reason"] or ""), request.details["reason"]
         await h.close()
 
 
@@ -104,10 +103,10 @@ async def test_confined_and_granted_calls_are_not_reviewed(make: Any) -> None:
                    Step(calls=[call("outside", id="o2")]), Step(text="done"))
     await h.start()
     await h.runtime.send("go")
-    await eventually(lambda: h.runtime.snapshot().pending_permissions)
+    await eventually(lambda: h.runtime.snapshot().prompts)
     assert h.tools.started == ["i"]
-    [request] = h.runtime.snapshot().pending_permissions
-    await h.runtime.resolve_permission(request.id, Decision.ALLOW_CONVERSATION)
+    [request] = h.runtime.snapshot().prompts
+    await h.runtime.respond(request.id, Decision.ALLOW_CONVERSATION)
     await eventually(lambda: h.runtime.snapshot().state == AgentState.IDLE)
     assert h.tools.started == ["i", "o1", "o2"]
     assert len(reviewer.requests) == 1  # o2 is covered by the grant
@@ -154,9 +153,9 @@ async def test_an_exhausted_budget_asks_instead_of_reviewing(make: Any) -> None:
                    budget=Budget(max_tokens=5000))
     await h.start()
     await h.runtime.send("go")  # the first turn spends the budget
-    await eventually(lambda: h.runtime.snapshot().pending_permissions)
-    [request] = h.runtime.snapshot().pending_permissions
-    assert "spending limit" in (request.reason or "")
+    await eventually(lambda: h.runtime.snapshot().prompts)
+    [request] = h.runtime.snapshot().prompts
+    assert "spending limit" in (request.details["reason"] or "")
     assert reviewer.requests == [] and h.tools.started == []
 
 
@@ -185,9 +184,9 @@ async def test_credentials_and_kadens_own_data_always_ask(make: Any) -> None:
         h.core.steps[0] = Step(calls=[call("outside", {"arg": target}, id="o")])
         await h.start()
         await h.runtime.send("go")
-        await eventually(lambda h=h: h.runtime.snapshot().pending_permissions)
-        [request] = h.runtime.snapshot().pending_permissions
-        assert reason in (request.reason or ""), (argument, request.reason)
+        await eventually(lambda h=h: h.runtime.snapshot().prompts)
+        [request] = h.runtime.snapshot().prompts
+        assert reason in (request.details["reason"] or ""), (argument, request.details["reason"])
         assert reviewer.requests == []  # decided without a review
         await h.close()
 

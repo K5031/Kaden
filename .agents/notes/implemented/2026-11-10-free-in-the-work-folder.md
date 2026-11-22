@@ -44,7 +44,7 @@ Only the Tools module knows its work folder and what a call touches, and the run
 the decision. `Tools.confined(call) -> bool` is optional: the base class returns False, so
 a Tools module that does not implement it behaves under `allow_workspace` as under `ask`.
 The runtime calls it before the permission decision; an exception counts as False.
-`PermissionRequest.confined` carries the answer to the frontends, whose prompts say whether
+The permission prompt's `confined` carries the answer to the frontends, whose prompts say whether
 the call stays inside the work folder or can reach outside it.
 
 ### File tools: by path

@@ -32,8 +32,8 @@ async def test_the_log_holds_no_content(make: Any) -> None:
     await h.runtime.rename_conversation(conversation.id, "SECRET-TITLE")
     await h.runtime.send("SECRET-QUESTION")
     await eventually(lambda: h.rec.state == AgentState.AWAITING_PERMISSION)
-    request = h.runtime.snapshot().pending_permissions[0]
-    await h.runtime.resolve_permission(request.id, Decision.ALLOW_ONCE)
+    request = h.runtime.snapshot().prompts[0]
+    await h.runtime.respond(request.id, Decision.ALLOW_ONCE)
     await eventually(lambda: len(core.requests) == 2 and h.rec.state == AgentState.IDLE)
     await h.close()
 
@@ -48,9 +48,9 @@ async def test_the_log_holds_no_content(make: Any) -> None:
     assert of(lines, "ToolStarted") == [{"call_id": "c1", "name": "t"}]
     (finished,) = of(lines, "ToolFinished")
     assert finished["call_id"] == "c1" and finished["status"] == "ok"
-    assert of(lines, "PermissionRequested") == [
-        {"request_id": request.id, "call_id": "c1", "name": "t", "read_only": False,
-         "confined": False}]
+    assert of(lines, "PromptOpened") == [
+        {"prompt_id": request.id, "kind": "permission", "call_id": "c1", "name": "t"}]
+    assert of(lines, "PromptClosed") == [{"prompt_id": request.id, "answered": True}]
     (changed, *_) = of(lines, "SettingsChanged")
     assert changed["settings"]["system_prompt_chars"] == len("SECRET-PROMPT")
     assert "system_prompt" not in changed["settings"]

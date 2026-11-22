@@ -12,19 +12,18 @@ the agent goes on in the same turn. The user asked for Claude Code's way.
 ## Decision
 
 - **The call waits.** `AskUserQuestion` is a runtime built-in that emits
-  `QuestionAsked(call_id, questions)` and waits, as a permission prompt does: the state is
-  `AWAITING_PERMISSION` while it is open, and `RuntimeSnapshot.pending_question` holds it
-  for a frontend that attaches late. Other calls in the message run as usual.
-- **Answering:** `RuntimeAPI.answer_question(call_id, answers)`, the answers by question,
+  a question prompt (`PromptOpened`, kind `question`, see [one way to answer the agent](2026-11-22-one-way-to-answer-the-agent.md)) and waits, as a
+  permission prompt does: the state is `AWAITING_PERMISSION` while it is open, and
+  `RuntimeSnapshot.prompts` holds it for a frontend that attaches late. Other calls in the message run as usual.
+- **Answering:** `RuntimeAPI.respond(call_id, answers)`, the answers by question,
   each the option labels chosen (joined with ", " for a multiple choice) or the user's own
   words. A message sent while a question is open answers it in the user's own words: the
   result says the answer is the message that follows, and the message is the user's,
   appended right after the result, so it shows in the conversation and counts as what the
   user asked. That is how a program without the command (headless, a fleet) answers.
-  Either way `QuestionAnswered(call_id, answers)` follows, and the result
+  Either way `PromptClosed(call_id, answers)` follows, and the result
   reads as Claude Code's: the questions and the answers.
-- **Stop** cancels the wait: the call ends as cancelled and `QuestionAnswered(call_id,
-  None)` is emitted.
+- **Stop** cancels the wait: the call ends as cancelled and `PromptClosed(call_id, None)` is emitted.
 - **The desktop app** shows the open question as a card above the message box
   (`QuestionCard`): each question with its header and options, one to pick or several for
   a multiple choice, and Send once each question has an answer. A reply typed instead

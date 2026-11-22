@@ -11,8 +11,7 @@ from kaden.api import (
     AgentState,
     PermissionPolicy,
     PlanModeChanged,
-    PlanProposed,
-    PlanResolved,
+    PromptClosed,
     RuntimeStateError,
     ToolStatus,
 )
@@ -30,7 +29,7 @@ async def planning(make: Any, *steps: Step, **config: Any) -> Harness:
     await h.start()
     await h.runtime.set_plan_mode(True)
     await h.runtime.send("add a column")
-    await eventually(lambda: h.runtime.snapshot().pending_plan is not None)
+    await eventually(lambda: h.runtime.snapshot().prompts)
     return h
 
 
@@ -75,43 +74,44 @@ async def test_exit_plan_mode_outside_it_is_an_error(make):
     await h.start()
     await h.turn("go")
     assert (await h.results())["x"].status == ToolStatus.ERROR
-    assert h.runtime.snapshot().pending_plan is None
+    assert not h.runtime.snapshot().prompts
 
 
 async def test_the_plan_waits_for_approval_then_the_agent_goes_on(make):
     h = await planning(make, Step(calls=[call("write", id="w")]), Step(text="Done."))
     h.auto_approve()
     snap = h.runtime.snapshot()
-    assert snap.pending_plan == PlanProposed("x", PLAN)
+    [proposed] = snap.prompts
+    assert (proposed.id, proposed.kind, proposed.details["plan"]) == ("x", "plan", PLAN)
     assert snap.state == AgentState.AWAITING_PERMISSION
     assert len(h.core.requests) == 1
-    await h.runtime.resolve_plan("x", True)
+    await h.runtime.respond("x", {"approve": True})
     await eventually(lambda: h.runtime.snapshot().state == AgentState.IDLE
                      and len(h.core.requests) == 3)
     results = await h.results()
     assert results["x"].status == ToolStatus.OK and PLAN in results["x"].content
     assert results["w"].status == ToolStatus.OK  # plan mode is over
     assert not h.runtime.snapshot().plan_mode
-    await eventually(lambda: h.rec.of(PlanResolved) == [PlanResolved("x", True, None)]
+    await eventually(lambda: PromptClosed("x", {"approve": True, "feedback": None}) in h.rec.of(PromptClosed)
                      and h.rec.of(PlanModeChanged)[-1] == PlanModeChanged(False))
 
 
 async def test_approval_can_set_what_the_agent_may_then_do(make):
     h = await planning(make, Step(text="Done."), permissions=PermissionPolicy.ASK)
-    await h.runtime.resolve_plan("x", True, permissions=PermissionPolicy.ALLOW_WORKSPACE)
+    await h.runtime.respond("x", {"approve": True, "permissions": PermissionPolicy.ALLOW_WORKSPACE.value})
     await h.rec.wait_state(AgentState.IDLE, count=2)
     assert (await h.runtime.settings()).permissions == PermissionPolicy.ALLOW_WORKSPACE
 
 
 async def test_sent_back_it_keeps_planning_with_the_feedback(make):
     h = await planning(make, Step(text="I will rethink it."))
-    await h.runtime.resolve_plan("x", False, feedback="Use a migration instead")
+    await h.runtime.respond("x", {"approve": False, "feedback": "Use a migration instead"})
     await h.rec.wait_state(AgentState.IDLE, count=2)
     result = (await h.results())["x"]
     assert result.status == ToolStatus.REFUSED
     assert "Use a migration instead" in result.content
     assert h.runtime.snapshot().plan_mode
-    assert h.rec.of(PlanResolved)[-1] == PlanResolved("x", False, "Use a migration instead")
+    assert h.rec.of(PromptClosed)[-1] == PromptClosed("x", {"approve": False, "feedback": "Use a migration instead"})
 
 
 async def test_a_message_while_it_waits_sends_it_back(make):
@@ -128,7 +128,7 @@ async def test_leaving_plan_mode_approves_the_waiting_plan(make):
     h = await planning(make, Step(text="Done."))
     await h.runtime.set_plan_mode(False)
     await h.rec.wait_state(AgentState.IDLE, count=2)
-    assert h.rec.of(PlanResolved)[-1].approved is True
+    assert h.rec.of(PromptClosed)[-1].reply["approve"] is True
     assert (await h.results())["x"].status == ToolStatus.OK
 
 
@@ -137,17 +137,17 @@ async def test_stop_ends_the_wait(make):
     await h.runtime.stop()
     await h.rec.wait_state(AgentState.STOPPED, timeout=2)
     assert (await h.results())["x"].status == ToolStatus.CANCELLED
-    assert h.rec.of(PlanResolved)[-1] == PlanResolved("x", None, None)
-    assert h.runtime.snapshot().pending_plan is None
+    assert h.rec.of(PromptClosed)[-1] == PromptClosed("x", None)
+    assert not h.runtime.snapshot().prompts
 
 
 async def test_resolving_what_is_not_waiting_is_refused(make):
     h = await planning(make, Step(text="Done."))
     with pytest.raises(RuntimeStateError):
-        await h.runtime.resolve_plan("other", True)
-    await h.runtime.resolve_plan("x", True)
+        await h.runtime.respond("other", {"approve": True})
+    await h.runtime.respond("x", {"approve": True})
     with pytest.raises(RuntimeStateError):
-        await h.runtime.resolve_plan("x", True)
+        await h.runtime.respond("x", {"approve": True})
 
 
 async def test_plan_mode_needs_an_open_conversation_and_ends_with_it(make):

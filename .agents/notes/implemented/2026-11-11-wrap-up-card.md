@@ -27,7 +27,7 @@ answers to pick.
   an error result and the cycle goes on.
 - **An option with a call is a proposal.** The runtime validates the call as `propose`
   does and starts a `Proposal` with `card=True` and the `wrap_up` call's id; the wrap-up
-  result is BACKGROUNDED. Clicking the option approves it (`resolve_proposal`), so exactly
+  result is BACKGROUNDED. Clicking the option approves it (`respond`), so exactly
   that call runs ungated and its result wakes the agent. A user message withdraws it first:
   its cancelled outcome is appended before the message, and the request that answers the
   message is the only one.

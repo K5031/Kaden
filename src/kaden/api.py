@@ -879,7 +879,7 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
         "Stop a running background task by its id, or withdraw a proposal.",
         {"type": "object", "properties": {"task_id": _TASK_ID}, "required": ["task_id"]},
     ),
-    # A proposal is an operation with the propose call's id; see Proposal.
+    # A proposal is an operation with the propose call's id, and a PROPOSAL prompt.
     "propose": ToolSpec(
         "propose",
         "Propose a tool call that is your own idea, not something the user asked for: the "
@@ -903,7 +903,7 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
             "required": ["call", "reason"],
         },
     ),
-    # Waits for the user's answers (QuestionAsked, answer_question) and returns them.
+    # Waits for the user's answers (a QUESTION prompt) and returns them.
     "AskUserQuestion": ToolSpec(
         "AskUserQuestion",
         "Ask the user one to four questions when you need their decision or preference to "
@@ -927,7 +927,7 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
         "and for pure research.",
         {"type": "object", "properties": {}},
     ),
-    # Waits for the user's approval (PlanProposed, resolve_plan).
+    # Waits for the user's approval (a PLAN prompt).
     "ExitPlanMode": ToolSpec(
         "ExitPlanMode",
         "In plan mode, when your plan is ready: present it for the user's approval. It "
@@ -943,7 +943,7 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
     ),
     # Ends the turn when it is the only call in its message (no request follows); frontends
     # show it as a card from the transcript (see SUGGESTION_TOOLS). An option with a call is
-    # a Proposal with card=True and the wrap_up call's id.
+    # a PROPOSAL prompt with card true and the wrap_up call's id.
     "wrap_up": ToolSpec(
         "wrap_up",
         "Only when your turn leaves the user a decision (go ahead or not, which option): end "
@@ -1076,7 +1076,7 @@ TOOL_SEARCH = ToolSpec(
 
 # Calls frontends show as a card under the answer (wrap_up: recap, question, options;
 # ask_for_help: question, replies), while no user message follows it. A click on an option
-# sends its label as the user's message, or approves its call's Proposal.
+# sends its label as the user's message, or approves its call's PROPOSAL prompt.
 SUGGESTION_TOOLS = frozenset({"wrap_up", "ask_for_help"})
 
 # What runs in plan mode besides read-only tools: the runtime's built-ins that change
@@ -1278,7 +1278,7 @@ class PermissionPolicy(StrEnum):
     AUTO: confined calls run; every other call is reviewed by one request to the
     maintenance model, which sees the text of the user's messages and the call (never tool
     results). A clear allow runs it; anything else, a failed review or an exhausted budget
-    included, prompts with the reviewer's reason (PermissionRequest.reason). Reviews are
+    included, prompts with the reviewer's reason (a PERMISSION prompt's details). Reviews are
     charged to the budget and cancelled by Stop.
     Conversation grants apply under ASK and looser. Built-in tools are never gated. With a
     non-interactive frontend, the calls that would have prompted are refused instead;
@@ -1383,13 +1383,33 @@ class UsageSnapshot:
     budget_remaining: dict[str, float] = field(default_factory=dict)  # keyed by Budget field
 
 
+class PromptKind(StrEnum):
+    """What a prompt asks of the person, and the shape of their reply (RuntimeAPI.respond)."""
+
+    PERMISSION = "permission"  # reply: a Decision; details: read_only, confined, reason
+    QUESTION = "question"  # reply: {question: answer}; details: questions (AskUserQuestion's)
+    PLAN = "plan"  # reply: {approve: bool, feedback?: str, permissions?: a PermissionPolicy};
+    #                details: plan (markdown)
+    PROPOSAL = "proposal"  # reply: true to run the call, false to dismiss it; details:
+    #                        reason, card (an option of the wrap_up call `id`, shown on it)
+
+
 @dataclass(frozen=True, slots=True)
-class PermissionRequest:
+class Prompt:
+    """Something that waits on the person: a permission, an AskUserQuestion, an
+    ExitPlanMode's plan, a proposal. `kind` is a PromptKind value; a frontend that has no
+    card for a kind shows `text` and takes a reply in words. `call` is the tool call it
+    is about; `details` is the kind's own data (PromptKind). `words`: a message the person
+    sends meanwhile answers it in their own words, and is kept as their message. While a
+    prompt other than a proposal is open the state is AWAITING_PERMISSION; a proposal
+    waits beside the agent's work."""
+
     id: str
-    call: ToolCall
-    read_only: bool
-    confined: bool = False  # the call stays inside the Tools' work folder (Tools.confined)
-    reason: str | None = None  # AUTO: why the review asks the user
+    kind: str
+    text: str
+    call: ToolCall | None = None
+    details: Mapping[str, Any] = field(default_factory=dict)
+    words: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1524,14 +1544,11 @@ class RuntimeSnapshot:
     model: str | None
     usage: UsageSnapshot
     operations: Sequence[OperationInfo]  # every running call, foreground included
-    pending_permissions: Sequence[PermissionRequest]
     queued_messages: Sequence[MessageQueued]
     duty_wake_at: float | None = None  # see DutyScheduled
-    proposals: Sequence[Proposal] = ()  # waiting for the user
+    prompts: Sequence[Prompt] = ()  # what waits on the person (PromptOpened)
     help_needed: str | None = None  # see HelpNeeded
-    pending_question: QuestionAsked | None = None  # see QuestionAsked
     plan_mode: bool = False  # see PlanModeChanged
-    pending_plan: PlanProposed | None = None  # see PlanProposed
 
 
 # Runtime events. TextDelta / ReasoningDelta / ToolCallDelta are reused from Core's stream.
@@ -1599,23 +1616,6 @@ class ToolFinished:
 
 
 @dataclass(frozen=True, slots=True)
-class PermissionRequested:
-    request: PermissionRequest
-
-
-@dataclass(frozen=True, slots=True)
-class PermissionResolved:
-    """Also emitted for runtime-side outcomes, each with a fresh request_id: an automatic
-    allow (by policy or review) is ALLOW_ONCE, a call covered by a grant is ALLOW_CONVERSATION, the DENY
-    policy, a non-interactive refusal and Stop are DENY. call_id says which call it
-    concerned."""
-
-    request_id: str
-    decision: Decision
-    call_id: CallId
-
-
-@dataclass(frozen=True, slots=True)
 class ModelRetry:
     """A model attempt failed and will be retried. Frontends discard TextDelta,
     ReasoningDelta and ToolCallDelta received since the last MessageCommitted.
@@ -1669,34 +1669,6 @@ class DutyScheduled:
 
 
 @dataclass(frozen=True, slots=True)
-class Proposal:
-    """A tool call the agent proposed (the propose built-in, or an option of wrap_up). Nothing
-    runs until the user approves it (RuntimeAPI.resolve_proposal); then exactly `call` runs,
-    ungated, as the operation `id` (the propose or wrap_up call's id), and its result wakes
-    the agent like any backgrounded call. A pending proposal is left out of the wake set.
-    TaskStop, Stop and a restart end it; a user message also ends a card proposal, without
-    waking the agent on its own."""
-
-    id: CallId
-    call: ToolCall
-    reason: str
-    card: bool = False  # an option of the wrap_up call `id`: shown on its card, not alone
-
-
-@dataclass(frozen=True, slots=True)
-class ProposalMade:
-    proposal: Proposal
-
-
-@dataclass(frozen=True, slots=True)
-class ProposalResolved:
-    """accepted: True approved, False dismissed, None withdrawn (TaskStop, Stop)."""
-
-    proposal_id: CallId
-    accepted: bool | None
-
-
-@dataclass(frozen=True, slots=True)
 class HelpNeeded:
     """The agent asked its supervisor (the user, or whoever drives this instance) for help
     with ask_for_help: the duty's check-ins pause until a message, an activation or a change
@@ -1707,23 +1679,20 @@ class HelpNeeded:
 
 
 @dataclass(frozen=True, slots=True)
-class QuestionAsked:
-    """The agent's AskUserQuestion call waits for the user's answers (answer_question, or
-    a message, which answers in their own words). `questions` are the call's, each with
-    question, header, options (label, description) and multiSelect. The state is
-    AWAITING_PERMISSION while one is open."""
+class PromptOpened:
+    """Something now waits on the person (RuntimeSnapshot.prompts); answer it with
+    RuntimeAPI.respond."""
 
-    call_id: CallId
-    questions: Sequence[Mapping[str, Any]]
+    prompt: Prompt
 
 
 @dataclass(frozen=True, slots=True)
-class QuestionAnswered:
-    """The open question is answered: the answers by question, or None when it ended
-    unanswered (Stop)."""
+class PromptClosed:
+    """The prompt is settled: the person's reply, or None when it ended unanswered (Stop,
+    a withdrawn proposal, another conversation opened)."""
 
-    call_id: CallId
-    answers: Mapping[str, str] | None
+    prompt_id: str
+    reply: Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -1733,25 +1702,6 @@ class PlanModeChanged:
     refused."""
 
     on: bool
-
-
-@dataclass(frozen=True, slots=True)
-class PlanProposed:
-    """The agent's ExitPlanMode call waits for the user to approve its plan (markdown)
-    with resolve_plan. The state is AWAITING_PERMISSION while one waits."""
-
-    call_id: CallId
-    plan: str
-
-
-@dataclass(frozen=True, slots=True)
-class PlanResolved:
-    """The waiting plan is answered: approved (plan mode ends) or sent back with the
-    user's feedback, if any; approved None when it ended unanswered (Stop)."""
-
-    call_id: CallId
-    approved: bool | None
-    feedback: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1822,8 +1772,6 @@ type RuntimeEvent = (
     | ToolProgress
     | ToolBackgrounded
     | ToolFinished
-    | PermissionRequested
-    | PermissionResolved
     | ModelRetry
     | ModelSelected
     | SettingsChanged
@@ -1832,13 +1780,9 @@ type RuntimeEvent = (
     | MemoriesChanged
     | DutyScheduled
     | HelpNeeded
-    | QuestionAsked
-    | QuestionAnswered
+    | PromptOpened
+    | PromptClosed
     | PlanModeChanged
-    | PlanProposed
-    | PlanResolved
-    | ProposalMade
-    | ProposalResolved
     | MaintenanceStarted
     | MaintenanceFinished
     | CompactionStarted
@@ -1865,14 +1809,14 @@ class RuntimeAPI(Protocol):
     Commands by state ("-" raises RuntimeStateError with its Refusal, "q" queues, "ok"
     allowed):
 
-                        start  send  activate  stop   select_model  resolve_permission
-      not started       ok     -     -         no-op  ok            -
-      IDLE              ok*    ok    ok**      no-op  ok            -
-      THINKING/TOOLS*4  -      q     -         ok     ok            -
-      AWAITING_PERM.    -      q     -         ok     ok            ok
-      STOPPING          -      q     -         no-op  ok            -
-      STOPPED           ok*    ok    ok        no-op  ok            -
-      FAILED            ok*    ok    ok***     no-op  ok            -
+                        start  send  activate  stop   select_model
+      not started       ok     -     -         no-op  ok
+      IDLE              ok*    ok    ok**      no-op  ok
+      THINKING/TOOLS*4  -      q     -         ok     ok
+      AWAITING_PERM.    -      q     -         ok     ok
+      STOPPING          -      q     -         no-op  ok
+      STOPPED           ok*    ok    ok        no-op  ok
+      FAILED            ok*    ok    ok***     no-op  ok
 
       *   only with no outstanding operations. One agent per process.
       **  this also drops a pending wake-up.
@@ -1881,10 +1825,10 @@ class RuntimeAPI(Protocol):
 
     notify follows send's column.
 
-    resolve_permission is first-wins; an unknown or already-resolved id raises
-    RuntimeStateError. answer_question and resolve_plan follow resolve_permission's column;
-    while a question is open, send answers it instead of queueing, and while a plan waits,
-    send (without files) sends it back with the text as feedback. set_plan_mode is valid
+    respond is valid in any state while its prompt is open, and first-wins; an unknown or
+    already-settled id raises RuntimeStateError. While a prompt that takes words is open,
+    send (without files) answers it in the person's words: their message follows its
+    result. set_plan_mode is valid
     in any state with a conversation open (NOT_STARTED raises). cancel_operation is valid in any state while the call is running
     and raises RuntimeStateError otherwise.
     stop is a no-op in IDLE, STOPPED and FAILED unless operations are outstanding, in
@@ -2045,10 +1989,6 @@ class RuntimeAPI(Protocol):
         """Erase the note with its revisions. The messages it came from stay until their
         conversation is deleted."""
 
-    async def resolve_proposal(self, proposal_id: CallId, accept: bool) -> None:
-        """Approve or dismiss a pending proposal, in any state; RuntimeStateError when it is
-        not pending."""
-
     async def set_duty(self, duty: Duty | None) -> None:
         """Give the open conversation a duty, change it, or end it (None); the plan stays.
         Allowed in any state after start(); a change during a cycle applies when it ends.
@@ -2059,23 +1999,17 @@ class RuntimeAPI(Protocol):
     async def set_plan(self, plan: Sequence[PlanItem]) -> None:
         """Replace the open conversation's plan as the user. Emits ConversationUpdated."""
 
-    async def resolve_permission(self, request_id: str, decision: Decision) -> None: ...
-
-    async def answer_question(self, call_id: CallId, answers: Mapping[str, str]) -> None:
-        """Answer the open AskUserQuestion: for each question (by its text), the labels
-        chosen, joined with ", ", or the user's own words. Emits QuestionAnswered."""
+    async def respond(self, prompt_id: str, reply: Any) -> None:
+        """Answer a prompt (Prompt, PromptKind gives the reply's shape); first answer wins.
+        RuntimeStateError when it is not open, ValueError for a reply its kind does not
+        take. Emits PromptClosed. A plan approved with `permissions` changes the permission
+        setting first, as update_settings would (clamped to any ceiling), and ends plan
+        mode; one sent back keeps it."""
 
     async def set_plan_mode(self, on: bool) -> None:
         """Turn plan mode on or off for the open conversation; another conversation opened
         starts without it. Turning it off while a plan waits approves the plan. Emits
         PlanModeChanged when it changes."""
-
-    async def resolve_plan(self, call_id: CallId, approve: bool, feedback: str | None = None,
-                           permissions: PermissionPolicy | None = None) -> None:
-        """Answer the waiting ExitPlanMode. Approved: plan mode ends and, with
-        `permissions`, the permission setting is changed first, as update_settings would
-        (clamped to any ceiling). Not approved: plan mode stays, and `feedback` goes to the
-        agent. Emits PlanResolved."""
 
 
 @dataclass(frozen=True, slots=True)

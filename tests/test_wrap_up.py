@@ -15,14 +15,13 @@ from kaden.api import (
     Message,
     OperationResult,
     PermissionPolicy,
-    ProposalMade,
     Role,
     ToolCall,
     ToolResult,
     ToolStatus,
 )
 from kaden.frontends.common import Card, card_of
-from tests.conftest import Harness, eventually
+from tests.conftest import Harness, asked, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
 from tests.test_desktop_window import qapp  # noqa: F401 - a fixture
@@ -93,7 +92,7 @@ async def test_an_invalid_card_is_an_error(make, arguments: dict[str, Any]):
     await h.turn("go")
     await eventually(lambda: len(h.core.requests) == 2)
     assert results(h)["w"].status == ToolStatus.ERROR
-    assert h.runtime.snapshot().proposals == ()
+    assert tuple(p for p in h.runtime.snapshot().prompts if p.kind == "proposal") == ()
 
 
 async def test_an_option_with_a_call_runs_it_when_clicked(make):
@@ -103,10 +102,10 @@ async def test_an_option_with_a_call_runs_it_when_clicked(make):
     await h.turn("commit it")
     assert len(h.core.requests) == 1  # the turn ended
     assert results(h)["w"].status == ToolStatus.BACKGROUNDED
-    [made] = h.rec.of(ProposalMade)
-    assert made.proposal.card and made.proposal.id == "w" and made.proposal.call.name == "write"
+    [made] = asked(h.rec, "proposal")
+    assert made.details["card"] and made.id == "w" and made.call.name == "write"
     assert h.tools.started == []
-    await h.runtime.resolve_proposal("w", True)
+    await h.runtime.respond("w", True)
     outcome = await eventually(lambda: outcomes(h).get("w"))
     assert outcome.status == ToolStatus.OK and "pushed" in outcome.content
     await eventually(lambda: len(h.core.requests) == 2)  # woken with the result
@@ -120,7 +119,7 @@ async def test_writing_instead_withdraws_the_option_before_the_message(make):
     await h.runtime.send("Leave it for now")
     await eventually(lambda: h.runtime.snapshot().state == AgentState.IDLE
                      and len(h.core.requests) == 2)
-    assert h.runtime.snapshot().proposals == ()
+    assert tuple(p for p in h.runtime.snapshot().prompts if p.kind == "proposal") == ()
     assert h.tools.started == []
     sent = h.core.requests[1].messages
     texts = [repr(m) for m in sent]
@@ -177,7 +176,7 @@ async def test_the_desktop_runs_the_option_with_a_call(make):
     await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
     window.show()
     await h.turn("commit it")
-    await eventually(lambda: "w" in controller.model.proposals)
+    await eventually(lambda: "w" in controller.model.prompts)
     await eventually(lambda: controller.model.card is not None)
     card = window.findChildren(WrapUpCard)[-1]
     assert not window.findChildren(ProposalCard)
@@ -271,7 +270,7 @@ async def test_options_are_told_apart_by_position_not_label(make):
     asyncio.create_task(controller.run())
     await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
     await h.turn("commit it")
-    await eventually(lambda: "w" in controller.model.proposals)
+    await eventually(lambda: "w" in controller.model.prompts)
     window.findChildren(WrapUpCard)[-1].findChildren(QPushButton)[1].click()  # the reply
     await eventually(lambda: len(h.core.requests) == 2)
     assert h.tools.started == []  # the call did not run

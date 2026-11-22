@@ -111,11 +111,9 @@ from kaden.api import (
     MemoryNote,
     ModelInfo,
     PermissionPolicy,
-    PermissionRequest,
     PermissionRule,
-    PlanProposed,
-    Proposal,
-    QuestionAsked,
+    Prompt,
+    PromptKind,
     RuntimeAPI,
     Settings,
     SettingsUpdate,
@@ -1339,13 +1337,13 @@ class Detail(QWidget):
 
 
 class PermissionCard(QFrame):
-    def __init__(self, request: PermissionRequest,
-                 resolve: Callable[[str, Decision], None]) -> None:
+    def __init__(self, request: Prompt, resolve: Callable[[str, Any], None]) -> None:
         super().__init__()
         self.setObjectName("prompt")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 10, 12, 10)
         call = request.call
+        assert call is not None
         headline, detail = call_parts(call.arguments)
         headline = headline or tool_sentence(call.name, call.arguments)
         layout.addWidget(_label(f"Kaden wants to: {headline}", role="strong"))
@@ -1378,7 +1376,7 @@ class PermissionCard(QFrame):
         self.setAccessibleName(f"Permission request for {call.name}")
 
     def _answer(self, request_id: str, decision: Decision) -> None:
-        self.setEnabled(False)  # first-wins; the card goes when PermissionResolved arrives
+        self.setEnabled(False)  # first-wins; the card goes when PromptClosed arrives
         self.resolve(request_id, decision)
 
 
@@ -1387,15 +1385,14 @@ class QuestionCard(QFrame):
     a multiple choice, any; Send once each has an answer. A reply typed instead answers
     them in words."""
 
-    def __init__(self, asked: QuestionAsked,
-                 answer: Callable[[str, dict[str, str]], None]) -> None:
+    def __init__(self, asked: Prompt, answer: Callable[[str, Any], None]) -> None:
         super().__init__()
         self.setObjectName("prompt")
         self.asked, self.answer = asked, answer
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 10, 12, 10)
         self.choices: list[tuple[str, list[QPushButton]]] = []
-        for question in asked.questions:
+        for question in asked.details.get("questions", ()):
             header = str(question.get("header") or "")
             text = str(question.get("question") or "")
             layout.addWidget(_label(f"{header}: {text}" if header else text, role="strong"))
@@ -1434,8 +1431,8 @@ class QuestionCard(QFrame):
                                  for _, buttons in self.choices))
 
     def _send(self) -> None:
-        self.setEnabled(False)  # the card goes when QuestionAnswered arrives
-        self.answer(self.asked.call_id, {
+        self.setEnabled(False)  # the card goes when PromptClosed arrives
+        self.answer(self.asked.id, {
             text: ", ".join(b.text() for b in buttons if b.isChecked())
             for text, buttons in self.choices})
 
@@ -1447,16 +1444,15 @@ class PlanApprovalCard(QFrame):
 
     PLAN_HEIGHT = 360  # past this, the plan scrolls
 
-    def __init__(self, proposed: PlanProposed,
-                 resolve: Callable[[str, bool, PermissionPolicy | None], None]) -> None:
+    def __init__(self, proposed: Prompt, resolve: Callable[[str, Any], None]) -> None:
         super().__init__()
         self.setObjectName("prompt")
-        self.resolve, self.call_id = resolve, proposed.call_id
+        self.resolve, self.prompt_id = resolve, proposed.id
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 10, 12, 10)
         layout.addWidget(_label("Kaden's plan", role="strong"))
         self.plan = MarkdownView()
-        self.plan.setMarkdown(proposed.plan)
+        self.plan.setMarkdown(str(proposed.details.get("plan", "")))
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -1488,21 +1484,22 @@ class PlanApprovalCard(QFrame):
         self.setAccessibleName("The agent's plan")
 
     def _answer(self, approve: bool, permissions: PermissionPolicy | None = None) -> None:
-        self.setEnabled(False)  # the card goes when PlanResolved arrives
-        self.resolve(self.call_id, approve, permissions)
+        self.setEnabled(False)  # the card goes when PromptClosed arrives
+        self.resolve(self.prompt_id, {"approve": approve, "permissions":
+                                      permissions.value if permissions else None})
 
 
 class ProposalCard(QFrame):
     """A call the agent proposed: it runs only if the user approves it."""
 
-    def __init__(self, proposal: Proposal, resolve: Callable[[str, bool], None]) -> None:
+    def __init__(self, proposal: Prompt, resolve: Callable[[str, Any], None]) -> None:
         super().__init__()
         self.setObjectName("prompt")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 10, 12, 10)
         headline, detail = proposal_parts(proposal)
         layout.addWidget(_label(headline, role="strong"))
-        layout.addWidget(_label(proposal.reason, tone="muted"))
+        layout.addWidget(_label(str(proposal.details.get("reason", "")), tone="muted"))
         if detail:
             layout.addWidget(Detail(detail))
         buttons = QHBoxLayout()
@@ -1518,8 +1515,35 @@ class ProposalCard(QFrame):
         self.setAccessibleName(f"Proposal: {headline}")
 
     def _answer(self, proposal_id: str, accept: bool) -> None:
-        self.setEnabled(False)  # the card goes when ProposalResolved arrives
+        self.setEnabled(False)  # the card goes when PromptClosed arrives
         self.resolve(proposal_id, accept)
+
+
+class AnyPromptCard(QFrame):
+    """Something the agent waits on that this app has no card for: what it asks, and a
+    reply in words."""
+
+    def __init__(self, prompt: Prompt, resolve: Callable[[str, Any], None]) -> None:
+        super().__init__()
+        self.setObjectName("prompt")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 10, 12, 10)
+        layout.addWidget(_label(prompt.text, role="strong"))
+        row = QHBoxLayout()
+        self.reply = QLineEdit()
+        self.reply.setPlaceholderText("Your answer")
+        send = _primary(QPushButton("Send"))
+        send.clicked.connect(lambda: self._answer(prompt.id, resolve))
+        self.reply.returnPressed.connect(send.click)
+        row.addWidget(self.reply, 1)
+        row.addWidget(send)
+        layout.addLayout(row)
+        self.setAccessibleName(prompt.text)
+
+    def _answer(self, prompt_id: str, resolve: Callable[[str, Any], None]) -> None:
+        if self.reply.text().strip():
+            self.setEnabled(False)
+            resolve(prompt_id, self.reply.text().strip())
 
 
 class Spinner(QWidget):
@@ -2009,24 +2033,22 @@ class ConversationView(QScrollArea):
         while (child := self.prompts.takeAt(0)) is not None:
             if child.widget() is not None:
                 _discard(child.widget())
-        if (asked := self.model.question) is not None:
-            self.prompts.addWidget(QuestionCard(asked, self.controller.answer_question))
-        if (proposed := self.model.pending_plan) is not None:
-            self.prompts.addWidget(PlanApprovalCard(proposed, self.controller.resolve_plan))
-        for request in self.model.prompts.values():
-            self.prompts.addWidget(PermissionCard(request, self.controller.resolve))
-        for proposal in self.model.proposals.values():
-            if not proposal.card:
-                self.prompts.addWidget(ProposalCard(proposal, self.controller.resolve_proposal))
+        respond = self.controller.respond
+        cards = {PromptKind.QUESTION: QuestionCard, PromptKind.PLAN: PlanApprovalCard,
+                 PromptKind.PERMISSION: PermissionCard, PromptKind.PROPOSAL: ProposalCard}
+        for prompt in self.model.prompts.values():
+            if prompt.kind == PromptKind.PROPOSAL and prompt.details.get("card"):
+                continue  # shown on its wrap-up card
+            self.prompts.addWidget(cards.get(prompt.kind, AnyPromptCard)(prompt, respond))
         if (card := self.model.card) is not None:
-            self.prompts.addWidget(WrapUpCard(card, self.model.proposals, self._choose,
+            self.prompts.addWidget(WrapUpCard(card, self.model.prompts, self._choose,
                                               self.model.close_card))
 
     def _choose(self, index: int) -> None:
         if (card := self.model.card) is None:
             return
-        if card.runs(index, self.model.proposals):
-            self.controller.resolve_proposal(card.call_id, True)
+        if card.runs(index, self.model.prompts):
+            self.controller.respond(card.call_id, True)
             self.model.close_card()
         else:
             self.controller.send(card.options[index])

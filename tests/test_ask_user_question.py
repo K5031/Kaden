@@ -10,8 +10,7 @@ import pytest
 
 from kaden.api import (
     AgentState,
-    QuestionAnswered,
-    QuestionAsked,
+    PromptClosed,
     Role,
     RuntimeStateError,
     ToolStatus,
@@ -33,17 +32,18 @@ async def asking(make: Any, questions: list[dict[str, Any]]) -> Harness:
     h: Harness = await make(core=core)
     await h.start()
     await h.runtime.send("set it up")
-    await eventually(lambda: h.runtime.snapshot().pending_question is not None)
+    await eventually(lambda: h.runtime.snapshot().prompts)
     return h
 
 
 async def test_the_call_waits_for_the_answers_and_returns_them(make: Any) -> None:
     h = await asking(make, [DB, PARTS])
-    asked = h.runtime.snapshot().pending_question
-    assert asked == QuestionAsked("q", (DB, PARTS))
+    [asked] = h.runtime.snapshot().prompts
+    assert (asked.id, asked.kind, asked.details["questions"]) == ("q", "question", (DB, PARTS))
+    assert asked.words and asked.text == "Which database? (and 1 more)"
     assert h.runtime.snapshot().state == AgentState.AWAITING_PERMISSION
     assert len(h.core.requests) == 1  # nothing goes on while it waits
-    await h.runtime.answer_question("q", {"Which database?": "SQLite",
+    await h.runtime.respond("q", {"Which database?": "SQLite",
                                           "Which parts?": "API, UI"})
     await h.rec.wait_state(AgentState.IDLE, count=2)
     result = (await h.results())["q"]
@@ -51,9 +51,9 @@ async def test_the_call_waits_for_the_answers_and_returns_them(make: Any) -> Non
     assert '"Which database?"="SQLite"' in result.content
     assert '"Which parts?"="API, UI"' in result.content
     assert len(h.core.requests) == 2  # the same turn goes on
-    assert h.rec.of(QuestionAnswered)[-1] == QuestionAnswered(
+    assert h.rec.of(PromptClosed)[-1] == PromptClosed(
         "q", {"Which database?": "SQLite", "Which parts?": "API, UI"})
-    assert h.runtime.snapshot().pending_question is None
+    assert not h.runtime.snapshot().prompts
 
 
 async def test_a_message_while_it_waits_answers_it_in_words(make: Any) -> None:
@@ -76,16 +76,25 @@ async def test_stop_ends_the_question(make: Any) -> None:
     await h.runtime.stop()
     await h.rec.wait_state(AgentState.STOPPED, timeout=2)
     assert (await h.results())["q"].status == ToolStatus.CANCELLED
-    assert h.rec.of(QuestionAnswered)[-1] == QuestionAnswered("q", None)
-    assert h.runtime.snapshot().pending_question is None
+    assert h.rec.of(PromptClosed)[-1] == PromptClosed("q", None)
+    assert not h.runtime.snapshot().prompts
 
 
 async def test_answering_what_is_not_asked_is_refused(make: Any) -> None:
     h = await asking(make, [DB])
     with pytest.raises(RuntimeStateError):
-        await h.runtime.answer_question("other", {"Which database?": "SQLite"})
-    await h.runtime.answer_question("q", {"Which database?": "Postgres"})
+        await h.runtime.respond("other", {"Which database?": "SQLite"})
+    await h.runtime.respond("q", {"Which database?": "Postgres"})
     await h.rec.wait_state(AgentState.IDLE, count=2)
     with pytest.raises(RuntimeStateError):
-        await h.runtime.answer_question("q", {"Which database?": "SQLite"})
+        await h.runtime.respond("q", {"Which database?": "SQLite"})
     await asyncio.sleep(0)
+
+
+async def test_a_reply_its_kind_does_not_take_is_refused(make: Any) -> None:
+    h = await asking(make, [DB])
+    with pytest.raises(ValueError):
+        await h.runtime.respond("q", True)  # a question's reply is its answers
+    assert h.runtime.snapshot().prompts  # still open
+    await h.runtime.respond("q", {"Which database?": "SQLite"})
+    await h.rec.wait_state(AgentState.IDLE, count=2)

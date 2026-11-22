@@ -41,9 +41,10 @@ waits on it.
 
 ### The contract
 
-- `api.Proposal` (id, the proposed `ToolCall`, reason); events `ProposalMade` and
-  `ProposalResolved(proposal_id, accepted)` (None: withdrawn); `RuntimeSnapshot.proposals`;
-  `RuntimeAPI.resolve_proposal(proposal_id, accept)`. The headless channel and the remote
+- A proposal is a prompt of kind `proposal` ([one way to answer the agent](2026-11-22-one-way-to-answer-the-agent.md)): its id, the proposed `ToolCall`,
+  details `reason` and `card`; `PromptOpened`, `PromptClosed(id, reply)` (None:
+  withdrawn); `RuntimeSnapshot.prompts`;
+  `RuntimeAPI.respond(proposal_id, accept)`. The headless channel and the remote
   runtime carry them.
 
 ### Frontends

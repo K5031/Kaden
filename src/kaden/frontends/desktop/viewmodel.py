@@ -27,7 +27,6 @@ from kaden.api import (
     ConversationDeleted,
     ConversationInfo,
     ConversationUpdated,
-    Decision,
     Document,
     Duty,
     DutyScheduled,
@@ -47,19 +46,12 @@ from kaden.api import (
     ModelSelected,
     OperationResult,
     PermissionPolicy,
-    PermissionRequest,
-    PermissionRequested,
-    PermissionResolved,
     PermissionRule,
     PlanItem,
     PlanModeChanged,
-    PlanProposed,
-    PlanResolved,
-    Proposal,
-    ProposalMade,
-    ProposalResolved,
-    QuestionAnswered,
-    QuestionAsked,
+    Prompt,
+    PromptClosed,
+    PromptOpened,
     Reasoning,
     ReasoningDelta,
     Refusal,
@@ -349,11 +341,8 @@ class ConversationModel:
     def __init__(self, on_change: Callable[[Change], None] = lambda change: None) -> None:
         self.on_change = on_change
         self.items: list[Item] = []
-        self.prompts: dict[str, PermissionRequest] = {}
-        self.proposals: dict[str, Proposal] = {}  # shown with the prompts
-        self.question: QuestionAsked | None = None  # the agent waits for its answers
+        self.prompts: dict[str, Prompt] = {}  # what waits on the person, by id
         self.plan_mode = False  # the agent only looks around until its plan is approved
-        self.pending_plan: PlanProposed | None = None  # waits for the user's approval
         self.card: Card | None = None  # the agent's wrap-up card under its answer
         self.last_seq = -1
         self.state = AgentState.NOT_STARTED
@@ -419,11 +408,8 @@ class ConversationModel:
         caller subscribed first and drops envelopes at or below snapshot.seq)."""
         self.items.clear()
         self._plan = None
-        self.prompts.clear()
-        self.proposals.clear()
-        self.question = snapshot.pending_question
+        self.prompts = {prompt.id: prompt for prompt in snapshot.prompts}
         self.plan_mode = snapshot.plan_mode
-        self.pending_plan = snapshot.pending_plan
         self.card = None
         self._tools.clear()
         self._cards.clear()
@@ -455,10 +441,6 @@ class ConversationModel:
             item.progress = op.last_progress or item.progress
         for queued in snapshot.queued_messages:
             self._queue(queued)
-        for request in snapshot.pending_permissions:
-            self.prompts[request.id] = request
-        for proposal in snapshot.proposals:
-            self.proposals[proposal.id] = proposal
         self.on_change(Reset())
 
     @property
@@ -525,35 +507,15 @@ class ConversationModel:
                     self.on_change(Updated(item))
             case ToolFinished(result=result, duration_s=duration):
                 self._finish(result, duration)
-            case PermissionRequested(request=request):
-                self.prompts[request.id] = request
+            case PromptOpened(prompt=prompt):
+                self.prompts[prompt.id] = prompt
                 self.on_change(PromptsChanged())
-            case PermissionResolved(request_id=request_id):
-                if self.prompts.pop(request_id, None) is not None:
-                    self.on_change(PromptsChanged())
-            case QuestionAsked():
-                self.question = event
-                self.on_change(PromptsChanged())
-            case QuestionAnswered(call_id=call_id):
-                if self.question is not None and self.question.call_id == call_id:
-                    self.question = None
+            case PromptClosed(prompt_id=prompt_id):
+                if self.prompts.pop(prompt_id, None) is not None:
                     self.on_change(PromptsChanged())
             case PlanModeChanged(on=on):
                 self.plan_mode = on
                 self.on_change(StatusChanged())
-            case PlanProposed():
-                self.pending_plan = event
-                self.on_change(PromptsChanged())
-            case PlanResolved(call_id=call_id):
-                if self.pending_plan is not None and self.pending_plan.call_id == call_id:
-                    self.pending_plan = None
-                    self.on_change(PromptsChanged())
-            case ProposalMade(proposal=proposal):
-                self.proposals[proposal.id] = proposal
-                self.on_change(PromptsChanged())
-            case ProposalResolved(proposal_id=proposal_id):
-                if self.proposals.pop(proposal_id, None) is not None:
-                    self.on_change(PromptsChanged())
             case ModelRetry():
                 self._discard_stream()
             case ModelSelected(model_id=model_id):
@@ -1125,21 +1087,12 @@ class Controller:
     def cancel(self, call_id: str) -> None:
         self.command(self.runtime.cancel_operation(call_id))
 
-    def resolve(self, request_id: str, decision: Decision) -> None:
-        self.command(self.runtime.resolve_permission(request_id, decision))
-
-    def answer_question(self, call_id: str, answers: dict[str, str]) -> None:
-        self.command(self.runtime.answer_question(call_id, answers))
-
-    def resolve_proposal(self, proposal_id: str, accept: bool) -> None:
-        self.command(self.runtime.resolve_proposal(proposal_id, accept))
+    def respond(self, prompt_id: str, reply: Any) -> None:
+        """Answer something that waits on the person (RuntimeAPI.respond)."""
+        self.command(self.runtime.respond(prompt_id, reply))
 
     def set_plan_mode(self, on: bool) -> None:
         self.command(self.runtime.set_plan_mode(on))
-
-    def resolve_plan(self, call_id: str, approve: bool,
-                     permissions: PermissionPolicy | None = None) -> None:
-        self.command(self.runtime.resolve_plan(call_id, approve, permissions=permissions))
 
     def select_model(self, model_id: str) -> None:
         self.command(self.runtime.select_model(model_id))

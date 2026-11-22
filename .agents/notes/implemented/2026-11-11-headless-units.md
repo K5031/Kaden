@@ -51,8 +51,8 @@ process and knows nothing of ranks, teams or other units (SPEC 10.2).
 - **Encoding:** API dataclasses as JSON objects with their class name under `"type"`,
   enums as values, so a new field needs no protocol code.
 - **Prompts are answered over the channel.** The frontend declares
-  `interactive_permissions=True`: `PermissionRequested` goes out as an event and the
-  client answers with `resolve_permission`. `HelpNeeded` goes out the same way; the answer
+  `interactive_permissions=True`: a permission prompt (`PromptOpened`) goes out as an event and the
+  client answers with `respond`. `HelpNeeded` goes out the same way; the answer
   is a `send`.
 - **Launch options:** `--duty "…"` and `--goal "…"` start a new conversation with that
   duty, which counts as the person's action that starts a duty; a duty that cannot start

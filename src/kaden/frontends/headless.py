@@ -3,9 +3,9 @@
 The program drives Kaden with JSON-RPC 2.0, one message per line, on Kaden's stdin and
 stdout. Each request is a RuntimeAPI command of the same name (REQUESTS); every runtime
 event comes out as an `event` notification with its `seq`. API values are JSON objects
-with their class name under "type"; enums are their values. Permission prompts and the
-agent's questions (HelpNeeded) go out as events and are answered with resolve_permission
-and send. A refusal is an error whose data names the exception ("type") and, for a
+with their class name under "type"; enums are their values. What waits on the program
+(PromptOpened: a permission, a question, a plan, a proposal) goes out as an event and is
+answered with respond; the agent's call for help (HelpNeeded) with send. A refusal is an error whose data names the exception ("type") and, for a
 RuntimeStateError, why ("reason", an api.Refusal). Closing stdin quits. Nothing else is written to stdout: the process's own stdout
 is pointed at stderr, and its stdin at /dev/null, so no library or subprocess can write to
 or read from the channel.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -20,8 +21,10 @@ from kaden.api import (
     Memory,
     Message,
     PermissionPolicy,
-    PermissionRequested,
+    PromptKind,
+    PromptOpened,
     Role,
+    RuntimeStateError,
     StartOptions,
     ToolResult,
 )
@@ -119,10 +122,11 @@ class Harness:
         async def approve() -> None:
             seen: set[str] = set()
             while True:
-                for e in self.rec.of(PermissionRequested):
-                    if e.request.id not in seen:
-                        seen.add(e.request.id)
-                        await self.runtime.resolve_permission(e.request.id, decision)
+                for e in self.rec.of(PromptOpened):
+                    if e.prompt.kind == PromptKind.PERMISSION and e.prompt.id not in seen:
+                        seen.add(e.prompt.id)
+                        with contextlib.suppress(RuntimeStateError):  # settled meanwhile
+                            await self.runtime.respond(e.prompt.id, decision)
                 await asyncio.sleep(0.005)
 
         return asyncio.create_task(approve())
@@ -259,3 +263,8 @@ async def make(tmp_path: Path, clean_env: pytest.MonkeyPatch):
     yield _make
     for h in harnesses:
         await h.close()
+
+
+def asked(rec: Any, kind: str = "permission") -> list[Any]:
+    """The prompts of `kind` a recording saw open, in order."""
+    return [e.prompt for e in rec.of(PromptOpened) if e.prompt.kind == kind]
