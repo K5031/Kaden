@@ -277,10 +277,10 @@ QFrame#user {{ background: {c.bubble}; border-radius: 14px; }}
 QFrame#user QLabel {{ color: {c.text}; }}
 QFrame#user:disabled {{ background: transparent; border: 1px dashed {c.line}; }}
 QFrame#user QLabel:disabled {{ color: {c.muted}; }}
-QFrame#tool {{ background: transparent; border: none; }}
-QFrame#stepsHeader {{ border-radius: 6px; }}
-QFrame#stepsHeader:hover {{ background: {c.card}; }}
-QFrame#stepsBody {{ border-left: 2px solid {c.line}; margin-left: 9px; }}
+QFrame#tool {{ background: {c.card}; border: none; border-radius: 8px; }}
+QToolButton#stepArrow {{ background: transparent; border: none; padding: 0; }}
+QFrame#stepsHeader {{ background: transparent; }}
+QFrame#stepsBody {{ background: transparent; border: none; }}
 QFrame#tool QPlainTextEdit {{ background: {c.bg}; }}
 QFrame#prompt {{ background: {c.bg}; border: 1px solid {c.line};
     border-left: 3px solid {c.accent}; }}

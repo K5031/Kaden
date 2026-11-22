@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from kadence.api import ToolStatus
-from kadence.frontends.common import group_title, step_problems, steps_title
+from kadence.frontends.common import group_title, step_problems
 from kadence.frontends.desktop.viewmodel import (
     AssistantItem,
     NoticeItem,
@@ -24,7 +24,6 @@ def step(sentence: str | None = None, status: ToolStatus | None = ToolStatus.OK,
 
 
 def test_titles_and_problems():
-    assert steps_title(1) == "1 step" and steps_title(4) == "4 steps"
     assert step_problems(["", "failed", "declined", "failed"]) == "2 failed, 1 declined"
     assert step_problems(["", ""]) == ""
 
@@ -54,20 +53,20 @@ def test_text_notices_and_lone_thinking_split_groups():
     assert step_segments([a, refused, b]) == [[a], refused, [b]]
 
 
-def test_heading_shows_the_running_step_then_a_count():
+def test_heading_shows_the_running_step_then_the_last_one():
     done, running = step("Search the web"), step("Open the page", None, Phase.RUNNING)
     assert group_heading([done, running]) == ("Open the page", "running", running)
     running.phase, running.status = Phase.DONE, ToolStatus.ERROR
-    assert group_heading([done, running]) == ("2 steps", "1 failed", None)
+    assert group_heading([done, running]) == ("Open the page", "1 failed", None)
     running.status = ToolStatus.OK
-    assert group_heading([done, running]) == ("2 steps", "", None)
+    assert group_heading([done, running]) == ("Opened the page", "", None)
 
 
 def test_heading_of_one_step_is_its_sentence():
     assert group_heading([step("Search the web")]) == ("Searched the web", "", None)
-    assert group_heading([step("Open it", ToolStatus.ERROR)]) == ("Open it", "failed", None)
+    assert group_heading([step("Open it", ToolStatus.ERROR)]) == ("Open it", "1 failed", None)
     stopped = step("Write it", None, Phase.NOT_RUN)
-    assert group_heading([stopped]) == ("Write it", "not run", None)
+    assert group_heading([stopped]) == ("Write it", "1 not run", None)
 
 
 def test_one_title_rule_for_both_apps():
@@ -75,4 +74,4 @@ def test_one_title_rule_for_both_apps():
         "Open", "running", 1)
     assert group_title([("Searched", "", None)]) == ("Searched", "", None)
     assert group_title([("Searched", "", None), ("Open", "failed", None)]) == (
-        "2 steps", "1 failed", None)
+        "Open", "1 failed", None)

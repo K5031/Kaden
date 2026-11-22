@@ -552,7 +552,6 @@ async def test_a_command_shows_its_description_with_the_command_behind_it(make, 
     [tool] = widgets(window, ToolCard)
     assert tool.title.text() == "Remove the old build"
     assert tool.title.toolTip() == "Bash: rm -rf build"
-    assert tool.name.isHidden()  # the sentence says what the tool is
 
 
 async def test_a_reply_with_nothing_to_show_is_not_drawn(make, qapp):
@@ -826,7 +825,7 @@ async def test_steps_fold_into_one_line_until_opened(make, qapp):
     await eventually(lambda: widgets(window, AssistantBubble) and not controller.model.busy)
     await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
     (group,) = groups(window)
-    assert group.title.text() == "2 steps" and group.state.text() == "1 failed"
+    assert group.title.text() == "Open the page" and group.state.text() == "1 failed"
     cards = widgets(window, ToolCard)
     assert len(cards) == 2 and not any(card.isVisible() for card in cards)
     group.toggle.click()
@@ -853,7 +852,7 @@ async def test_a_running_group_shows_its_current_step(make, qapp):
     assert group.cancel.isVisibleTo(group)
     group.cancel.click()
     await eventually(lambda: not controller.model.busy)
-    await eventually(lambda: group.title.text() == "2 steps")
+    await eventually(lambda: group.title.text() == "Wait for the build")
     assert group.state.text() == "1 cancelled" and not group.cancel.isVisibleTo(group)
 
 

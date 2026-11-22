@@ -791,8 +791,8 @@ class UserBubble(QWidget):
 
 
 class ThinkingLine(QToolButton):
-    """The line above a reply that unfolds the model's thinking: its words, flush with the
-    reply's text, then a chevron close behind them."""
+    """A line that unfolds what is under it, as Claude draws one: its words, muted, then a
+    chevron close behind them. The model's thinking above a reply, and a run of steps."""
 
     ICON, GAP = 12, 4
 
@@ -942,28 +942,30 @@ class ToolCard(QFrame):
         self.item = item
         self.setObjectName("tool")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 6, 6, 6)
+        layout.setContentsMargins(10, 6, 8, 6)
         layout.setSpacing(4)
         head = QHBoxLayout()
         head.setSpacing(8)
-        self.name = _label(wrap=False, selectable=False, role="strong")
+        # As Claude draws a step: a small arrow, then its words, muted, in a rounded row.
+        self.toggle = QToolButton(checkable=True, objectName="stepArrow")
+        self.toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self.toggle.setToolTip("Details")
+        self.toggle.setAccessibleName("Details")
+        self.toggle.toggled.connect(self._toggle)
         self.title = ElidedLabel()
         self.title.setProperty("tone", "muted")
         self.state = _label(wrap=False, selectable=False)
         self.cancel = QPushButton("Cancel")
         self.cancel.setAccessibleName("Cancel this task")
         self.cancel.clicked.connect(lambda: cancel(self.item.call_id))
-        self.toggle = QToolButton(checkable=True)
-        self.toggle.setArrowType(Qt.ArrowType.DownArrow)
-        self.toggle.setToolTip("Details")
-        self.toggle.setAccessibleName("Details")
-        self.toggle.toggled.connect(self._toggle)
-        head.addWidget(self.name)
+        head.addWidget(self.toggle)
         head.addWidget(self.title, 1)
         head.addWidget(self.state)
         head.addWidget(self.cancel)
-        head.addWidget(self.toggle)
         layout.addLayout(head)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mousePressEvent = (  # type: ignore[method-assign]
+            lambda event: self.toggle.click())
         self.progress = _label(tone="muted")
         self.details = QPlainTextEdit(readOnly=True)
         self.details.setMaximumHeight(200)
@@ -974,13 +976,10 @@ class ToolCard(QFrame):
 
     def refresh(self) -> None:
         item = self.item
-        self.name.setText(item.name)
-        self.name.setVisible(item.sentence is None)  # a sentence says what the tool is
         duration = f" in {item.duration_s:.1f} s" if item.duration_s is not None else ""
         self.title.setText(item.summary)
         self.title.setToolTip(f"{item.name}: {item.detail}"
                               + (f" ({item.state_label}{duration})" if item.status else ""))
-        theme.mark(self.title, "tone", None if item.sentence else "muted")
         self.state.setText(item.state_label + duration)
         self.state.setVisible(item.status is not ToolStatus.OK)
         theme.mark(self.state, "tone", TOOL_TONES.get(item.status, "muted")
@@ -992,7 +991,7 @@ class ToolCard(QFrame):
         self.setAccessibleName(f"Tool {item.name}, {item.state_label}")
 
     def _toggle(self, shown: bool) -> None:
-        self.toggle.setArrowType(Qt.ArrowType.UpArrow if shown else Qt.ArrowType.DownArrow)
+        self.toggle.setArrowType(Qt.ArrowType.DownArrow if shown else Qt.ArrowType.RightArrow)
         self.details.setVisible(shown)
 
 
@@ -1008,30 +1007,25 @@ class StepGroup(QFrame):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
         self.header = QFrame(objectName="stepsHeader")
-        self.header.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.header.mousePressEvent = lambda event: self.toggle.click()  # type: ignore[method-assign]
         head = QHBoxLayout(self.header)
         head.setContentsMargins(0, 2, 6, 2)
         head.setSpacing(6)
-        self.toggle = QToolButton(checkable=True)
-        self.toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self.title = self.toggle = ThinkingLine()  # its words, then a chevron
         self.toggle.setAccessibleName("Show the steps")
         self.toggle.toggled.connect(self._toggle)
-        self.title = ElidedLabel()
-        self.title.setProperty("tone", "muted")
         self.state = _label(wrap=False, selectable=False)
         self.cancel = QPushButton("Cancel")
         self.cancel.setAccessibleName("Cancel this task")
         self.cancel.clicked.connect(lambda: self.active and cancel(self.active.call_id))
-        head.addWidget(self.toggle)
-        head.addWidget(self.title, 1)
+        head.addWidget(self.title)
         head.addWidget(self.state)
+        head.addStretch()
         head.addWidget(self.cancel)
         layout.addWidget(self.header)
         self.body = QFrame(objectName="stepsBody")
         self.steps = QVBoxLayout(self.body)
-        self.steps.setContentsMargins(12, 0, 0, 0)
-        self.steps.setSpacing(2)
+        self.steps.setContentsMargins(0, 0, 0, 0)
+        self.steps.setSpacing(4)
         self.body.hide()
         layout.addWidget(self.body)
 
@@ -1056,7 +1050,6 @@ class StepGroup(QFrame):
         self.cancel.setVisible(self.active is not None and self.active.cancellable)
 
     def _toggle(self, shown: bool) -> None:
-        self.toggle.setArrowType(Qt.ArrowType.DownArrow if shown else Qt.ArrowType.RightArrow)
         self.toggle.setAccessibleName("Hide the steps" if shown else "Show the steps")
         self.body.setVisible(shown)
 

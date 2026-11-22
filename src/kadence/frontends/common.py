@@ -206,11 +206,6 @@ RESULT_LABELS = {  # how a step ended, in words
 }
 
 
-def steps_title(count: int) -> str:
-    """A finished group of steps, by count: the tools behind them are not known here."""
-    return f"{count} step{'s' if count != 1 else ''}"
-
-
 def step_problems(labels: Iterable[str]) -> str:
     """'2 failed, 1 declined' from each step's problem label ('' for a step that went fine)."""
     counts = Counter(label for label in labels if label)
@@ -220,15 +215,13 @@ def step_problems(labels: Iterable[str]) -> str:
 def group_title(steps: Sequence[tuple[str, str, str | None]]) -> tuple[str, str, int | None]:
     """A folded group of steps, each (sentence, problem, state while under way or None):
     the title, the state beside it, and the index of the step under way. That is the
-    latest step under way; else the one step's sentence and problem; else "N steps" and
-    the problems counted."""
+    latest step under way; else, as Claude shows a finished run, the last step's sentence,
+    with the problems counted."""
     active = next((i for i in range(len(steps) - 1, -1, -1) if steps[i][2] is not None), None)
     if active is not None:
         sentence, _, state = steps[active]
         return sentence, state or "", active
-    if len(steps) == 1:
-        return steps[0][0], steps[0][1], None
-    return steps_title(len(steps)), step_problems(problem for _, problem, _ in steps), None
+    return steps[-1][0], step_problems(problem for _, problem, _ in steps), None
 
 
 def _file(path: Any) -> str:

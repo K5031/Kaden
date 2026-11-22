@@ -605,7 +605,7 @@ Design: [Agent Note](notes/implemented/2026-11-10-step-descriptions.md).
 |---|---|
 | Opened | Closed by default; the desktop app keeps a group open while its first step stays first |
 | Live title | The latest step not yet ended, with its state (preparing, running, in the background) |
-| Ended title | One step: its sentence and its problem; several: "N steps" and problems counted by label ("1 failed, 1 declined") |
+| Ended title | As Claude shows a finished run: the last step's sentence, and the problems counted by label beside it ("1 failed, 1 declined"). Drawn as Claude draws it: the words, muted, then a chevron (`ThinkingLine`, as for thinking); unfolded, each step is a rounded row (`#tool`, the card colour) with a small arrow on its left, the whole row opening its details |
 | Step text | As Claude shows a step: the model's `step_summary`, else `common.tool_sentence`: a phrase per Claude Code tool from its arguments ("Read main.py", "Search for “TODO” in src", "Fetch docs.python.org"), the tool's phrase alone while its input still arrives ("Run a command"), "Server: tool name" for a tool server's tool, "Use <name>" for any other; past tense once done. The raw input stays in the tooltip and the details. Permission and proposal cards use the same words |
 | Cancel | The desktop group line has Cancel for its live step; each step keeps its own |
 | Step rows | No box; "done" is not shown, its duration is in the tooltip; other states stay visible |
