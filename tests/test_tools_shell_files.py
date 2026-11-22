@@ -646,3 +646,33 @@ async def test_notebook_edit_replaces_inserts_and_deletes_cells(tools, workspace
     no_type = await run(tools, tmp_path, "NotebookEdit", notebook_path="sales.ipynb",
                         new_source="y", edit_mode="insert")
     assert no_type.is_error and "cell_type" in no_type.content
+
+
+async def test_a_long_notebook_is_read_by_cells(tools, workspace, tmp_path, monkeypatch):
+    from kadence.tools import shell_files
+
+    monkeypatch.setattr(shell_files, "MAX_READ_CHARS", 120)
+    path = workspace / "long.ipynb"
+    path.write_text(json.dumps({"cells": [
+        {"cell_type": "code", "id": f"c{n}", "metadata": {}, "source": f"x = {n}  # " + "y" * 30,
+         "outputs": [], "execution_count": None} for n in range(1, 6)],
+        "metadata": {}, "nbformat": 4, "nbformat_minor": 5}))
+    first = await run(tools, tmp_path, "Read", file_path="long.ipynb")
+    assert first.content.startswith('<cell id="c1">') and '<cell id="c5">' not in first.content
+    assert "use offset" in first.content
+    later = await run(tools, tmp_path, "Read", file_path="long.ipynb", offset=4, limit=1)
+    assert later.content.startswith('<cell id="c4">') and '<cell id="c5">' not in later.content
+    assert "use offset 5" in later.content
+
+
+async def test_glob_keeps_the_newest_when_there_are_too_many(tools, workspace, tmp_path,
+                                                             monkeypatch):
+    from kadence.tools import shell_files
+
+    monkeypatch.setattr(shell_files, "MAX_LIST_ENTRIES", 2)
+    for n, name in enumerate(["a.md", "b.md", "c.md", "z.md"]):
+        (workspace / name).write_text(name)
+        os.utime(workspace / name, (100 + n, 100 + n))
+    out = await run(tools, tmp_path, "Glob", pattern="*.md")
+    assert out.content.splitlines()[:2] == ["z.md", "c.md"]
+    assert "truncated" in out.content

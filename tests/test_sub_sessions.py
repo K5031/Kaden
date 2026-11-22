@@ -479,6 +479,9 @@ async def test_a_subagent_that_changes_nothing_leaves_no_worktree(make, tmp_path
     result = (await h.results())["s"]
     assert result.status == ToolStatus.OK and "Nothing to change." in result.content
     assert "removed" in result.content
+    exclude = Path(git(repo, "rev-parse", "--git-path", "info/exclude").strip())
+    exclude = exclude if exclude.is_absolute() else repo / exclude
+    assert "/.claude/worktrees/" in exclude.read_text().splitlines()  # never in git add -A
     assert not worktree.exists()
     assert git(repo, "branch", "--list", f"worktree-{name}") == ""
     assert name not in git(repo, "worktree", "list")

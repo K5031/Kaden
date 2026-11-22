@@ -570,7 +570,7 @@ class ShellFilesTools(Tools):
             return await asyncio.to_thread(self._read_pdf, path, args.get("pages"),
                                            args.get("view") is True, ctx)
         if path.suffix.lower() == ".ipynb":
-            return await asyncio.to_thread(self._read_notebook, path, ctx)
+            return await asyncio.to_thread(self._read_notebook, path, offset, limit, ctx)
 
         def source() -> IO[str]:
             """The file as text; a Word, Excel or PowerPoint file converted first."""
@@ -677,12 +677,15 @@ class ShellFilesTools(Tools):
             raise ToolError(f"{self._display(path)} is not a notebook: it has no cells")
         return book
 
-    def _read_notebook(self, path: Path, ctx: ToolContext) -> str:
+    def _read_notebook(self, path: Path, offset: int, limit: int, ctx: ToolContext) -> str:
         """A notebook as its cells, each with its id, type (unless code), source and
-        outputs, as Claude Code's Read shows one."""
-        book = self._notebook(path, ctx)
-        parts = []
-        for n, cell in enumerate(book["cells"]):
+        outputs, as Claude Code's Read shows one: `limit` cells from the `offset`th, as
+        many as fit in MAX_READ_CHARS, with a note on where to read on."""
+        cells = self._notebook(path, ctx)["cells"]
+        parts: list[str] = []
+        size, end = 0, min(len(cells), offset - 1 + limit)
+        for n in range(offset - 1, end):
+            cell = cells[n]
             cell_id = _cell_id(cell, n)
             lines = [f'<cell id="{cell_id}">']
             if cell.get("cell_type", "code") != "code":
@@ -691,8 +694,15 @@ class ShellFilesTools(Tools):
             lines += [f"[output] {text}" for text in map(_output_text, cell.get("outputs", ()))
                       if text]
             lines.append(f'</cell id="{cell_id}">')
-            parts.append("\n".join(lines) + "\n")
-        return "".join(parts)[:MAX_READ_CHARS]
+            part = "\n".join(lines) + "\n"
+            if parts and size + len(part) > MAX_READ_CHARS:
+                end = n
+                break
+            parts.append(part[:MAX_READ_CHARS])
+            size += len(part)
+        if end < len(cells):
+            parts.append(f"[{len(cells) - end} more cells; use offset {end + 1} to read on]")
+        return "".join(parts)
 
     async def _notebook_edit(self, args: dict[str, Any], ctx: ToolContext) -> str:
         path = self._path(args["notebook_path"])
@@ -831,14 +841,12 @@ class ShellFilesTools(Tools):
                         except OSError:  # gone since it was listed
                             continue
                         found.append((-changed, rel))
-                        if len(found) > MAX_LIST_ENTRIES:
-                            break
             finally:
                 os.close(folder)
             return found
 
         found = await _cancellable_thread(list_)
-        lines = [rel for _, rel in sorted(found[:MAX_LIST_ENTRIES])]
+        lines = [rel for _, rel in sorted(found)[:MAX_LIST_ENTRIES]]
         if len(found) > MAX_LIST_ENTRIES:
             lines.append(f"[truncated at {MAX_LIST_ENTRIES} entries]")
         return "\n".join(lines) if lines else "No files found"

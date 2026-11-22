@@ -12,6 +12,7 @@ from kadence.api import (
     AgentState,
     QuestionAnswered,
     QuestionAsked,
+    Role,
     RuntimeStateError,
     ToolStatus,
 )
@@ -60,10 +61,14 @@ async def test_a_message_while_it_waits_answers_it_in_words(make: Any) -> None:
     await h.runtime.send("Whatever you think is best")
     await h.rec.wait_state(AgentState.IDLE, count=2)
     result = (await h.results())["q"]
-    assert "Whatever you think is best" in result.content
-    texts = [b.text for m in await h.transcript() for b in m.blocks
-             if getattr(b, "text", None) == "Whatever you think is best"]
-    assert texts == []  # not a message of its own
+    assert result.status == ToolStatus.OK and "message that follows" in result.content
+    messages = await h.transcript()
+    at = next(i for i, m in enumerate(messages)
+              if any(getattr(b, "call_id", None) == "q" for b in m.blocks))
+    answer = messages[at + 1]  # the user's own message, right after the result
+    assert answer.role == Role.USER and answer.from_user
+    assert [b.text for b in answer.blocks if hasattr(b, "text")] == [
+        "Whatever you think is best"]
 
 
 async def test_stop_ends_the_question(make: Any) -> None:

@@ -160,7 +160,6 @@ class Web:
                 await asyncio.sleep(self._retry_delay)
             try:
                 results = await asyncio.to_thread(self._search, query, asked)
-                results = [r for r in results if _kept(r.get("href", ""), allowed, blocked)]
             except WebError:
                 if attempt == SEARCH_ATTEMPTS - 1:
                     raise
@@ -172,6 +171,13 @@ class Web:
                     "engines sometimes refuse automated searches for a while, so this may "
                     "not mean nothing exists: try other words, or read a page you know with "
                     "WebFetch.")
+        results = [r for r in results if _kept(r.get("href", ""), allowed, blocked)]
+        if not results:  # the engine answered; the domains left nothing
+            where = (f"on {', '.join(allowed)}" if allowed else "") + (
+                " and " if allowed and blocked else "") + (
+                f"outside {', '.join(blocked)}" if blocked else "")
+            return (f"Nothing found for {query!r} {where}: widen the domains, or search "
+                    "without them.")
         lines = [UNTRUSTED]
         for n, r in enumerate(results[:max_results], 1):
             lines.append(f"{n}. {r.get('title') or '(no title)'}\n   {r.get('href', '')}\n"

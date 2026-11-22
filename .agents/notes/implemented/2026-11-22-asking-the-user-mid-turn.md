@@ -17,9 +17,11 @@ the agent goes on in the same turn. The user asked for Claude Code's way.
   for a frontend that attaches late. Other calls in the message run as usual.
 - **Answering:** `RuntimeAPI.answer_question(call_id, answers)`, the answers by question,
   each the option labels chosen (joined with ", " for a multiple choice) or the user's own
-  words. A message sent while a question is open answers it in the user's own words
-  instead of starting a turn; that is how a program without the command (headless, a
-  fleet) answers. Either way `QuestionAnswered(call_id, answers)` follows, and the result
+  words. A message sent while a question is open answers it in the user's own words: the
+  result says the answer is the message that follows, and the message is the user's,
+  appended right after the result, so it shows in the conversation and counts as what the
+  user asked. That is how a program without the command (headless, a fleet) answers.
+  Either way `QuestionAnswered(call_id, answers)` follows, and the result
   reads as Claude Code's: the questions and the answers.
 - **Stop** cancels the wait: the call ends as cancelled and `QuestionAnswered(call_id,
   None)` is emitted.

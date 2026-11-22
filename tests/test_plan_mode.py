@@ -118,7 +118,9 @@ async def test_a_message_while_it_waits_sends_it_back(make):
     h = await planning(make, Step(text="Rethinking."))
     await h.runtime.send("Smaller steps, please")
     await h.rec.wait_state(AgentState.IDLE, count=2)
-    assert "Smaller steps, please" in (await h.results())["x"].content
+    assert "message that follows" in (await h.results())["x"].content
+    users = [m for m in await h.transcript() if m.role.value == "user" and m.from_user]
+    assert [b.text for b in users[-1].blocks if hasattr(b, "text")] == ["Smaller steps, please"]
     assert h.runtime.snapshot().plan_mode
 
 

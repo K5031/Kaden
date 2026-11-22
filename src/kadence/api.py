@@ -317,10 +317,10 @@ class ToolSpec:
     timeout: float | None = None  # hard wall-clock limit; None = runtime default
     #                               (suggested 1 h); math.inf = no limit
     foreground: bool = False  # True: a call is not backgrounded by the initial wait. It
-    #   runs until it ends (when its schema offers `timeout`, at most
-    #   foreground_timeout(arguments) and the cancel grace after), or, with `run_in_background` true, is backgrounded at once (Claude Code's
-    #   Bash). The tool's schema offers both arguments; the runtime reads them, and the
-    #   tool may end the call itself at its timeout, with what it has.
+    #   runs until it ends, unless its `run_in_background` argument is true, which
+    #   backgrounds it at once (Claude Code's Bash and Agent). Unless `timeout` is math.inf
+    #   it ends at foreground_timeout(arguments) at the latest, the cancel grace after; the
+    #   tool may end it itself then, with what it has.
     deferrable: bool = False  # True (a tool server's): offered by name only, and loaded
     #   with ToolSearch, once such tools together would take much of the request
     answers_prompt: bool = False  # True: a call with a `prompt` argument (Claude Code's

@@ -75,3 +75,19 @@ async def test_a_deferred_tool_called_without_a_search_still_runs(make: Any,
     await h.turn("go")
     assert (await h.results())["u"].content == "slack_send ran"
     assert "slack_send" in {t.name for t in core.requests[1].tools}
+
+
+async def test_a_loaded_tool_can_be_searched_for_again(make: Any, small_limit: None) -> None:
+    tools = FakeTools()
+    served(tools, "github_create_issue", "slack_send")
+    core = ScriptedCore([
+        Step(calls=[call("ToolSearch", {"query": "select:slack_send"}, id="a")]),
+        Step(calls=[call("ToolSearch", {"query": "select:slack_send"}, id="b"),
+                    call("ToolSearch", {"query": "slack"}, id="c")]),
+        Step(text="ok")])
+    h: Harness = await make(core=core, tools=tools)
+    await h.start()
+    await h.turn("go")
+    results = await h.results()
+    assert '"name": "slack_send"' in results["b"].content
+    assert '"name": "slack_send"' in results["c"].content

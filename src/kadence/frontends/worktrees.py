@@ -56,8 +56,16 @@ async def plan(folder: Path, name: str) -> Worktree:
     return Worktree(str(repo), str(path), f"worktree-{name}", base, str(path / inside))
 
 
+EXCLUDED = "/.claude/worktrees/"  # in the repository's own exclude file: never committed
+
+
 async def add(worktree: Worktree) -> None:
-    """Add it, with its branch when the branch does not exist yet."""
+    """Add it, with its branch when the branch does not exist yet. The worktrees' folder is
+    excluded in the repository (.git/info/exclude), so that the parent's `git add -A`
+    does not take a worktree in as an embedded repository."""
+    exclude = Path(await git(worktree.repo, "rev-parse", "--git-path", "info/exclude"))
+    exclude = exclude if exclude.is_absolute() else Path(worktree.repo) / exclude
+    await asyncio.to_thread(_exclude, exclude)
     branch = await git(worktree.repo, "branch", "--list", worktree.branch)
     args = [worktree.branch] if branch else ["-b", worktree.branch, worktree.base]
     await git(worktree.repo, "worktree", "add", "--quiet", worktree.path, *args)
@@ -75,3 +83,12 @@ async def remove(worktree: Worktree) -> None:
     """Remove it and its branch."""
     await git(worktree.repo, "worktree", "remove", "--force", worktree.path)
     await git(worktree.repo, "branch", "-D", worktree.branch)
+
+
+def _exclude(path: Path) -> None:
+    """Blocking: add EXCLUDED to an exclude file unless it is there."""
+    text = path.read_text() if path.exists() else ""
+    if EXCLUDED not in text.splitlines():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text + ("" if not text or text.endswith("\n") else "\n")
+                        + EXCLUDED + "\n")

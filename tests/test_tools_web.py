@@ -232,3 +232,11 @@ async def test_search_keeps_to_the_allowed_domains_and_leaves_out_blocked_ones(t
 async def test_fetch_answers_a_prompt_through_the_runtime(tools):
     spec = {s.name: s for s in await tools.list_tools()}["WebFetch"]
     assert spec.answers_prompt and "prompt" in spec.parameters["properties"]
+
+
+async def test_a_search_left_empty_by_its_domains_says_so_at_once(tools, tmp_path):
+    before = len(searches)
+    out = await run(tools, tmp_path, "WebSearch", query="mixed", allowed_domains=["rust-lang.org"])
+    assert len(searches) == before + 1  # nothing to gain by asking again
+    assert not out.is_error and "rust-lang.org" in out.content
+    assert "refuse" not in out.content

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import math
-from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -324,9 +323,7 @@ async def test_a_foreground_tool_is_waited_for_past_the_initial_wait(make: Any) 
 
 async def test_a_foreground_tool_times_out_at_its_timeout(make: Any) -> None:
     tools = FakeTools()
-    spec = tools.hanging("cmd", progress="started", foreground=True)
-    tools.specs["cmd"] = replace(spec, parameters={  # a limit only where the tool takes one
-        "type": "object", "properties": {"timeout": {"type": "number"}}})
+    tools.hanging("cmd", progress="started", foreground=True)
     core = ScriptedCore([Step(calls=[call("cmd", {"timeout": 200}, id="c")]), Step(text="ok")])
     h: Harness = await make(core=core, tools=tools, initial_wait_s=0.05)  # grace: 0.2 s
     await h.start()
@@ -397,3 +394,23 @@ async def test_a_prompted_result_is_answered_from_it_by_the_light_model(make: An
     results = await h.results()
     assert results["f"].status == ToolStatus.OK and results["f"].content == "Paris."
     assert results["g"].content.startswith("The capital of France")  # no prompt: the page
+
+
+async def test_a_foreground_tool_without_a_limit_of_its_own_gets_two_minutes(
+        make: Any, monkeypatch: Any) -> None:
+    """The limit comes from the tool's own: none set is the default foreground limit, and
+    an endless one (a subagent) is waited for to the end."""
+    from kadence import api
+
+    monkeypatch.setattr(api, "FOREGROUND_TIMEOUT_S", 0.2)
+    tools = FakeTools()
+    tools.hanging("cmd", foreground=True)
+    tools.slow("agent", 0.5, foreground=True, timeout=math.inf)
+    core = ScriptedCore([Step(calls=[call("cmd", id="c"), call("agent", id="a")]),
+                         Step(text="ok")])
+    h: Harness = await make(core=core, tools=tools, initial_wait_s=0.05)
+    await h.start()
+    await asyncio.wait_for(h.turn("go"), 5)
+    results = await h.results()
+    assert results["c"].status == ToolStatus.TIMED_OUT
+    assert results["a"].status == ToolStatus.OK

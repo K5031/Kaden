@@ -169,6 +169,14 @@ EVENT_LOG_FILE = "events.jsonl"
 _NO_MEMORY_EDITING = "this memory module cannot edit memories"
 _NO_DELETION = "this memory module cannot delete conversations"
 _NO_DUTIES = "this memory module cannot keep duties"
+@dataclass
+class _UserWait:
+    """A call that waits for the user: what it asked, and what the answer settles."""
+
+    event: QuestionAsked | PlanProposed
+    answered: asyncio.Future[Any]
+
+
 def _definition(spec: ToolSpec) -> dict[str, Any]:
     return {"name": spec.name, "description": spec.description, "parameters": spec.parameters}
 
@@ -429,13 +437,12 @@ class Runtime:
         self._uncounted: set[CallId] = set()  # operations not counted as activity yet
         self._specs: dict[str, ToolSpec] = {}  # offered in the latest request
         self._deferred: dict[str, ToolSpec] = {}  # offered by name only (ToolSearch)
-        # The open AskUserQuestion and what its answers settle.
-        self._question: tuple[QuestionAsked, asyncio.Future[Mapping[str, str] | str]] | None = (
-            None)
+        self._searchable: dict[str, ToolSpec] = {}  # what ToolSearch finds: loaded ones too
+        # Calls that wait for the user, by what they wait for (QuestionAsked, PlanProposed).
+        self._waits: dict[type, _UserWait] = {}
         # Plan mode for the open conversation, and the ExitPlanMode that waits: its answer
         # is (approved, feedback).
         self._plan_mode = False
-        self._plan: tuple[PlanProposed, asyncio.Future[tuple[bool, str | None]]] | None = None
         self._loaded: dict[str, set[str]] = {}  # per conversation: deferred tools loaded
         self._flush_tasks: set[asyncio.Task[None]] = set()
         self._duration_task: asyncio.Task[None] | None = None
@@ -463,9 +470,9 @@ class Runtime:
             queued_messages=list(self._inbox),
             duty_wake_at=self._duty_wake_at,
             help_needed=self._help,
-            pending_question=self._question[0] if self._question else None,
+            pending_question=self._awaited(QuestionAsked),
             plan_mode=self._plan_mode,
-            pending_plan=self._plan[0] if self._plan else None,
+            pending_plan=self._awaited(PlanProposed),
             proposals=tuple(p for p, _ in self._proposals.values()),
         )
 
@@ -599,12 +606,11 @@ class Runtime:
     async def send(self, text: str, files: Sequence[str] = (), *,
                    spoken: bool = False) -> None:
         self._sendable()
-        if self._question is not None and not files and text.strip():
-            self._settle_question(text.strip())  # an answer in the user's own words
-            return
-        if self._plan is not None and not files and text.strip():
-            self._settle_plan(False, text.strip())  # sent back, with the message as feedback
-            return
+        if not files and text.strip():  # it answers what waits, and is the user's message
+            if QuestionAsked in self._waits:
+                self._settle_question(None, in_words=text.strip())
+            elif PlanProposed in self._waits:
+                self._settle_plan(False, None, in_words=True)
         attached = tuple([await self._attach(path) for path in files])
         self._answered()
         self._queue(MessageQueued(_new_id(), text, attached, spoken), "user message")
@@ -885,7 +891,7 @@ class Runtime:
             return AgentState.STOPPING
         if self._cycle_active or self._cycle_requested:
             return (AgentState.AWAITING_PERMISSION
-                    if self._prompts or self._question or self._plan else self._phase)
+                    if self._prompts or self._waits else self._phase)
         return self._base
 
     def _update_state(self) -> None:
@@ -1109,8 +1115,9 @@ class Runtime:
                 elif module is not self._core:
                     self._tool_owner[spec.name] = module
         deferrable = [s for s in specs.values() if s.deferrable]
-        self._deferred = {}
+        self._deferred, self._searchable = {}, {}
         if sum(len(json.dumps(_definition(s))) for s in deferrable) > DEFER_OVER_CHARS:
+            self._searchable = {s.name: s for s in deferrable}
             loaded = self._loaded.setdefault(conversation.id, set()) if conversation else set()
             self._deferred = {s.name: s for s in deferrable if s.name not in loaded}
             specs[TOOL_SEARCH.name] = TOOL_SEARCH
@@ -1129,14 +1136,14 @@ class Runtime:
                 self._log.decision("tool_loaded", name=name)
 
     def _search_tools(self, query: str, limit: int) -> list[ToolSpec]:
-        """ToolSearch's matches among the deferred tools."""
+        """ToolSearch's matches among the tools it loads, loaded already or not."""
         if query.startswith("select:"):
             wanted = [n.strip() for n in query.removeprefix("select:").split(",")]
-            return [self._deferred[n] for n in wanted if n in self._deferred]
+            return [self._searchable[n] for n in wanted if n in self._searchable]
         words = [w.lower() for w in query.split()]
         required = [w[1:] for w in words if w.startswith("+") and len(w) > 1]
         scored = []
-        for spec in self._deferred.values():
+        for spec in self._searchable.values():
             name, description = spec.name.lower(), spec.description.lower()
             if not all(w in name for w in required):
                 continue
@@ -1922,7 +1929,7 @@ class Runtime:
                 wait = 0
             else:
                 wait = None
-                if "timeout" in spec.parameters.get("properties", {}):
+                if spec.timeout != math.inf:  # a call with an end of its own is waited for
                     limit = spec.timeout or self._config.default_tool_timeout_s
                     spec = replace(spec, timeout=min(
                         limit, foreground_timeout(arguments) + self._config.cancel_grace_s))
@@ -2355,56 +2362,76 @@ class Runtime:
                 return ToolStatus.OK, skill_files.render(loaded, args.get("args", ""))
         return ToolStatus.ERROR, f"Unknown built-in {call.name!r}."
 
-    async def _ask(self, call: ToolCall) -> str:
-        """Wait for the user's answers to the call's questions (answer_question, or a
-        message in their own words) and say them as Claude Code's AskUserQuestion does."""
-        questions = tuple(call.arguments["questions"])
-        asked = QuestionAsked(call.id, questions)
-        answered: asyncio.Future[Mapping[str, str] | str] = (
-            asyncio.get_running_loop().create_future())
-        self._question = (asked, answered)
-        self._log.decision("question", call_id=call.id, questions=len(questions))
-        self._emit(asked)
+    async def _wait_for_user(self, event: QuestionAsked | PlanProposed,
+                             unanswered: RuntimeEvent) -> Any:
+        """Emit `event` and wait until the user settles it (_settle); on Stop, `unanswered`
+        is emitted. Its kind (the event's class) is AWAITING_PERMISSION meanwhile."""
+        wait = _UserWait(event, asyncio.get_running_loop().create_future())
+        self._waits[type(event)] = wait
+        self._emit(event)
         self._update_state()
         try:
-            answers = await answered
+            return await wait.answered
         finally:
-            if self._question is not None and self._question[0] is asked:
-                self._question = None
-                self._emit(QuestionAnswered(call.id, None))
+            if self._waits.get(type(event)) is wait:
+                del self._waits[type(event)]
+                self._emit(unanswered)
             self._update_state()
-        if isinstance(answers, str):
-            return (f"The user answered in their own words: \"{answers}\". You can now "
-                    "continue with the user's answers in mind.")
+
+    def _awaited(self, kind: type) -> Any:
+        """The event of the call that waits for the user for `kind`, or None."""
+        wait = self._waits.get(kind)
+        return wait.event if wait is not None else None
+
+    def _settle(self, kind: type, call_id: CallId | None, answer: Any,
+                settled: RuntimeEvent) -> None:
+        """Answer the call that waits for `kind` (any, with call_id None); RuntimeStateError
+        when none, or another, waits."""
+        wait = self._waits.get(kind)
+        if wait is None or call_id not in (None, wait.event.call_id):
+            raise RuntimeStateError(f"nothing waits as {call_id}", Refusal.NOT_PENDING)
+        del self._waits[kind]
+        self._emit(settled)
+        if not wait.answered.done():
+            wait.answered.set_result(answer)
+        self._update_state()
+
+    async def _ask(self, call: ToolCall) -> str:
+        """Wait for the user's answers to the call's questions (answer_question, or a
+        message, which is their answer in their own words) and say them as Claude Code's
+        AskUserQuestion does."""
+        questions = tuple(call.arguments["questions"])
+        self._log.decision("question", call_id=call.id, questions=len(questions))
+        answers = await self._wait_for_user(QuestionAsked(call.id, questions),
+                                            QuestionAnswered(call.id, None))
+        if answers is None:
+            return ("The user answered in their own words, in the message that follows. "
+                    "You can now continue with the user's answers in mind.")
         said = ", ".join(f'"{q["question"]}"="{answers.get(q["question"], "(no answer)")}"'
                          for q in questions)
         return (f"User has answered your questions: {said}. You can now continue with the "
                 "user's answers in mind.")
 
     async def answer_question(self, call_id: CallId, answers: Mapping[str, str]) -> None:
-        if self._question is None or self._question[0].call_id != call_id:
-            raise RuntimeStateError(f"no question {call_id} is open", Refusal.NOT_PENDING)
-        self._settle_question(dict(answers))
+        self._settle_question(dict(answers), call_id)
 
-    def _settle_question(self, answers: Mapping[str, str] | str) -> None:
-        assert self._question is not None
-        asked, answered = self._question
-        self._question = None
-        self._log.decision("question_answered", call_id=asked.call_id,
-                           in_words=isinstance(answers, str))
-        self._emit(QuestionAnswered(asked.call_id, {q["question"]: answers
-                                                    for q in asked.questions}
-                                    if isinstance(answers, str) else answers))
-        if not answered.done():
-            answered.set_result(answers)
-        self._update_state()
+    def _settle_question(self, answers: Mapping[str, str] | None,
+                         call_id: CallId | None = None, *, in_words: str = "") -> None:
+        """None, with `in_words`: the user answers in their own words, in a message of
+        theirs; QuestionAnswered has those words for each question."""
+        asked = self._awaited(QuestionAsked)
+        answered_id = asked.call_id if asked is not None else call_id or ""
+        self._log.decision("question_answered", call_id=answered_id, in_words=answers is None)
+        said = answers if answers is not None else {
+            q["question"]: in_words for q in (asked.questions if asked else ())}
+        self._settle(QuestionAsked, call_id, answers, QuestionAnswered(answered_id, said))
 
     # ── Plan mode ────────────────────────────────────────────────────────
 
     async def set_plan_mode(self, on: bool) -> None:
         if self._conversation is None:
             raise RuntimeStateError("not started", Refusal.NOT_STARTED)
-        if not on and self._plan is not None:
+        if not on and PlanProposed in self._waits:
             self._settle_plan(True, None)  # leaving plan mode approves the waiting plan
             return
         self._set_plan_mode(on, "user")
@@ -2420,55 +2447,43 @@ class Runtime:
         """Wait for the user to approve the plan or send it back, and say which as Claude
         Code's ExitPlanMode does."""
         plan = call.arguments["plan"]
-        proposed = PlanProposed(call.id, plan)
-        answered: asyncio.Future[tuple[bool, str | None]] = (
-            asyncio.get_running_loop().create_future())
-        self._plan = (proposed, answered)
         self._log.decision("plan_proposed", call_id=call.id, plan_chars=len(plan))
-        self._emit(proposed)
-        self._update_state()
-        try:
-            approved, feedback = await answered
-        finally:
-            if self._plan is not None and self._plan[0] is proposed:
-                self._plan = None
-                self._emit(PlanResolved(call.id, None))
-            self._update_state()
+        approved, feedback, in_words = await self._wait_for_user(
+            PlanProposed(call.id, plan), PlanResolved(call.id, None))
         if approved:
             return ToolStatus.OK, ("User has approved your plan. You can now start coding. "
                                    "Start with updating your todo list if applicable.\n\n"
                                    f"## Approved Plan:\n{plan}")
-        if feedback:
+        said = ("They answered in the message that follows." if in_words else
+                f"They said: \"{feedback}\"." if feedback else None)
+        if said:
             return ToolStatus.REFUSED, (
-                "The user did not approve the plan; you are still in plan mode. They said: "
-                f"\"{feedback}\". Revise the plan with that in mind and present it again "
-                "with ExitPlanMode.")
+                f"The user did not approve the plan; you are still in plan mode. {said} "
+                "Revise the plan with that in mind and present it again with ExitPlanMode.")
         return ToolStatus.REFUSED, (
             "The user did not approve the plan and wants to keep planning; you are still in "
             "plan mode. Stop and wait for them to say how to go on.")
 
     async def resolve_plan(self, call_id: CallId, approve: bool, feedback: str | None = None,
                            permissions: PermissionPolicy | None = None) -> None:
-        if self._plan is None or self._plan[0].call_id != call_id:
+        proposed = self._awaited(PlanProposed)
+        if proposed is None or proposed.call_id != call_id:
             raise RuntimeStateError(f"no plan {call_id} is waiting", Refusal.NOT_PENDING)
         if approve and permissions is not None:
             await self.update_settings(SettingsUpdate(permissions=permissions))
-            if self._plan is None or self._plan[0].call_id != call_id:
-                raise RuntimeStateError(f"no plan {call_id} is waiting", Refusal.NOT_PENDING)
-        self._settle_plan(approve, feedback.strip() if feedback and feedback.strip() else None)
+        self._settle_plan(approve, feedback.strip() if feedback and feedback.strip() else None,
+                          call_id=call_id)
 
-    def _settle_plan(self, approved: bool, feedback: str | None) -> None:
-        assert self._plan is not None
-        proposed, answered = self._plan
-        self._plan = None
-        self._log.decision("plan_resolved", call_id=proposed.call_id, approved=approved,
-                           feedback=feedback is not None)
+    def _settle_plan(self, approved: bool, feedback: str | None, *, in_words: bool = False,
+                     call_id: CallId | None = None) -> None:
+        proposed = self._awaited(PlanProposed)
+        resolved_id = proposed.call_id if proposed is not None else call_id or ""
+        self._log.decision("plan_resolved", call_id=resolved_id, approved=approved,
+                           feedback=feedback is not None or in_words)
         if approved:
             self._set_plan_mode(False, "approval")
-        self._emit(PlanResolved(proposed.call_id, approved, feedback))
-        if not answered.done():
-            answered.set_result((approved, feedback))
-        self._update_state()
+        self._settle(PlanProposed, call_id, (approved, feedback, in_words),
+                     PlanResolved(resolved_id, approved, feedback))
 
     def _describe(self, op: Operation) -> str:
         name = f"Operation {op.call.id} ({op.call.name})"
