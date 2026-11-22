@@ -141,6 +141,9 @@ recap of what is done and what is not. Other answers have no card.
   goes away, and a button that would have done something is withdrawn.
 - The card comes back if you reopen the conversation before answering. After a restart a
   button that would have done something just sends its text.
+- When the agent has questions for you (which database, which approach), the card shows
+  them with their choices. For one question, click a choice; for several, answer them in
+  your reply.
 
 ## Keys
 
@@ -226,6 +229,9 @@ To add one, open **Settings → Tool servers** and give it:
 - a **command** to start it (`npx -y @modelcontextprotocol/server-github`) or its **URL**;
 - any **variables** it needs, one per line as `NAME=value`, such as an access token. Values
   are kept in your system's keychain, never in a file; leave a value empty to keep it.
+
+When your servers offer many tools, the agent sees them by name and loads the ones it
+needs as it goes, so that they do not make every request larger.
 
 Servers start with the next start of Kadence: press **Restart now**. A server that fails to
 start is left out; the others still work.

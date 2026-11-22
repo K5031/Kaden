@@ -92,7 +92,7 @@ async def test_every_request_lists_the_skills_and_offers_the_tool(make, no_built
     request = h.core.requests[-1]
     assert "- greet: Greet someone by name" in request.system
     assert "Say hello" not in request.system
-    assert "skill" in {t.name for t in request.tools}
+    assert "Skill" in {t.name for t in request.tools}
     assert await h.runtime.skills() == (Skill("greet", "Greet someone by name"),)
 
 
@@ -102,14 +102,14 @@ async def test_without_skills_nothing_is_listed_or_offered(make, no_builtin):
     await h.turn("hello")
     request = h.core.requests[-1]
     assert "kill" not in request.system
-    assert "skill" not in {t.name for t in request.tools}
+    assert "Skill" not in {t.name for t in request.tools}
     assert await h.runtime.skills() == ()
 
 
 async def test_the_tool_answers_with_the_instructions(make, no_builtin):
     h = await make(core=ScriptedCore(
-        [Step(calls=[call("skill", {"name": "/greet", "arguments": "Ada"}, id="a"),
-                     call("skill", {"name": "nope"}, id="b")]),
+        [Step(calls=[call("Skill", {"skill": "/greet", "args": "Ada"}, id="a"),
+                     call("Skill", {"skill": "nope"}, id="b")]),
          Step(text="Hello Ada.")], maintenance=Step(text="T")))
     folder = write(h.data_dir / "skills", "greet", GREET)
     await h.start()
@@ -124,7 +124,7 @@ async def test_the_tool_answers_with_the_instructions(make, no_builtin):
 
 async def test_arguments_follow_instructions_that_do_not_place_them(make, no_builtin):
     h = await make(core=ScriptedCore(
-        [Step(calls=[call("skill", {"name": "tidy", "arguments": "the docs"}, id="a")]),
+        [Step(calls=[call("Skill", {"skill": "tidy", "args": "the docs"}, id="a")]),
          Step(text="Done.")], maintenance=Step(text="T")))
     write(h.data_dir / "skills", "tidy", "---\ndescription: Tidy up\n---\nTidy things.")
     await h.start()

@@ -65,44 +65,45 @@ CHECK_IN_S = (5.0, 120.0)  # a child's duty intervals: it continues soon after a
 STOP_GRACE_S = 10.0  # after stdin closes, before the child is killed
 RECORD = "session.json"
 LIMIT_FILE = "limit.json"  # in <data dir>/sessions: the user's limit per sub-session
-_SESSION = {"type": "string", "description": "The sub-session's id."}
+_SESSION = {"type": "string", "description": "The subagent's id."}
 _ACTIVE = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION,
            AgentState.FINISHING)
 _QUIET = (TextDelta, ReasoningDelta, ToolCallDelta, ToolProgress)
 
 START = ToolSpec(
-    "start_session",
-    "Hand a self-contained task to a sub-session: a separate agent with its own context, "
+    "Agent",
+    "Hand a self-contained task to a subagent: a separate agent with its own context, "
     "working in the same folder with your tools, so long side work does not fill your "
-    "conversation. Describe the task fully: it sees nothing of this conversation. It runs in "
-    "the background and returns its report when done, or a question if it needs one. "
-    "Several can run at once; the user can open and talk to each. Once the call has "
-    "returned, you get a notice whenever it stops working. Start one when the user asked "
-    "for the work; when it is your own idea, propose it (propose) instead.",
+    "conversation. `description` is 3 to 5 words; `prompt` describes the task fully: it "
+    "sees nothing of this conversation. It returns the agent's report when done, or a "
+    "question if it needs one. With `run_in_background` you get on with other work and "
+    "are told the outcome when it ends; several can run at once. The user can open and "
+    "talk to each. Once the call has returned, you get a notice whenever it stops "
+    "working. Start one when the user asked for the work; when it is your own idea, "
+    "propose it (propose) instead.",
     {"type": "object",
      "properties": {
-         "task": {"type": "string", "minLength": 1},
+         "description": {"type": "string", "minLength": 1},
+         "prompt": {"type": "string", "minLength": 1},
+         "run_in_background": {"type": "boolean"},
          "budget_usd": {"type": "number", "exclusiveMinimum": 0,
                         "description": "The most it may spend, in US dollars. Leave it "
                                        "out unless the task calls for a limit; the "
                                        "user's limit per sub-session, where they set "
                                        "one, applies anyway."}},
-     "required": ["task"]},
+     "required": ["description", "prompt"]},
     timeout=math.inf,
+    foreground=True,
 )
 MESSAGE = ToolSpec(
-    "message_session",
-    "Answer a sub-session's question, or tell it more (starting it again if it stopped), "
-    "then wait for its report or next question.",
-    {"type": "object", "properties": {"session": _SESSION, "text": {"type": "string",
-                                                                    "minLength": 1}},
-     "required": ["session", "text"]},
+    "SendMessage",
+    "Answer a subagent's question, or tell it more (starting it again if it stopped), "
+    "then wait for its report or next question. To stop one, use TaskStop on the call "
+    "that waits for it.",
+    {"type": "object", "properties": {"to": _SESSION, "message": {"type": "string",
+                                                                   "minLength": 1}},
+     "required": ["to", "message"]},
     timeout=math.inf,
-)
-STOP = ToolSpec(
-    "stop_session",
-    "Stop a sub-session that is no longer needed.",
-    {"type": "object", "properties": {"session": _SESSION}, "required": ["session"]},
 )
 
 STATE_LABELS = {"starting": "Starting", "working": "Working",
@@ -277,7 +278,7 @@ class SubSessions(Tools):
             self._close(session)
 
     def stop(self, session: SubSession) -> None:
-        """Stop a child: the frontend's Stop and stop_session."""
+        """Stop a child: the frontend's Stop, and TaskStop on a call that waits for it."""
         if session.running:
             self._set(session, state="stopped")
         self._close(session)
@@ -313,11 +314,11 @@ class SubSessions(Tools):
 
     async def list_tools(self) -> Sequence[ToolSpec]:
         if self.limit_usd is None:
-            return (START, MESSAGE, STOP)
+            return (START, MESSAGE)
         start = replace(START, description=(
             f"{START.description} Each may spend up to ${self.limit_usd:g} unless you give "
             "it less."))
-        return (start, MESSAGE, STOP)
+        return (start, MESSAGE)
 
     async def set_limit(self, usd: float | None) -> None:
         """The user's limit per sub-session: what one gets unless the agent gives it less.
@@ -365,15 +366,12 @@ class SubSessions(Tools):
             budget = args.get("budget_usd", self.limit_usd)
             if budget is not None and self.limit_usd is not None:
                 budget = min(budget, self.limit_usd)
-            session = await self._new(args["task"], budget, ctx.conversation_id)
+            session = await self._new(args["prompt"], budget, ctx.conversation_id,
+                                      args.get("description"))
         else:
-            session = next((s for s in self.sessions if s.id == args["session"]), None)
+            session = next((s for s in self.sessions if s.id == args["to"]), None)
             if session is None:
-                return ToolOutput(f"There is no sub-session {args['session']!r}.",
-                                  is_error=True)
-            if call.name == STOP.name:
-                self.stop(session)
-                return ToolOutput(f"Sub-session {session.id} stopped.")
+                return ToolOutput(f"There is no subagent {args['to']!r}.", is_error=True)
             if session.child_conversation_id is None:
                 return ToolOutput(f"Sub-session {session.id} never started.", is_error=True)
         try:
@@ -382,7 +380,7 @@ class SubSessions(Tools):
             else:
                 live = await self._running(session)
                 self._set(session, state="working", failure=None)
-                await live.send(args["text"])
+                await live.send(args["message"])
             return await self._wait(session, ctx)
         except asyncio.CancelledError:  # the call was cancelled, wherever it had got to
             self.stop(session)
@@ -398,13 +396,13 @@ class SubSessions(Tools):
 
     # ── Children ──────────────────────────────────────────────────────────
 
-    async def _new(self, task: str, budget: float | None, conversation_id: str
-                   ) -> SubSession:
+    async def _new(self, task: str, budget: float | None, conversation_id: str,
+                   title: str | None = None) -> SubSession:
         session_id = str(self._next)
         self._next += 1
         folder = self.data_dir / "sessions" / f"{conversation_id[:8]}-{session_id}"
         session = SubSession(session_id, task, conversation_id, folder, has_goal=True,
-                             budget_usd=budget)
+                             budget_usd=budget, title=(title or "").strip() or None)
         await asyncio.to_thread(folder.mkdir, parents=True)
         self.sessions.append(session)
         self._set(session)
@@ -485,7 +483,7 @@ class SubSessions(Tools):
                 return f"Sub-session {session.id} finished. Report: {session.report}"
             case "waiting":
                 return (f"Sub-session {session.id} asks: {session.question}\nAnswer with "
-                        f"message_session(session=\"{session.id}\", text=...).")
+                        f"SendMessage(to=\"{session.id}\", message=...).")
             case "stopped":
                 return f"Sub-session {session.id} was stopped."
         return f"Sub-session {session.id} failed: {session.failure}"

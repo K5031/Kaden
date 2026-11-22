@@ -305,7 +305,7 @@ async def test_module_exceptions_become_failures(make: Any) -> None:
     await h.turn("again")
     assert any(f.kind == FailureKind.INTERNAL and "tool server down" in f.message
                for f in h.rec.of(Failure))
-    assert {t.name for t in core.requests[-1].tools} >= {"recall", "op_status"}
+    assert {t.name for t in core.requests[-1].tools} >= {"recall", "TaskOutput"}
 
 
 # ── One cycle at a time ──

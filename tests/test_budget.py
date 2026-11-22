@@ -105,7 +105,7 @@ async def test_builtins_not_counted(make: Any) -> None:
     tools = FakeTools()
     tools.instant("t")
     core = ScriptedCore([
-        Step(calls=[call("recall", {"query": "x"}), call("op_status", {"call_id": "zz"})]),
+        Step(calls=[call("recall", {"query": "x"}), call("TaskOutput", {"task_id": "zz"})]),
         Step(calls=[call("t")]),
         Step(text="ok"),
     ])
@@ -133,15 +133,15 @@ async def test_tool_refused_when_exhausted(make: Any) -> None:
 
 
 async def test_mid_stream_exhaustion(make: Any) -> None:
-    core = ScriptedCore([Step(text="stream", reports=[Usage(2500, 600)], hang=True)])
-    h: Harness = await make(core=core, budget=Budget(max_tokens=3000))
+    core = ScriptedCore([Step(text="stream", reports=[Usage(5500, 600)], hang=True)])
+    h: Harness = await make(core=core, budget=Budget(max_tokens=6000))  # above one request
     await h.start()
     await h.runtime.send("go")
     await h.rec.wait_state(AgentState.FAILED, timeout=2)
     assert core.cancelled == 1
     assert h.rec.of(Failure)[-1].kind == FailureKind.BUDGET
     usage = h.runtime.snapshot().usage.usage
-    assert usage.input_tokens >= 2500 and usage.output_tokens >= 600
+    assert usage.input_tokens >= 5500 and usage.output_tokens >= 600
 
 
 async def test_failed_request_charged(make: Any) -> None:

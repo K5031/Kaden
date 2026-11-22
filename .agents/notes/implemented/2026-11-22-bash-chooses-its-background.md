@@ -19,7 +19,7 @@ up front with `run_in_background`. The user prefers Claude Code's way.
   (`orchestrator.foreground_timeout`):
   - `run_in_background: true`: backgrounded at once, with a placeholder saying it was
     started in the background; its outcome is delivered as for any backgrounded call, and
-    `op_status` and `op_cancel` work on it. The tool's own limits hold (the hard timeout,
+    `TaskOutput` and `TaskStop` work on it. The tool's own limits hold (the hard timeout,
     10 minutes without output).
   - Otherwise the runtime waits for the call to end, at most `timeout` (default 120 000,
     at most 600 000, never past the tool's own hard limit); past it the call is cancelled

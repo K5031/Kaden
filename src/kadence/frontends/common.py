@@ -16,6 +16,7 @@ from typing import Any
 
 from kadence.api import (
     DESCRIPTION_ARG,
+    PLAN_STATUS,
     SUGGESTION_TOOLS,
     AgentState,
     Author,
@@ -85,6 +86,23 @@ def card_of(call: ToolCall) -> Card | None:
         if not options:
             return None
         return Card(call.id, text("recap"), text("question"), options, action)
+    if call.name == "AskUserQuestion":
+        questions = [q for q in args.get("questions") or ()
+                     if isinstance(q, dict) and isinstance(q.get("question"), str)]
+        if not questions:
+            return None
+
+        def labels(q: dict[str, Any]) -> list[str]:
+            return [o["label"] for o in q.get("options") or ()
+                    if isinstance(o, dict) and isinstance(o.get("label"), str) and o["label"]]
+
+        if len(questions) == 1 and not questions[0].get("multiSelect"):
+            return Card(call.id, "", questions[0]["question"], tuple(labels(questions[0])),
+                        None)
+        lines = [f"{n}. {q['question']} ("
+                 + ("any of: " if q.get("multiSelect") else "") + ", ".join(labels(q)) + ")"
+                 for n, q in enumerate(questions, 1)]
+        return Card(call.id, "", "\n".join(lines), (), None)
     if call.name in SUGGESTION_TOOLS:
         replies = args.get("replies")
         options = tuple(r for r in replies if isinstance(r, str) and r) if isinstance(
@@ -110,8 +128,10 @@ def proposal_parts(proposal: Proposal) -> tuple[str, str]:
     """A proposal for its card: the headline ("Kadence proposes: …") and the call's other
     arguments."""
     headline, detail = call_parts(proposal.call.arguments)
-    if proposal.call.name == "start_session":
-        headline = headline or f"Start a sub-session: {proposal.call.arguments.get('task')}"
+    if proposal.call.name == "Agent":
+        arguments = proposal.call.arguments
+        headline = headline or (
+            f"Start a subagent: {arguments.get('description') or arguments.get('prompt')}")
         detail = ""
     return f"Kadence proposes: {headline or f'using {proposal.call.name}'}", detail
 
@@ -441,7 +461,7 @@ def _when(t: float) -> str:
 MEMORY_HINT = "What Kadence remembers across conversations. You can edit it."
 
 # Calls not shown as steps: the wrap-up card and the plan's checklist show them instead.
-CARD_TOOLS = frozenset({"wrap_up", "update_plan"})
+CARD_TOOLS = frozenset({"wrap_up", "AskUserQuestion", "TodoWrite"})
 
 
 def checklist(plan: Sequence[PlanItem], working: bool) -> tuple[PlanItem, ...]:
@@ -471,17 +491,19 @@ def result_text(result: ToolResult | OperationResult) -> str:
 
 
 def plan_steps(arguments: Any) -> tuple[PlanItem, ...]:
-    """The steps of an update_plan call, as a frontend shows them in the conversation;
-    what cannot be read is left out."""
+    """The steps of a TodoWrite call, as a frontend shows them in the conversation: a step
+    in progress by its activeForm; what cannot be read is left out."""
     steps = []
-    items = arguments.get("items") if isinstance(arguments, dict) else None
+    items = arguments.get("todos") if isinstance(arguments, dict) else None
     for item in items if isinstance(items, list) else ():
-        if isinstance(item, dict) and isinstance(item.get("text"), str) and item["text"]:
-            try:
-                status = PlanStatus(item.get("status", "todo"))
-            except ValueError:
+        if isinstance(item, dict) and isinstance(item.get("content"), str) and item["content"]:
+            status = PLAN_STATUS.get(item.get("status", "pending"))
+            if status is None:
                 continue
-            steps.append(PlanItem(item["text"], status))
+            active = item.get("activeForm")
+            text = (active if status == PlanStatus.DOING and isinstance(active, str) and active
+                    else item["content"])
+            steps.append(PlanItem(text, status))
     return tuple(steps)
 
 

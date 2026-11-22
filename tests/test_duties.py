@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from kadence.api import (
+    TODO_STATUS,
     AgentState,
     Budget,
     ConversationUpdated,
@@ -94,7 +95,7 @@ async def test_turning_a_duty_on_starts_work_and_shows_it(make):
     await idle(h, 1)
     [request] = h.core.requests
     assert "Keep the inbox answered" in request.system
-    assert "update_plan" in [t.name for t in request.tools]
+    assert "TodoWrite" in [t.name for t in request.tools]
     assert "finish_goal" not in [t.name for t in request.tools]  # a duty, not a goal
     assert notices(request)[0].endswith("[Runtime notice] Runs continuously: Keep the inbox answered")
     [updated] = [e for e in h.rec.of(ConversationUpdated) if e.info.duty is not None]
@@ -104,14 +105,14 @@ async def test_turning_a_duty_on_starts_work_and_shows_it(make):
 
 async def test_an_ordinary_conversation_keeps_a_plan_but_has_no_duty_tools(make):
     h = await duty_harness(make, [
-        Step(calls=[call("update_plan", {"items": [
-            {"text": "Read the code", "status": "done"},
-            {"text": "Fix the bug", "status": "doing"},
-            {"text": "Run the tests"}]}, id="p")]),
+        Step(calls=[call("TodoWrite", {"todos": [
+            {"content": "Read the code", "activeForm": "Read the code", "status": "completed"},
+            {"content": "Fix the bug", "activeForm": "Fix the bug", "status": "in_progress"},
+            {"status": "pending", "content": "Run the tests", "activeForm": "Run the tests"}]}, id="p")]),
         Step(text="Working on it.")])
     await h.turn("fix the bug")
     names = {t.name for t in h.core.requests[0].tools}
-    assert "update_plan" in names  # a plan for any task with steps
+    assert "TodoWrite" in names  # a plan for any task with steps
     assert names.isdisjoint({"finish_goal", "ask_for_help"})
     plan = h.runtime.snapshot().conversation.plan
     assert [(i.text, i.status) for i in plan] == [
@@ -130,24 +131,24 @@ async def test_the_prompt_shows_a_plan_the_conversation_does_not(make):
     """A plan the user edited, or one whose update_plan call is no longer in view (a
     conversation opened again, older messages summarized), is in the prompt."""
     h = await duty_harness(make, [
-        Step(calls=[call("update_plan", {"items": [
-            {"text": "Fix the bug", "status": "done"}]}, id="p")]),
+        Step(calls=[call("TodoWrite", {"todos": [
+            {"content": "Fix the bug", "activeForm": "Fix the bug", "status": "completed"}]}, id="p")]),
         Step(text="Fixed."), Step(text="Sure."), Step(text="That one is yours to do."),
-        Step(calls=[call("update_plan", {"items": [
-            {"text": "Ship it", "status": "done"}]}, id="q")]),
+        Step(calls=[call("TodoWrite", {"todos": [
+            {"content": "Ship it", "activeForm": "Ship it", "status": "completed"}]}, id="q")]),
         Step(text="Shipped."), Step(text="Hello again.")])
     await h.turn("fix the bug")
     await h.runtime.set_plan([PlanItem("Write the docs first")])
     await h.turn("carry on")
     system = h.core.requests[2].system
-    assert "## Plan\n- [todo] Write the docs first" in system and duties.CLOSE_PLAN in system
+    assert "## Plan\n- [pending] Write the docs first" in system and duties.CLOSE_PLAN in system
     await h.turn("plan again")  # the agent's own update is in the conversation again
     assert "## Plan" not in h.core.requests[5].system
     first = h.conversation.id
     await h.chat("Other")  # away and back: what the conversation shows is not known
     await h.start(conversation_id=first)
     await h.turn("hello again")
-    assert "- [done] Ship it" in h.core.requests[6].system
+    assert "- [completed] Ship it" in h.core.requests[6].system
 
 
 async def test_a_duty_can_be_added_mid_conversation_and_keeps_the_context(make):
@@ -159,8 +160,8 @@ async def test_a_duty_can_be_added_mid_conversation_and_keeps_the_context(make):
 
 
 async def test_turning_it_off_ends_the_schedule_and_keeps_the_plan(make):
-    h = await duty_harness(make, [Step(calls=[call("update_plan", {
-        "items": [{"text": "Read mail"}]})]), Step(text="planned")])
+    h = await duty_harness(make, [Step(calls=[call("TodoWrite", {
+        "todos": [{"status": "pending", "content": "Read mail", "activeForm": "Read mail"}]})]), Step(text="planned")])
     await h.runtime.set_duty(QUIET)
     await idle(h, 2)
     assert h.runtime.snapshot().duty_wake_at is not None
@@ -172,9 +173,9 @@ async def test_turning_it_off_ends_the_schedule_and_keeps_the_plan(make):
     await h.turn("thanks")
     request = h.core.requests[-1]
     # The plan is still in view: the agent's own call shows it.
-    assert any(getattr(b, "name", None) == "update_plan" and b.arguments["items"]
+    assert any(getattr(b, "name", None) == "TodoWrite" and b.arguments["todos"]
                for m in request.messages for b in m.blocks)
-    assert "update_plan" in [t.name for t in request.tools]
+    assert "TodoWrite" in [t.name for t in request.tools]
 
 
 # ── The plan ──
@@ -184,8 +185,8 @@ async def test_turning_it_off_ends_the_schedule_and_keeps_the_plan(make):
 
 
 def soon(text: str = "Stand up") -> Step:
-    return Step(calls=[call("update_plan", {"items": [
-        {"text": text, "due_in_minutes": 0.002}]}, id="p")])  # about a tenth of a second
+    return Step(calls=[call("TodoWrite", {"todos": [
+        {"status": "pending", "content": text, "activeForm": text, "due_in_minutes": 0.002}]}, id="p")])  # about a tenth of a second
 
 
 async def test_a_due_step_wakes_the_agent_without_a_duty(make):
@@ -237,8 +238,9 @@ async def test_stop_puts_reminders_off_until_the_next_message(make):
 
 
 def plan_call(*items: tuple[str, str], id: str = "p") -> Step:
-    return Step(calls=[call("update_plan", {"items": [
-        {"text": text, "status": status} for text, status in items]}, id=id)])
+    return Step(calls=[call("TodoWrite", {"todos": [
+        {"content": text, "activeForm": text, "status": TODO_STATUS[PlanStatus(status)]}
+        for text, status in items]}, id=id)])
 
 
 async def test_a_turn_does_not_end_with_steps_open(make):
@@ -272,8 +274,8 @@ async def test_a_turn_that_ends_closes_the_list(make):
 async def test_steps_that_wait_are_not_sent_back_for(make):
     """A step with a due time waits for it, and a duty keeps its plan between check-ins."""
     h = await duty_harness(make, [
-        Step(calls=[call("update_plan", {"items": [
-            {"text": "Call back", "due": "2099-01-01T09:00"}]})]),
+        Step(calls=[call("TodoWrite", {"todos": [
+            {"status": "pending", "content": "Call back", "activeForm": "Call back", "due": "2099-01-01T09:00"}]})]),
         Step(text="I will.")])
     await h.turn("remind me")
     assert len(h.core.requests) == 2
@@ -306,10 +308,10 @@ def test_an_open_plan_tells_the_agent_to_close_it_before_ending_its_turn():
 
 async def test_update_plan_saves_the_plan_and_every_request_shows_it(make):
     h = await duty_harness(make, [
-        Step(calls=[call("update_plan", {"items": [
-            {"text": "Read mail", "status": "doing", "note": "start with VIPs"},
-            {"text": "Weekly report", "due": "2030-01-07T09:00"},
-            {"text": "Call back", "due_in_minutes": 90}]})]),
+        Step(calls=[call("TodoWrite", {"todos": [
+            {"content": "Read mail", "activeForm": "Read mail", "status": "in_progress", "note": "start with VIPs"},
+            {"status": "pending", "content": "Weekly report", "activeForm": "Weekly report", "due": "2030-01-07T09:00"},
+            {"status": "pending", "content": "Call back", "activeForm": "Call back", "due_in_minutes": 90}]})]),
         Step(text="planned")])
     before = time.time()
     await h.runtime.set_duty(QUIET)
@@ -331,7 +333,7 @@ async def test_update_plan_saves_the_plan_and_every_request_shows_it(make):
 
 async def test_a_bad_due_time_is_an_error_and_changes_nothing(make):
     h = await duty_harness(make, [
-        Step(calls=[call("update_plan", {"items": [{"text": "x", "due": "soon"}]}, id="p")]),
+        Step(calls=[call("TodoWrite", {"todos": [{"status": "pending", "content": "x", "activeForm": "x", "due": "soon"}]}, id="p")]),
         Step(text="oops")])
     await h.runtime.set_duty(QUIET)
     await idle(h, 2)
@@ -363,7 +365,7 @@ async def test_with_nothing_due_it_wakes_at_the_maximum_interval(make):
 
 async def test_a_due_plan_item_wakes_it_early(make):
     h = await duty_harness(make, [
-        Step(calls=[call("update_plan", {"items": [{"text": "Post", "due_in_minutes": 0.003}]})]),
+        Step(calls=[call("TodoWrite", {"todos": [{"status": "pending", "content": "Post", "activeForm": "Post", "due_in_minutes": 0.003}]})]),
         Step(text="later"), Step(text="posting")])
     await h.runtime.set_duty(Duty("Run socials", min_interval_s=0.05, max_interval_s=30))
     await idle(h, 3)
@@ -451,7 +453,7 @@ async def test_an_exhausted_budget_pauses_it(make):
 
 async def test_a_goal_ends_when_the_agent_declares_it_reached(make):
     h = await duty_harness(make, [
-        Step(calls=[call("update_plan", {"items": [{"text": "Launch", "status": "done"}]})]),
+        Step(calls=[call("TodoWrite", {"todos": [{"content": "Launch", "activeForm": "Launch", "status": "completed"}]})]),
         Step(calls=[call("finish_goal", {"report": "Launched on Monday."}, id="f")]),
         Step(text="All done.")])
     await h.runtime.set_duty(Duty("Launch the campaign", DutyKind.GOAL,
@@ -537,7 +539,7 @@ def test_the_agent_is_told_to_plan_first_whenever_a_task_is_more_than_one_action
     prompt the user has written."""
     from kadence.api import DUTY_TOOLS
 
-    told = DUTY_TOOLS["update_plan"].description
+    told = DUTY_TOOLS["TodoWrite"].description
     assert "Every task that edits files, runs more than one command or has several steps" in told
     assert "with your very first tool call" in told
 
@@ -546,9 +548,9 @@ async def test_finishing_a_goal_finishes_the_step_the_agent_was_on(make):
     """The step in progress when the agent declares the goal reached is the one that
     call completes (often "Report"): it is not sent back to tick it off. A step it never
     began stays open, and for that it is sent back."""
-    plan = [{"text": "Launch", "status": "done"}, {"text": "Report", "status": "doing"}]
+    plan = [{"content": "Launch", "activeForm": "Launch", "status": "completed"}, {"content": "Report", "activeForm": "Report", "status": "in_progress"}]
     h = await duty_harness(make, [
-        Step(calls=[call("update_plan", {"items": plan}),
+        Step(calls=[call("TodoWrite", {"todos": plan}),
                     call("finish_goal", {"report": "Launched."})]),
         Step(text="All done.")])
     await h.runtime.set_duty(Duty("Launch the campaign", DutyKind.GOAL, min_interval_s=0.05,
@@ -559,9 +561,9 @@ async def test_finishing_a_goal_finishes_the_step_the_agent_was_on(make):
     assert [(i.text, i.status) for i in h.runtime.snapshot().conversation.plan] == [
         ("Launch", PlanStatus.DONE), ("Report", PlanStatus.DONE)]
 
-    plan.append({"text": "Tell the press", "status": "todo"})
+    plan.append({"content": "Tell the press", "activeForm": "Tell the press", "status": "pending"})
     h = await duty_harness(make, [
-        Step(calls=[call("update_plan", {"items": plan}),
+        Step(calls=[call("TodoWrite", {"todos": plan}),
                     call("finish_goal", {"report": "Launched."})]),
         Step(text="All done."), Step(text="The press is told.")])
     await h.runtime.set_duty(Duty("Launch the campaign", DutyKind.GOAL, min_interval_s=0.05,
@@ -577,6 +579,6 @@ def test_the_agent_is_told_to_close_its_plan_when_it_finishes_a_goal():
     from kadence.api import DUTY_TOOLS
 
     told = DUTY_TOOLS["finish_goal"].description
-    assert "update_plan" in told and "in the same message" in told
-    assert "done or dropped" in told
+    assert "TodoWrite" in told and "in the same message" in told
+    assert "completed or left out" in told
     assert "reporting" not in told  # the runtime closes the step in progress itself

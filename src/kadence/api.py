@@ -317,9 +317,28 @@ class ToolSpec:
     timeout: float | None = None  # hard wall-clock limit; None = runtime default
     #                               (suggested 1 h); math.inf = no limit
     foreground: bool = False  # True: a call is not backgrounded by the initial wait. It
-    #   runs until it ends, at most its `timeout` argument (ms; 2 min unless set, at most
-    #   10), or, with `run_in_background` true, is backgrounded at once (Claude Code's
-    #   Bash). The tool's schema offers both arguments; the runtime reads them.
+    #   runs until it ends (when its schema offers `timeout`, at most
+    #   foreground_timeout(arguments) and the cancel grace after), or, with `run_in_background` true, is backgrounded at once (Claude Code's
+    #   Bash). The tool's schema offers both arguments; the runtime reads them, and the
+    #   tool may end the call itself at its timeout, with what it has.
+    deferrable: bool = False  # True (a tool server's): offered by name only, and loaded
+    #   with ToolSearch, once such tools together would take much of the request
+    answers_prompt: bool = False  # True: a call with a `prompt` argument (Claude Code's
+    #   WebFetch) gets, in place of a successful output, the model's answer to the prompt
+    #   from that output, from the maintenance model.
+
+
+FOREGROUND_TIMEOUT_S = 120.0  # a foreground call's limit unless its `timeout` says
+FOREGROUND_MAX_TIMEOUT_S = 600.0
+
+
+def foreground_timeout(arguments: Mapping[str, Any]) -> float:
+    """Seconds a ToolSpec.foreground call may run: its `timeout` in milliseconds, held to
+    FOREGROUND_MAX_TIMEOUT_S; FOREGROUND_TIMEOUT_S when it gives none that is valid."""
+    ms = arguments.get("timeout")
+    if isinstance(ms, bool) or not isinstance(ms, int | float) or ms <= 0:
+        return FOREGROUND_TIMEOUT_S
+    return min(ms / 1000, FOREGROUND_MAX_TIMEOUT_S)
 
 
 # ── Core ──────────────────────────────────────────────────────────────────
@@ -498,12 +517,20 @@ class PlanStatus(StrEnum):
     TODO = "todo"
     DOING = "doing"
     DONE = "done"
-    DROPPED = "dropped"
+    DROPPED = "dropped"  # set by the user; the agent leaves a step out of the list instead
+
+
+# A plan step's status as TodoWrite (Claude Code's) names it, and back.
+TODO_STATUS: Mapping[PlanStatus, str] = {
+    PlanStatus.TODO: "pending", PlanStatus.DOING: "in_progress", PlanStatus.DONE: "completed",
+    PlanStatus.DROPPED: "dropped"}
+PLAN_STATUS: Mapping[str, PlanStatus] = {v: k for k, v in TODO_STATUS.items()
+                                         if k != PlanStatus.DROPPED}
 
 
 @dataclass(frozen=True, slots=True)
 class PlanItem:
-    """One step of a conversation's plan, which the agent keeps with update_plan and the
+    """One step of a conversation's plan, which the agent keeps with TodoWrite and the
     user edits (RuntimeAPI.set_plan). Every request has the whole plan in view: the agent's
     own call, or the system prompt when the messages do not show it."""
 
@@ -799,35 +826,58 @@ class Memory(abc.ABC):
 
 # ── Tools ─────────────────────────────────────────────────────────────────
 
-_CALL_ID = {"type": "string", "description": "Id of the tool call."}
+_TASK_ID = {"type": "string", "description": "The id of the background task: the call's id."}
+
+_QUESTION = {
+    "type": "object",
+    "properties": {
+        "question": {"type": "string", "minLength": 1,
+                     "description": "The question, clear and ending with a question mark."},
+        "header": {"type": "string", "minLength": 1, "maxLength": 12,
+                   "description": "A very short label for it: \"Database\", \"Approach\"."},
+        "options": {"type": "array", "minItems": 2, "maxItems": 4, "items": {
+            "type": "object",
+            "properties": {"label": {"type": "string", "minLength": 1, "maxLength": 40},
+                           "description": {"type": "string"}},
+            "required": ["label", "description"]}},
+        "multiSelect": {"type": "boolean",
+                        "description": "Whether the user may choose more than one."},
+    },
+    "required": ["question", "header", "options", "multiSelect"],
+}
 
 # Runtime built-ins, about the runtime's own operations. Never gated by permissions; they
 # don't count as tool calls for budgets.
-# op_status and op_cancel answer ERROR for an unknown or finished id; operations from
+# TaskOutput and TaskStop answer ERROR for an unknown or finished id; operations from
 # before a restart are unknown, their outcome is the INTERRUPTED OperationResult from
-# resume repair. op_cancel waits for termination (bounded by the grace period) and
+# resume repair. TaskStop waits for termination (bounded by the grace period) and
 # reports the final status; the outcome still arrives as an OperationResult.
 _REPLIES = {"type": "array", "minItems": 1, "maxItems": 3,
             "items": {"type": "string", "minLength": 1, "maxLength": 80}}
 
 BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
-    "op_status": ToolSpec(
-        "op_status",
-        "Check a backgrounded call. Optionally wait up to wait_s seconds for it to finish (values above 60 are treated as 60).",
+    "TaskOutput": ToolSpec(
+        "TaskOutput",
+        "Get the output of a background task (a call that runs in the background) by its "
+        "id: its outcome once it has finished, else that it is running and its last "
+        "progress. With block (the default) it waits for the task to finish, at most "
+        "timeout milliseconds (30000 unless set, at most 600000).",
         {
             "type": "object",
             "properties": {
-                "call_id": _CALL_ID,
-                "wait_s": {"type": "number", "minimum": 0, "default": 0},
+                "task_id": _TASK_ID,
+                "block": {"type": "boolean", "default": True},
+                "timeout": {"type": "number", "minimum": 0, "maximum": 600_000,
+                            "default": 30_000},
             },
-            "required": ["call_id"],
+            "required": ["task_id"],
         },
         read_only=True,
     ),
-    "op_cancel": ToolSpec(
-        "op_cancel",
-        "Request cancellation of a backgrounded call, or withdraw a proposal.",
-        {"type": "object", "properties": {"call_id": _CALL_ID}, "required": ["call_id"]},
+    "TaskStop": ToolSpec(
+        "TaskStop",
+        "Stop a running background task by its id, or withdraw a proposal.",
+        {"type": "object", "properties": {"task_id": _TASK_ID}, "required": ["task_id"]},
     ),
     # A proposal is an operation with the propose call's id; see Proposal.
     "propose": ToolSpec(
@@ -852,6 +902,20 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
             },
             "required": ["call", "reason"],
         },
+    ),
+    # Ends the turn when it is the only call in its message, as wrap_up does; frontends show
+    # it as a card (see SUGGESTION_TOOLS) and the answers come as the user's next message.
+    "AskUserQuestion": ToolSpec(
+        "AskUserQuestion",
+        "Ask the user one to four questions when you need their decision or preference to "
+        "go on, each with two to four options; they may also answer in their own words. "
+        "Your turn ends with it: call it alone, after your other work. Their answers come "
+        "as their next message. Put a recommended option first and add \"(Recommended)\" "
+        "to its label.",
+        {"type": "object",
+         "properties": {"questions": {"type": "array", "minItems": 1, "maxItems": 4,
+                                      "items": _QUESTION}},
+         "required": ["questions"]},
     ),
     # Ends the turn when it is the only call in its message (no request follows); frontends
     # show it as a card from the transcript (see SUGGESTION_TOOLS). An option with a call is
@@ -897,8 +961,11 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
 _PLAN_ITEM = {
     "type": "object",
     "properties": {
-        "text": {"type": "string", "minLength": 1},
-        "status": {"type": "string", "enum": [s.value for s in PlanStatus], "default": "todo"},
+        "content": {"type": "string", "minLength": 1,
+                    "description": "The step, in the imperative: \"Run the tests\"."},
+        "status": {"type": "string", "enum": list(PLAN_STATUS)},
+        "activeForm": {"type": "string", "minLength": 1,
+                       "description": "The step as it is being done: \"Running the tests\"."},
         "due": {"type": "string", "description":
                 "When it falls due, ISO 8601 (e.g. 2026-11-12T09:00), local time unless an "
                 "offset is given. You are woken at that time."},
@@ -906,27 +973,27 @@ _PLAN_ITEM = {
                            "description": "Instead of due: minutes from now."},
         "note": {"type": "string"},
     },
-    "required": ["text"],
+    "required": ["content", "status", "activeForm"],
 }
 
-# Runtime built-ins offered with an open conversation (update_plan), while it has a duty
+# Runtime built-ins offered with an open conversation (TodoWrite), while it has a duty
 # (ask_for_help) or a goal (finish_goal). Like BUILTIN_TOOLS, never gated and not counted.
 DUTY_TOOLS: Mapping[str, ToolSpec] = {
-    "update_plan": ToolSpec(
-        "update_plan",
-        "Replace your plan with this whole list; the user sees it as a checklist. Every task "
-        "that edits files, runs more than one command or has several steps gets a plan: "
-        "write it with your very first tool call, alongside that call, before any other "
-        "work, then mark each step doing and done as you go, in the same call as other "
-        "work. Only a plain answer or a single action needs none. When a new task starts, "
-        "replace the old plan. Never end "
-        "your turn with the plan out of date: when the work is finished, every step is "
-        "done or dropped. Your last update stays in view. An open step "
-        "that falls due wakes you: give a step a due time to do it, or to remind the "
-        "user, later.",
+    "TodoWrite": ToolSpec(
+        "TodoWrite",
+        "Replace your todo list with this whole list; the user sees it as a checklist. "
+        "Every task that edits files, runs more than one command or has several steps gets "
+        "one: write it with your very first tool call, alongside that call, before any "
+        "other work, then mark each step in_progress and completed as you go, in the same "
+        "call as other work; one step in_progress at a time. Only a plain answer or a "
+        "single action needs none. When a new task starts, replace the old list. Never end "
+        "your turn with the list out of date: when the work is finished, every step is "
+        "completed, and a step no longer needed is left out. Your last update stays in "
+        "view. An open step that falls due wakes you: give a step a due time to do it, or "
+        "to remind the user, later.",
         {"type": "object",
-         "properties": {"items": {"type": "array", "items": _PLAN_ITEM}},
-         "required": ["items"]},
+         "properties": {"todos": {"type": "array", "items": _PLAN_ITEM}},
+         "required": ["todos"]},
     ),
     "ask_for_help": ToolSpec(
         "ask_for_help",
@@ -941,8 +1008,8 @@ DUTY_TOOLS: Mapping[str, ToolSpec] = {
     "finish_goal": ToolSpec(
         "finish_goal",
         "Declare your goal reached, with a short report for the user. Your duty then ends. "
-        "Bring your plan up to date first, with update_plan in the same message, before "
-        "this call: every step done or dropped, as it really is. The step you are on "
+        "Bring your todo list up to date first, with TodoWrite in the same message, before "
+        "this call: every step completed or left out, as it really is. The step you are on "
         "counts as done with this call; a step you never began stays open and sends you "
         "back to close it.",
         {"type": "object", "properties": {"report": {"type": "string", "minLength": 1}},
@@ -954,26 +1021,44 @@ DUTY_TOOLS: Mapping[str, ToolSpec] = {
 # instructions and the folder its files are in. Every request's system prompt lists the
 # skills by name and description. Never gated and not counted.
 SKILL_TOOL = ToolSpec(
-    "skill",
+    "Skill",
     "Load a skill's instructions by its name, then follow them. Use it when a task fits a "
     "listed skill, or when the user's message starts with /name.",
     {"type": "object",
      "properties": {
-         "name": {"type": "string", "minLength": 1},
-         "arguments": {"type": "string",
-                       "description": "What the user wrote after /name, or what the "
-                                      "skill should work on."}},
-     "required": ["name"]},
+         "skill": {"type": "string", "minLength": 1},
+         "args": {"type": "string",
+                  "description": "What the user wrote after /name, or what the "
+                                 "skill should work on."}},
+     "required": ["skill"]},
+    read_only=True,
+)
+
+# The runtime built-in offered while some tools are deferred (ToolSpec.deferrable): it
+# answers with the matching tools' definitions, which are offered from then on in the
+# conversation. A deferred tool called without it is loaded the same way.
+TOOL_SEARCH = ToolSpec(
+    "ToolSearch",
+    "Load deferred tools, which the system prompt lists by name, so that you can call "
+    "them. query \"select:a,b\" loads those by name; other words are matched against "
+    "names and descriptions, \"+word\" requiring it in the name. Answers with the "
+    "definitions of the tools loaded.",
+    {"type": "object",
+     "properties": {"query": {"type": "string", "minLength": 1},
+                    "max_results": {"type": "integer", "minimum": 1, "default": 5}},
+     "required": ["query"]},
     read_only=True,
 )
 
 # Calls frontends show as a card under the answer (wrap_up: recap, question, options;
 # ask_for_help: question, replies), while no user message follows it. A click on an option
 # sends its label as the user's message, or approves its call's Proposal.
-SUGGESTION_TOOLS = frozenset({"wrap_up", "ask_for_help"})
+SUGGESTION_TOOLS = frozenset({"wrap_up", "ask_for_help", "AskUserQuestion"})
+ENDS_TURN = frozenset({"wrap_up", "AskUserQuestion"})  # alone in a message, the turn ends
 
 # No module may declare these names.
-RESERVED_TOOL_NAMES = frozenset(BUILTIN_TOOLS) | frozenset(DUTY_TOOLS) | {SKILL_TOOL.name}
+RESERVED_TOOL_NAMES = (frozenset(BUILTIN_TOOLS) | frozenset(DUTY_TOOLS)
+                       | {SKILL_TOOL.name, TOOL_SEARCH.name})
 
 # Every tool the runtime offers takes an optional argument under this name: a few plain
 # words the model writes about what the call does, which frontends show in place of the
@@ -1557,7 +1642,7 @@ class Proposal:
     runs until the user approves it (RuntimeAPI.resolve_proposal); then exactly `call` runs,
     ungated, as the operation `id` (the propose or wrap_up call's id), and its result wakes
     the agent like any backgrounded call. A pending proposal is left out of the wake set.
-    op_cancel, Stop and a restart end it; a user message also ends a card proposal, without
+    TaskStop, Stop and a restart end it; a user message also ends a card proposal, without
     waking the agent on its own."""
 
     id: CallId
@@ -1573,7 +1658,7 @@ class ProposalMade:
 
 @dataclass(frozen=True, slots=True)
 class ProposalResolved:
-    """accepted: True approved, False dismissed, None withdrawn (op_cancel, Stop)."""
+    """accepted: True approved, False dismissed, None withdrawn (TaskStop, Stop)."""
 
     proposal_id: CallId
     accepted: bool | None

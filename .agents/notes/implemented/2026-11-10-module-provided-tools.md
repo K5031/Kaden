@@ -5,7 +5,7 @@ Status: implemented — Memory and any number of Tools modules offer tools, rout
 ## Problem
 
 Only two places offered tools: the one Tools module, and the runtime's built-ins (`recall`,
-`remember`, `forget`, `op_status`, `op_cancel`). That caused three problems:
+`remember`, `forget`, `TaskOutput`, `TaskStop`). That caused three problems:
 
 - **Memory logic sat in the runtime.** `remember`, `forget` and `recall` are memory
   features, but the runtime decided their wording, when two facts count as the same, and
@@ -22,7 +22,7 @@ Only two places offered tools: the one Tools module, and the runtime's built-ins
 
 ### Who offers tools
 
-- **The runtime** offers only `op_status` and `op_cancel` (`api.BUILTIN_TOOLS`), which are
+- **The runtime** offers only `TaskOutput` and `TaskStop` (`api.BUILTIN_TOOLS`), which are
   about its own operations. Their names are reserved.
 - **Memory** may offer tools: optional `Memory.list_tools()` and `Memory.execute(call,
   ctx)`. `kadence.memory.tools` has `recall`, `read_around` and the note tools (`read_note`, `save_note`,

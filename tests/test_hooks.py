@@ -89,7 +89,7 @@ async def test_a_hook_that_fails_or_hangs_does_not_stop_the_work(make: Any, tmp_
 async def test_the_runtimes_own_tools_run_no_hooks(make: Any, tmp_path):
     seen = tmp_path / "seen"
     hook = Hook("before", script(tmp_path, "any", f"open({str(seen)!r}, 'a').write('x')\n"))
-    core = ScriptedCore([Step(calls=[call("update_plan", {"items": []}, id="p")]),
+    core = ScriptedCore([Step(calls=[call("TodoWrite", {"todos": []}, id="p")]),
                          Step(text="ok")])
     h: Harness = await make(core=core, tools=tools(), hooks=(hook,), permissions=PermissionPolicy.ALLOW_WORKSPACE)
     await h.start()

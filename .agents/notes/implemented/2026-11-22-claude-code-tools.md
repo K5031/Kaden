@@ -36,17 +36,13 @@ The shell, files and web module offers:
   the first entries of the result.
 - The Anthropic Core offers its own search as `WebSearch` too, sent to the API under
   Anthropic's name `web_search`, so it still takes the module's place.
-- Only what Kadence does is matched. Claude Code parameters for behaviour Kadence does not
-  have are left out rather than accepted and ignored: `WebFetch`'s `prompt` (a Tools
-  module cannot ask a model), `WebSearch`'s domain lists, `Grep`'s `type` and
-  `multiline`. Claude Code's per-call `description` is Kadence's
-  `step_summary`, which the runtime adds to every tool.
+- Claude Code's per-call `description` is Kadence's `step_summary`, which the runtime adds
+  to every tool.
 - `Bash` runs a command until it ends or its `timeout`, or in the background when asked:
   see [Bash chooses its background](2026-11-22-bash-chooses-its-background.md).
-- Kept as they are, having no Claude Code tool of the same meaning: `screenshot`, the
-  Memory tools (`memory` already has the shape of Anthropic's memory tool), and the
-  runtime's built-ins (`update_plan`, `propose`, `wrap_up`, background tasks, skills,
-  sub-sessions), whose nearest Claude Code tools do something else.
+- The rest of Claude Code's tools and parameters (`WebFetch`'s `prompt`, `Grep`'s `type`
+  and `multiline`, `NotebookEdit`, the runtime's tools) are in
+  [all of Claude Code's tools](2026-11-22-all-of-claude-codes-tools.md).
 
 ## Alternatives considered
 
@@ -64,7 +60,7 @@ The shell, files and web module offers:
 
 - The model meets tools it knows, on every provider: the names are plain function names.
 - Kadence's tool names mix Claude Code's (`Bash`, `Read`) with its own snake_case ones
-  (`update_plan`, `memory`).
+  (`memory`, `wrap_up`).
 - Saved permission answers and hooks that name an old tool no longer match it; with no
   migration, they are the user's to re-make. Conversations from before keep calls under
   the old names in their history, as calls of tools no longer offered.

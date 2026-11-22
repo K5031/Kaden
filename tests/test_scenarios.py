@@ -174,8 +174,8 @@ async def test_d_long_running_tool(make: Any) -> None:
     tools.slow("build", 0.8, steps=8)
     core = ScriptedCore([
         Step(calls=[call("build", id="b1")]),
-        Step(calls=[call("op_status", {"call_id": "b1"})]),
-        Step(text="doing other work", calls=[call("op_status", {"call_id": "b1", "wait_s": 3})]),
+        Step(calls=[call("TaskOutput", {"task_id": "b1", "block": False})]),
+        Step(text="doing other work", calls=[call("TaskOutput", {"task_id": "b1", "timeout": 3000})]),
         Step(text="all done"),
     ])
     h: Harness = await make(core=core, tools=tools)

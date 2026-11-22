@@ -78,9 +78,9 @@ paused (**Goal** instead of **Continuous** for work that ends).
 ## Sub-sessions
 
 The agent can hand a self-contained task to a sub-session: a separate agent with its own
-context, working in the same folder with the same tools and settings. It runs in the
-background while the conversation goes on, and its report comes back as the result of that
-step. Several can run at once.
+context, working in the same folder with the same tools and settings. The agent either
+waits for it or lets it run in the background while the conversation goes on; its report
+comes back as the result of that step. Several can run at once.
 
 - **You decide on the agent's own ideas.** When you asked for the work, the sub-session
   starts at once. When it is the agent's idea, it is a

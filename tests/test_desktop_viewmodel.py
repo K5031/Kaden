@@ -10,6 +10,7 @@ import pytest
 
 from kadence.api import (
     PROFILE,
+    TODO_STATUS,
     AgentState,
     Budget,
     ConversationInfo,
@@ -25,6 +26,7 @@ from kadence.api import (
     ModuleInfo,
     PermissionPolicy,
     PermissionRequested,
+    PlanStatus,
     ReasoningDelta,
     Refusal,
     Role,
@@ -414,8 +416,9 @@ def _snapshot(seq: int = 0) -> RuntimeSnapshot:
 
 
 def _plan(call_id: str, *steps: tuple[str, str]) -> ToolCall:
-    return ToolCall(call_id, "update_plan", {"items": [
-        {"text": text, "status": status} for text, status in steps]})
+    return ToolCall(call_id, "TodoWrite", {"todos": [
+        {"content": text, "activeForm": text, "status": TODO_STATUS[PlanStatus(status)]}
+        for text, status in steps]})
 
 
 def test_the_checklist_follows_the_newest_message_and_leaves_when_the_agent_stops():
@@ -849,8 +852,8 @@ def test_a_tool_shown_as_a_card_is_never_an_item():
     changes: list[object] = []
     model.on_change = changes.append
     model.apply(StateChanged(AgentState.THINKING))
-    model.apply(ToolCallDelta("p", "update_plan", '{"items": ['))
-    plan = ToolCall("p", "update_plan", {"items": [{"text": "Look", "status": "doing"}]})
+    model.apply(ToolCallDelta("p", "TodoWrite", '{"todos": ['))
+    plan = ToolCall("p", "TodoWrite", {"todos": [{"content": "Look", "activeForm": "Look", "status": "in_progress"}]})
     model.apply(MessageCommitted(Message("a", Role.ASSISTANT, (plan,), 0.0),
                                  StopReason.TOOL_USE))
     model.apply(ToolStarted(plan))

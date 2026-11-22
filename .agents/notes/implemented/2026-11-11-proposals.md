@@ -11,7 +11,7 @@ agreed. The Claude app solves this with cards: the agent proposes, the user clic
 only then does the work start.
 
 [Sub-sessions](../implemented/2026-11-11-sub-sessions.md) built that for one tool:
-`start_session` had an own-initiative mode that made a proposal in the sidebar. Any other
+`Agent` had an own-initiative mode that made a proposal in the sidebar. Any other
 action had no such path, and every new tool would have needed its own.
 
 Permission prompts are not the same thing. A prompt comes from the user's policy and holds
@@ -34,7 +34,7 @@ waits on it.
   outcome. On **Dismiss**, the outcome is "dismissed". Either wakes the agent.
 - A pending proposal does not hold back other wake-ups: it is left out of the wake set,
   and its outcome wakes the agent by itself.
-- `op_cancel` withdraws a proposal; Stop withdraws them all, as it cancels all operations,
+- `TaskStop` withdraws a proposal; Stop withdraws them all, as it cancels all operations,
   and so does opening another conversation, since a proposal belongs to its conversation.
   A restart ends them as interrupted, like any operation. Waiting does not count toward
   the duration budget, as a permission prompt does not.
@@ -59,14 +59,14 @@ waits on it.
 
 ### Sub-sessions
 
-- `start_session` has no mode of its own: when the user asked, the agent calls it; when it
+- `Agent` has no mode of its own: when the user asked, the agent calls it; when it
   is its own idea, it proposes it, and the card shows the task.
 
 Choices are in `.agents/decisions.md` (Proposals).
 
 ## Alternatives considered
 
-- **Per-tool proposal modes** (as `start_session` had). Each tool would need its own
+- **Per-tool proposal modes** (as `Agent` had). Each tool would need its own
   states and UI; the agent's way of asking would differ by tool.
 - **A question tool** (`ask_user(question, options)`), with the agent acting on the answer.
   General, but nothing holds the agent to doing what was approved, and it needs another
@@ -81,7 +81,7 @@ Choices are in `.agents/decisions.md` (Proposals).
 
 - Any action can be put to the user the same way, and what runs is exactly what was
   approved; new tools need nothing to support it.
-- `start_session` and the sub-session states are simpler.
+- `Agent` and the sub-session states are simpler.
 - **Approval fatigue.** An agent that proposes everything is as tiring as one that asks in
   prose; the tool's description asks it to propose only its own ideas, not what the user
   asked for.

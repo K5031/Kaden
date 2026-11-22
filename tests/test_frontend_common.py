@@ -7,6 +7,7 @@ from kadence.api import (
     ModelInfo,
     ModuleChoice,
     PermissionPolicy,
+    PlanStatus,
     Settings,
     SettingsUpdate,
 )
@@ -258,3 +259,14 @@ def test_a_notice_is_told_by_its_author_not_its_words():
     assert notice_of(MessageQueued("q", "hello")) is None
     assert notice_of(MessageQueued("q", "Sub-session 1 ended.", author=Author.KADENCE)) == \
         "Sub-session 1 ended."
+
+
+def test_a_step_in_progress_is_shown_as_it_is_being_done():
+    from kadence.frontends.common import plan_steps
+
+    steps = plan_steps({"todos": [
+        {"content": "Run the tests", "activeForm": "Running the tests", "status": "in_progress"},
+        {"content": "Ship it", "activeForm": "Shipping it", "status": "pending"},
+        {"content": "Odd", "activeForm": "Odd", "status": "todo"}]})  # not TodoWrite's
+    assert [(s.text, s.status) for s in steps] == [
+        ("Running the tests", PlanStatus.DOING), ("Ship it", PlanStatus.TODO)]

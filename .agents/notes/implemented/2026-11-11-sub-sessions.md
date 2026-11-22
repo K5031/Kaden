@@ -29,15 +29,18 @@ listing and peeking are trivial. In Kadence the user-facing host is the frontend
 `kadence.frontends.sessions.SubSessions`, a Tools module with no UI code, which the
 desktop app creates and offers. It offers:
 
-- `start_session(task, budget_usd)`: starts a child, a separate Kadence agent with its own
-  context, in the conversation's work folder, on the task as a goal. The agent calls it
-  when the user asked for the work; when it is its own idea it proposes the call
+- `Agent(description, prompt, run_in_background, budget_usd)`, Claude Code's subagent
+  tool ([all of Claude Code's tools](2026-11-22-all-of-claude-codes-tools.md)):
+  starts a child, a separate Kadence agent with its own context, in the conversation's
+  work folder, on `prompt` as a goal, titled `description`. The agent calls it when the
+  user asked for the work; when it is its own idea it proposes the call
   ([proposals](2026-11-11-proposals.md)), as the Claude app asks before a session the agent
-  proposes. The call runs in the background and returns the child's report when the goal
-  is reached, or its question when it asks for help.
-- `message_session(session, text)`: answers a question or adds an instruction, then waits
+  proposes. The call waits for the child, or with `run_in_background` runs in the
+  background, and returns the child's report when the goal is reached, or its question
+  when it asks for help.
+- `SendMessage(to, message)`: answers a question or adds an instruction, then waits
   the same way.
-- `stop_session(session)`: stops a child.
+- A child is stopped with `TaskStop` on the call that waits for it.
 
 How a child runs:
 
@@ -51,7 +54,7 @@ How a child runs:
   without finishing continues soon.
 - A permission prompt in the child waits for the user, as in the parent; the parent's call
   keeps waiting meanwhile.
-- Cancelling the call (Stop, `op_cancel`) or `stop_session` stops the child; closing the
+- Cancelling the call (Stop, `TaskStop`) stops the child; closing the
   parent stops every child that is working. A child that is done or stopped is closed
   once no view has it open.
 - Each child's record (`session.json` in its folder) keeps it listed after a restart.

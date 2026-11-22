@@ -88,7 +88,7 @@ async def test_a_memory_without_tools_gets_none(make: Any) -> None:
     h.memory.list_tools = no_tools  # type: ignore[method-assign]
     await h.start()
     names = {spec.name for spec in await h.runtime.list_tools()}
-    assert not names & {"recall", "save_note"} and "op_status" in names
+    assert not names & {"recall", "save_note"} and "TaskOutput" in names
 
 
 async def test_read_around_shows_a_hit_with_the_messages_before_and_after(make: Any) -> None:

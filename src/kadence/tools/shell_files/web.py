@@ -44,13 +44,17 @@ SPECS: tuple[ToolSpec, ...] = (
         description=(
             "Search the web. Returns numbered results with title, URL and a snippet. Use it "
             "for anything recent or that you are not sure of, then read the most relevant "
-            "pages with WebFetch. Link the pages your answer relies on."
+            "pages with WebFetch. Link the pages your answer relies on. `allowed_domains` "
+            "keeps to those sites, `blocked_domains` leaves sites out; a domain covers its "
+            "subdomains."
         ),
         parameters={
             "type": "object",
             "properties": {
                 "query": {"type": "string", "minLength": 1},
                 "max_results": {"type": "integer", "minimum": 1, "maximum": MAX_RESULTS},
+                "allowed_domains": {"type": "array", "items": {"type": "string"}},
+                "blocked_domains": {"type": "array", "items": {"type": "string"}},
             },
             "required": ["query"],
             "additionalProperties": False,
@@ -63,13 +67,16 @@ SPECS: tuple[ToolSpec, ...] = (
         description=(
             "Read a public web page (http or https) and return its main text as Markdown, "
             f"cut at {MAX_PAGE_CHARS} characters; `start` continues from a character offset. "
-            "Local and private network addresses are refused; use Bash for those. "
-            "Link the pages your answer relies on."
+            "With `prompt`, you get a smaller model's answer to it from the page instead of "
+            "the page: say what you want to know or extract. Local and private network "
+            "addresses are refused; use Bash for those. Link the pages your answer relies on."
         ),
         parameters={
             "type": "object",
             "properties": {
                 "url": {"type": "string", "minLength": 1},
+                "prompt": {"type": "string",
+                           "description": "What to find out from the page."},
                 "start": {"type": "integer", "minimum": 0},
             },
             "required": ["url"],
@@ -77,6 +84,7 @@ SPECS: tuple[ToolSpec, ...] = (
         },
         read_only=True,
         timeout=120.0,
+        answers_prompt=True,
     ),
 )
 NAMES = frozenset(spec.name for spec in SPECS)
@@ -102,6 +110,15 @@ def ddgs_search(query: str, max_results: int) -> list[dict[str, Any]]:
         raise WebError(f"Web search is unavailable right now: {e}") from None
 
 
+def _kept(url: str, allowed: Sequence[str], blocked: Sequence[str]) -> bool:
+    host = (urlsplit(url).hostname or "").lower()
+
+    def under(domain: str) -> bool:
+        return host == domain or host.endswith("." + domain)
+
+    return (not allowed or any(map(under, allowed))) and not any(map(under, blocked))
+
+
 async def resolve_host(host: str) -> list[str]:
     infos = await asyncio.get_running_loop().getaddrinfo(host, None, type=socket.SOCK_STREAM)
     return [info[4][0] for info in infos]
@@ -121,17 +138,29 @@ class Web:
 
     async def run(self, name: str, args: dict[str, Any]) -> str:
         if name == "WebSearch":
-            return await self.search(args["query"], args.get("max_results", DEFAULT_RESULTS))
+            return await self.search(args["query"], args.get("max_results", DEFAULT_RESULTS),
+                                     args.get("allowed_domains", ()),
+                                     args.get("blocked_domains", ()))
         return await self.fetch(args["url"], args.get("start", 0))
 
-    async def search(self, query: str, max_results: int) -> str:
-        """Tries an empty or failed search again, SEARCH_ATTEMPTS times in all."""
+    async def search(self, query: str, max_results: int, allowed: Sequence[str] = (),
+                     blocked: Sequence[str] = ()) -> str:
+        """Tries an empty or failed search again, SEARCH_ATTEMPTS times in all. With
+        domains, the engine is asked for those sites and the results are kept to them."""
+        allowed = [d.strip().lower().strip(".") for d in allowed if d.strip()]
+        blocked = [d.strip().lower().strip(".") for d in blocked if d.strip()]
+        asked = max_results
+        if allowed:
+            query = f"{query} {' OR '.join(f'site:{d}' for d in allowed)}"
+        if allowed or blocked:
+            asked = MAX_RESULTS  # some are left out
         results: Sequence[dict[str, Any]] = []
         for attempt in range(SEARCH_ATTEMPTS):
             if attempt:
                 await asyncio.sleep(self._retry_delay)
             try:
-                results = await asyncio.to_thread(self._search, query, max_results)
+                results = await asyncio.to_thread(self._search, query, asked)
+                results = [r for r in results if _kept(r.get("href", ""), allowed, blocked)]
             except WebError:
                 if attempt == SEARCH_ATTEMPTS - 1:
                     raise

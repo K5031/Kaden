@@ -68,6 +68,9 @@ def fake_search(query: str, max_results: int) -> list[dict]:
         return []
     if query == "broken":
         raise web.WebError("Web search is unavailable right now: rate limited")
+    if "mixed" in query:
+        return [{"title": t, "href": f"https://{t}/page", "body": t}
+                for t in ("docs.python.org", "python.org", "notpython.org", "spam.com")]
     return [{"title": f"Result {n}", "href": f"https://example.com/{n}",
              "body": f"Snippet  number\n{n}"} for n in range(1, 30)]
 
@@ -213,3 +216,19 @@ async def test_a_network_error_is_an_error_result(tmp_path):
     assert out.is_error and "could not be read" in out.content
 
 
+
+
+async def test_search_keeps_to_the_allowed_domains_and_leaves_out_blocked_ones(tools, tmp_path):
+    allowed = await run(tools, tmp_path, "WebSearch", query="mixed",
+                        allowed_domains=["python.org"])
+    assert searches[-1][0] == "mixed site:python.org"
+    assert "https://docs.python.org/page" in allowed.content
+    assert "https://python.org/page" in allowed.content
+    assert "notpython.org" not in allowed.content and "spam.com" not in allowed.content
+    blocked = await run(tools, tmp_path, "WebSearch", query="mixed", blocked_domains=["spam.com"])
+    assert "spam.com" not in blocked.content and "notpython.org" in blocked.content
+
+
+async def test_fetch_answers_a_prompt_through_the_runtime(tools):
+    spec = {s.name: s for s in await tools.list_tools()}["WebFetch"]
+    assert spec.answers_prompt and "prompt" in spec.parameters["properties"]

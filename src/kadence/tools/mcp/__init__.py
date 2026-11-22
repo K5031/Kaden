@@ -157,7 +157,8 @@ class McpTools(Tools):
                     server.originals[name] = tool.name
                     server.tools[name] = ToolSpec(
                         name, _describe(server.name, tool), tool.input_schema or {"type": "object"},
-                        read_only=bool(tool.annotations and tool.annotations.read_only_hint))
+                        read_only=bool(tool.annotations and tool.annotations.read_only_hint),
+                        deferrable=True)
                 server.client = client
                 server.ready.set()
                 await server.stop.wait()

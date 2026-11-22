@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import shutil
 from pathlib import Path
@@ -446,6 +447,7 @@ async def test_read_only_flags(tools):
         "Edit": False,
         "Glob": True,
         "Grep": True,
+        "NotebookEdit": False,
         "WebSearch": True,
         "WebFetch": True,
     }
@@ -463,10 +465,11 @@ async def test_the_tools_take_claude_codes_parameters(tools):
         "Write": {"file_path", "content"},
         "Edit": {"file_path", "old_string", "new_string", "replace_all"},
         "Glob": {"pattern", "path"},
-        "Grep": {"pattern", "path", "glob", "output_mode", "-i", "-A", "-B", "-C",
-                 "head_limit"},
-        "WebSearch": {"query", "max_results"},
-        "WebFetch": {"url", "start"},
+        "Grep": {"pattern", "path", "glob", "type", "output_mode", "-i", "-A", "-B", "-C",
+                 "head_limit", "multiline"},
+        "WebSearch": {"query", "max_results", "allowed_domains", "blocked_domains"},
+        "WebFetch": {"url", "prompt", "start"},
+        "NotebookEdit": {"notebook_path", "cell_id", "new_source", "cell_type", "edit_mode"},
     }
 
 
@@ -577,3 +580,69 @@ async def test_judging_a_call_leaves_nothing_behind(tools, workspace):
     before = dict(vars(tools))
     assert await tools.confined(ToolCall("c", "Read", {"file_path": "notes.txt"}))
     assert vars(tools) == before
+
+
+async def test_grep_can_match_across_lines_and_by_file_type(tools, workspace, tmp_path):
+    (workspace / "notes.md").write_text("def answer():\n    return 42\n")
+    one_line = await run(tools, tmp_path, "Grep", pattern=r"answer\(\):\s+return")
+    assert one_line.content == "No matches"
+    across = await run(tools, tmp_path, "Grep", pattern=r"answer\(\):\s+return",
+                       multiline=True, output_mode="content")
+    assert across.content.startswith("notes.md:1: def answer():\nnotes.md:2:     return 42")
+    typed = await run(tools, tmp_path, "Grep", pattern="answer", type="py")
+    assert typed.content == "pkg/mod.py"
+    assert (await run(tools, tmp_path, "Grep", pattern="answer", type="nope")).is_error
+
+
+async def test_a_command_past_its_timeout_returns_what_it_wrote(tools, tmp_path):
+    out = await asyncio.wait_for(run(tools, tmp_path, "Bash", command="echo started; sleep 30",
+                                     timeout=300), 10)
+    assert out.is_error and "started" in out.content and "timed out" in out.content
+
+
+def notebook(path: Path) -> None:
+    path.write_text(json.dumps({
+        "cells": [
+            {"cell_type": "markdown", "id": "intro", "metadata": {}, "source": ["# Sales\n"]},
+            {"cell_type": "code", "id": "load", "metadata": {}, "execution_count": 1,
+             "source": ["import pandas\n", "df = pandas.read_csv('s.csv')"],
+             "outputs": [{"output_type": "stream", "name": "stdout", "text": ["ok\n"]}]}],
+        "metadata": {}, "nbformat": 4, "nbformat_minor": 5}))
+
+
+async def test_read_shows_a_notebook_as_its_cells(tools, workspace, tmp_path):
+    notebook(workspace / "sales.ipynb")
+    out = await run(tools, tmp_path, "Read", file_path="sales.ipynb")
+    assert out.content == (
+        '<cell id="intro">\n<cell_type>markdown</cell_type>\n# Sales\n</cell id="intro">\n'
+        '<cell id="load">\nimport pandas\ndf = pandas.read_csv(\'s.csv\')\n'
+        '[output] ok\n</cell id="load">\n')
+
+
+async def test_notebook_edit_replaces_inserts_and_deletes_cells(tools, workspace, tmp_path):
+    path = workspace / "sales.ipynb"
+    notebook(path)
+    unread = await run(tools, tmp_path, "NotebookEdit", notebook_path="sales.ipynb",
+                       cell_id="load", new_source="x = 1")
+    assert unread.is_error and "read" in unread.content
+    await run(tools, tmp_path, "Read", file_path="sales.ipynb")
+    out = await run(tools, tmp_path, "NotebookEdit", notebook_path="sales.ipynb",
+                    cell_id="load", new_source="x = 1")
+    assert not out.is_error, out.content
+    cells = json.loads(path.read_text())["cells"]
+    assert cells[1]["source"] == "x = 1" and cells[1]["outputs"] == []
+    assert cells[1]["execution_count"] is None
+    await run(tools, tmp_path, "NotebookEdit", notebook_path="sales.ipynb", cell_id="intro",
+              new_source="Notes", cell_type="markdown", edit_mode="insert")
+    cells = json.loads(path.read_text())["cells"]
+    assert [c["cell_type"] for c in cells] == ["markdown", "markdown", "code"]
+    assert cells[1]["source"] == "Notes" and cells[1]["id"] not in ("intro", "load")
+    await run(tools, tmp_path, "NotebookEdit", notebook_path="sales.ipynb", cell_id="intro",
+              new_source="", edit_mode="delete")
+    assert [c.get("id") for c in json.loads(path.read_text())["cells"]][1:] == ["load"]
+    missing = await run(tools, tmp_path, "NotebookEdit", notebook_path="sales.ipynb",
+                        cell_id="gone", new_source="y")
+    assert missing.is_error and "gone" in missing.content
+    no_type = await run(tools, tmp_path, "NotebookEdit", notebook_path="sales.ipynb",
+                        new_source="y", edit_mode="insert")
+    assert no_type.is_error and "cell_type" in no_type.content

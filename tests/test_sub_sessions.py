@@ -3,6 +3,7 @@ for self-contained tasks; each reports back and can be watched while it works.""
 
 from __future__ import annotations
 
+import asyncio
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -48,7 +49,7 @@ def outcome(transcript: list[Any], call_id: str) -> OperationResult | ToolResult
 
 async def test_a_child_works_on_its_task_and_reports_back(make, tmp_path, child_env):
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Write a haiku", "budget_usd": 0.5},
+        Step(calls=[call("Agent", {"description": "Write a haiku", "prompt": "Write a haiku", "run_in_background": True, "budget_usd": 0.5},
                          id="s")]),
         Step(text="A sub-session is on it."),
         Step(text="Here is the haiku.")],
@@ -69,9 +70,9 @@ async def test_a_child_works_on_its_task_and_reports_back(make, tmp_path, child_
 
 async def test_a_question_comes_back_and_an_answer_lets_it_finish(make, tmp_path, child_env):
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Write a poem"}, id="s")]),
+        Step(calls=[call("Agent", {"description": "Write a poem", "prompt": "Write a poem", "run_in_background": True}, id="s")]),
         Step(text="Started."),
-        Step(calls=[call("message_session", {"session": "1", "text": "A sonnet."}, id="m")]),
+        Step(calls=[call("SendMessage", {"to": "1", "message": "A sonnet."}, id="m")]),
         Step(text="Answered."),
         Step(text="Got the sonnet.")],
         [{"calls": [{"name": "ask_for_help", "arguments": {"question": "Which form?"}}]},
@@ -79,7 +80,7 @@ async def test_a_question_comes_back_and_an_answer_lets_it_finish(make, tmp_path
     await h.turn("Get me a poem")
     asked = await eventually(lambda: outcome(h.store.conversations[h.conversation.id]
                                              .messages, "s"), timeout=30)
-    assert "Which form?" in asked.content and "message_session" in asked.content
+    assert "Which form?" in asked.content and "SendMessage" in asked.content
     answered = await eventually(lambda: outcome(h.store.conversations[h.conversation.id]
                                                 .messages, "m"), timeout=30)
     assert "Wrote a sonnet." in answered.content
@@ -88,7 +89,7 @@ async def test_a_question_comes_back_and_an_answer_lets_it_finish(make, tmp_path
 
 async def test_cancelling_the_call_stops_the_child(make, tmp_path, child_env):
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Think forever"}, id="s")]),
+        Step(calls=[call("Agent", {"description": "Think forever", "prompt": "Think forever", "run_in_background": True}, id="s")]),
         Step(text="Started.")],
         [{"hang": True}])
     await h.turn("Go")
@@ -105,7 +106,7 @@ async def test_cancelling_the_call_stops_the_child(make, tmp_path, child_env):
 async def test_an_answer_given_where_the_child_is_open_clears_its_question(
         make, tmp_path, child_env):
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Write a poem"}, id="s")]),
+        Step(calls=[call("Agent", {"description": "Write a poem", "prompt": "Write a poem", "run_in_background": True}, id="s")]),
         Step(text="Started."), Step(text="It asks."), Step(text="Noted.")],
         [{"calls": [{"name": "ask_for_help", "arguments": {"question": "Which form?"}}]},
          {"text": "Waiting."}, {"text": "A sonnet, then."}, finish("Wrote a sonnet."),
@@ -126,7 +127,7 @@ async def test_a_childs_permission_prompt_waits_for_the_user(make, tmp_path, chi
     from kadence.api import Decision, Refusal, RuntimeStateError
 
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Look it up"}, id="s")]),
+        Step(calls=[call("Agent", {"description": "Look it up", "prompt": "Look it up", "run_in_background": True}, id="s")]),
         Step(text="Started."), Step(text="Reported.")],
         [{"calls": [{"name": "lookup"}]}, finish("Looked it up."), {"text": "Done."}],
         child_runtime={"runtime": {"permissions": "ask"}})
@@ -150,7 +151,7 @@ async def test_a_childs_permission_prompt_waits_for_the_user(make, tmp_path, chi
 
 async def test_a_child_is_listed_after_a_restart_and_opens_again(make, tmp_path, child_env):
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Write a haiku"}, id="s")]),
+        Step(calls=[call("Agent", {"description": "Write a haiku", "prompt": "Write a haiku", "run_in_background": True}, id="s")]),
         Step(text="Started."), Step(text="Got it.")],
         [finish("Haiku written."), {"text": "Done."}])
     await h.turn("Go")
@@ -172,7 +173,7 @@ async def test_a_child_is_listed_after_a_restart_and_opens_again(make, tmp_path,
 
 async def test_unknown_sessions_are_errors(make, tmp_path, child_env):
     h, _ = await parent(make, tmp_path, [
-        Step(calls=[call("message_session", {"session": "9", "text": "hi"}, id="m")]),
+        Step(calls=[call("SendMessage", {"to": "9", "message": "hi"}, id="m")]),
         Step(text="ok")], [])
     await h.turn("Go")
     assert (await h.results())["m"].status == ToolStatus.ERROR
@@ -213,7 +214,7 @@ async def test_a_cancelled_open_leaves_the_child_running(make, tmp_path, child_e
     import asyncio
 
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Think forever"}, id="s")]),
+        Step(calls=[call("Agent", {"description": "Think forever", "prompt": "Think forever", "run_in_background": True}, id="s")]),
         Step(text="Started.")],
         [{"hang": True}])
     await h.turn("Go")
@@ -232,8 +233,9 @@ async def test_a_cancelled_open_leaves_the_child_running(make, tmp_path, child_e
 async def test_an_idea_of_the_agents_is_proposed_and_starts_on_approval(
         make, tmp_path, child_env):
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("propose", {"call": {"name": "start_session",
-                                              "arguments": {"task": "Tidy the notes"}},
+        Step(calls=[call("propose", {"call": {"name": "Agent",
+                                              "arguments": {"description": "Tidy the notes",
+                                                            "prompt": "Tidy the notes"}},
                                      "reason": "They are messy"}, id="p")]),
         Step(text="Proposed."), Step(text="It is done.")],
         [finish("Tidied."), {"text": "Done."}])
@@ -248,7 +250,7 @@ async def test_an_idea_of_the_agents_is_proposed_and_starts_on_approval(
 async def test_a_turn_nobody_waited_for_becomes_a_notice_for_the_parent(
         make, tmp_path, child_env):
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Write a haiku"}, id="s")]),
+        Step(calls=[call("Agent", {"description": "Write a haiku", "prompt": "Write a haiku", "run_in_background": True}, id="s")]),
         Step(text="Started."), Step(text="Got it.")],
         [finish("Haiku written."), {"text": "Done."}, {"text": "Made it shorter."}])
     await h.turn("Go")
@@ -266,7 +268,7 @@ async def test_a_turn_nobody_waited_for_becomes_a_notice_for_the_parent(
 
 async def test_a_stopped_child_resumes_its_goal(make, tmp_path, child_env):
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Keep at it"}, id="s")]),
+        Step(calls=[call("Agent", {"description": "Keep at it", "prompt": "Keep at it", "run_in_background": True}, id="s")]),
         Step(text="Started.")],
         [{"hang": True}])
     await h.turn("Go")
@@ -316,7 +318,7 @@ async def test_cancelling_while_a_child_starts_stops_it(tmp_path):
 
     silent = [sys.executable, "-c", "import sys; sys.stdin.read()"]  # quits on EOF
     sessions = SubSessions(tmp_path, command=silent)
-    call_ = ToolCall("c", "start_session", {"task": "Anything"})
+    call_ = ToolCall("c", "Agent", {"description": "Anything", "prompt": "Anything"})
     running = asyncio.create_task(sessions.execute(call_, Ctx()))
     await eventually(lambda: sessions.sessions and sessions.sessions[0].live,
                      timeout=10)  # started, not answering
@@ -331,8 +333,8 @@ async def test_a_sub_session_has_no_spending_limit_unless_one_is_set(
         make, tmp_path, child_env):
     """As Claude's sub-agents: a limit is the user's or the agent's choice."""
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Free"}, id="a"),
-                    call("start_session", {"task": "Frugal", "budget_usd": 0.2}, id="b")]),
+        Step(calls=[call("Agent", {"description": "Free", "prompt": "Free", "run_in_background": True}, id="a"),
+                    call("Agent", {"description": "Frugal", "prompt": "Frugal", "run_in_background": True, "budget_usd": 0.2}, id="b")]),
         Step(text="Started.")],
         [{"hang": True}])
     assert sessions.limit_usd is None
@@ -353,9 +355,9 @@ async def test_a_sub_session_has_no_spending_limit_unless_one_is_set(
 async def test_the_users_limit_is_the_default_and_the_most_a_child_gets(
         make, tmp_path, child_env):
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Small"}, id="a"),
-                    call("start_session", {"task": "Greedy", "budget_usd": 50}, id="b"),
-                    call("start_session", {"task": "Frugal", "budget_usd": 0.2}, id="c")]),
+        Step(calls=[call("Agent", {"description": "Small", "prompt": "Small", "run_in_background": True}, id="a"),
+                    call("Agent", {"description": "Greedy", "prompt": "Greedy", "run_in_background": True, "budget_usd": 50}, id="b"),
+                    call("Agent", {"description": "Frugal", "prompt": "Frugal", "run_in_background": True, "budget_usd": 0.2}, id="c")]),
         Step(text="Started.")],
         [{"hang": True}])
     await sessions.set_limit(3)
@@ -364,6 +366,8 @@ async def test_the_users_limit_is_the_default_and_the_most_a_child_gets(
     await eventually(lambda: len(sessions.sessions) == 3, timeout=30)
     assert {s.task: s.budget_usd for s in sessions.sessions} == {
         "Small": 3, "Greedy": 3, "Frugal": 0.2}
+    await eventually(lambda: all((c.data_dir / "settings.toml").exists()
+                                 for c in sessions.sessions), timeout=30)
     for child in sessions.sessions:
         assert tomllib.loads((child.data_dir / "settings.toml").read_text())["budget"] == {
             "max_cost_usd": child.budget_usd}
@@ -374,7 +378,7 @@ async def test_the_users_limit_is_the_default_and_the_most_a_child_gets(
 
 async def test_a_childs_limit_changes_while_it_runs_and_after(make, tmp_path, child_env):
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Keep at it"}, id="s")]),
+        Step(calls=[call("Agent", {"description": "Keep at it", "prompt": "Keep at it", "run_in_background": True}, id="s")]),
         Step(text="Started.")],
         [{"hang": True}])
     await h.turn("Go")
@@ -419,3 +423,17 @@ async def test_a_snapshot_has_the_events_read_while_it_was_awaited():
     await remote.attach()
     assert remote.attached and heard == [4, 6]
     assert (remote.snapshot().seq, remote.snapshot().state) == (6, AgentState.IDLE)
+
+
+async def test_an_agent_in_the_foreground_is_waited_for_and_named_by_its_description(
+        make, tmp_path, child_env):
+    h, sessions = await parent(make, tmp_path, [
+        Step(calls=[call("Agent", {"description": "Haiku", "prompt": "Write a haiku"},
+                         id="s")]),
+        Step(text="Got it.")],
+        [finish("Haiku written.")])
+    await asyncio.wait_for(h.turn("Get me a haiku"), 60)
+    result = (await h.results())["s"]
+    assert result.status == ToolStatus.OK and "Haiku written." in result.content
+    [child] = sessions.sessions
+    assert (child.title, child.task) == ("Haiku", "Write a haiku")

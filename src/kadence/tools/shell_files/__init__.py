@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import bisect
 import contextlib
 import io
+import json
 import math
 import os
 import re
@@ -50,6 +52,7 @@ from kadence.api import (
     ToolOutput,
     Tools,
     ToolSpec,
+    foreground_timeout,
 )
 from kadence.tools.shell_files import attachments, office, screen, web
 
@@ -65,6 +68,18 @@ PDF_PAGES_PER_READ = 20  # of a PDF in one read_file: each page is also read as 
 MAX_LIST_ENTRIES = 1_000
 MAX_SEARCH_MATCHES = 200
 MAX_SEARCH_FILE_BYTES = 1_000_000
+# Grep's `type`: ripgrep's names for the common file types.
+FILE_TYPES: dict[str, tuple[str, ...]] = {
+    "py": ("*.py", "*.pyi"), "js": ("*.js", "*.mjs", "*.cjs", "*.jsx"),
+    "ts": ("*.ts", "*.tsx", "*.mts", "*.cts"), "rust": ("*.rs",), "go": ("*.go",),
+    "java": ("*.java",), "c": ("*.c", "*.h"),
+    "cpp": ("*.cpp", "*.cc", "*.cxx", "*.hpp", "*.hh", "*.hxx", "*.h"),
+    "md": ("*.md", "*.markdown"), "json": ("*.json",), "yaml": ("*.yaml", "*.yml"),
+    "toml": ("*.toml",), "html": ("*.html", "*.htm"), "css": ("*.css", "*.scss", "*.sass"),
+    "sh": ("*.sh", "*.bash", "*.zsh"), "rb": ("*.rb",), "php": ("*.php",),
+    "swift": ("*.swift",), "kotlin": ("*.kt", "*.kts"), "cs": ("*.cs",), "sql": ("*.sql",),
+    "txt": ("*.txt",), "xml": ("*.xml",),
+}
 
 
 class ToolError(Exception):
@@ -129,6 +144,7 @@ FILE_SPECS: tuple[ToolSpec, ...] = (
             "such as \"3\" or \"2-5\". Set `view` to look at the pages themselves, for a "
             "scan, a chart or a layout the text does not carry: at most "
             f"{PDF_PAGES_PER_READ} at a time, and each costs far more than its text. "
+            "A Jupyter notebook is read as its cells with their ids and outputs. "
             "A Word, Excel or "
             "PowerPoint file (.docx, .xlsx, .pptx) is read as its text, by lines like any "
             "text file."
@@ -188,20 +204,42 @@ FILE_SPECS: tuple[ToolSpec, ...] = (
             "`output_mode` \"files_with_matches\" (the default) lists the files that match, "
             "\"count\" how many lines match in each, \"content\" the matching lines as "
             "`path:line: text`, with `-A` lines after, `-B` before or `-C` around each as "
-            "`path-line- text`. `-i` ignores case, `glob` filters file names, `head_limit` "
-            "keeps the first entries. Hidden directories, what .gitignore files leave out, "
+            "`path-line- text`. `-i` ignores case, `glob` filters file names and `type` "
+            "file types, `multiline` lets a match span lines, `head_limit` keeps the first "
+            "entries. Hidden directories, what .gitignore files leave out, "
             "binary files and files over 1 MB are skipped."
         ),
         parameters=_object(
             {"pattern": {"type": "string", "minLength": 1}, "path": _STRING, "glob": _STRING,
+             "type": {"type": "string", "description": "A file type, as ripgrep's --type: "
+                      "py, js, ts, rust, go, java, c, cpp, md, json, yaml, toml, html, css, "
+                      "sh, rb, php, swift, kotlin, cs, sql, txt, xml."},
              "output_mode": {"enum": ["files_with_matches", "count", "content"]},
              "-i": {"type": "boolean"},
              **{flag: {"type": "integer", "minimum": 0, "maximum": 10}
                 for flag in ("-A", "-B", "-C")},
-             "head_limit": {"type": "integer", "minimum": 1}},
+             "head_limit": {"type": "integer", "minimum": 1},
+             "multiline": {"type": "boolean"}},
             ["pattern"],
         ),
         read_only=True,
+    ),
+    ToolSpec(
+        name="NotebookEdit",
+        description=(
+            "Replace, insert or delete one cell of a Jupyter notebook (.ipynb), which must "
+            "have been read in this conversation and be unchanged since. `cell_id` is the id "
+            "Read shows in `<cell id=\"...\">`; it is needed to replace or delete. "
+            "`edit_mode` is replace unless set; insert puts a new cell after `cell_id` (or "
+            "first without one) and needs `cell_type`. A replaced code cell loses its "
+            "outputs."
+        ),
+        parameters=_object(
+            {"notebook_path": _STRING, "cell_id": _STRING, "new_source": _STRING,
+             "cell_type": {"enum": ["code", "markdown"]},
+             "edit_mode": {"enum": ["replace", "insert", "delete"]}},
+            ["notebook_path", "new_source"],
+        ),
     ),
 )
 
@@ -299,6 +337,7 @@ class ShellFilesTools(Tools):
             "Edit": self._edit_file,
             "Glob": self._list_files,
             "Grep": self._search_files,
+            "NotebookEdit": self._notebook_edit,
             **{name: self._web_call(name) for name in web.NAMES},
             screen.NAME: self._screenshot,
         }
@@ -332,7 +371,8 @@ class ShellFilesTools(Tools):
         if call.name == SHELL.name:
             return (self._sandbox is not None
                     and call.arguments.get("dangerouslyDisableSandbox") is not True)
-        path = call.arguments.get("file_path", call.arguments.get("path", "."))
+        args = call.arguments
+        path = args.get("file_path", args.get("notebook_path", args.get("path", ".")))
         return isinstance(path, str) and await asyncio.to_thread(self._inside, path)
 
     def _inside(self, raw: str) -> bool:
@@ -475,8 +515,17 @@ class ShellFilesTools(Tools):
         )
         output = _OutputBuffer(MAX_OUTPUT_CHARS)
         reader = asyncio.create_task(_pump(stream, output, ctx, self._where))
+        limit = None if args.get("run_in_background") else foreground_timeout(args)
         try:
-            code = await proc.wait()
+            try:
+                code = await asyncio.wait_for(proc.wait(), limit)
+            except TimeoutError:
+                await _terminate_group(proc)
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(asyncio.shield(reader), DRAIN_GRACE)
+                text = self._ended_in(output.text(), ctx)
+                raise ToolError(f"{text}\n[timed out after {limit:g} s; set timeout for "
+                                "longer, or run_in_background]".lstrip()) from None
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(asyncio.shield(reader), DRAIN_GRACE)
         except asyncio.CancelledError:
@@ -520,6 +569,8 @@ class ShellFilesTools(Tools):
         if path.suffix.lower() == ".pdf":
             return await asyncio.to_thread(self._read_pdf, path, args.get("pages"),
                                            args.get("view") is True, ctx)
+        if path.suffix.lower() == ".ipynb":
+            return await asyncio.to_thread(self._read_notebook, path, ctx)
 
         def source() -> IO[str]:
             """The file as text; a Word, Excel or PowerPoint file converted first."""
@@ -615,6 +666,86 @@ class ShellFilesTools(Tools):
             parts.append("[No text could be read from these pages: they may be scans. Read "
                          "them with view true to look at them.]")
         return "\n".join(parts)
+
+    def _notebook(self, path: Path, ctx: ToolContext) -> dict[str, Any]:
+        with open(self._open(path, os.O_RDONLY, ctx), encoding="utf-8") as f:
+            try:
+                book = json.load(f)
+            except json.JSONDecodeError as e:
+                raise ToolError(f"{self._display(path)} is not a notebook: {e}") from None
+        if not isinstance(book, dict) or not isinstance(book.get("cells"), list):
+            raise ToolError(f"{self._display(path)} is not a notebook: it has no cells")
+        return book
+
+    def _read_notebook(self, path: Path, ctx: ToolContext) -> str:
+        """A notebook as its cells, each with its id, type (unless code), source and
+        outputs, as Claude Code's Read shows one."""
+        book = self._notebook(path, ctx)
+        parts = []
+        for n, cell in enumerate(book["cells"]):
+            cell_id = _cell_id(cell, n)
+            lines = [f'<cell id="{cell_id}">']
+            if cell.get("cell_type", "code") != "code":
+                lines.append(f"<cell_type>{cell.get('cell_type')}</cell_type>")
+            lines.append(_joined(cell.get("source", "")).rstrip("\n"))
+            lines += [f"[output] {text}" for text in map(_output_text, cell.get("outputs", ()))
+                      if text]
+            lines.append(f'</cell id="{cell_id}">')
+            parts.append("\n".join(lines) + "\n")
+        return "".join(parts)[:MAX_READ_CHARS]
+
+    async def _notebook_edit(self, args: dict[str, Any], ctx: ToolContext) -> str:
+        path = self._path(args["notebook_path"])
+        mode = args.get("edit_mode", "replace")
+        cell_id, source, kind = args.get("cell_id"), args["new_source"], args.get("cell_type")
+
+        def edit() -> str:
+            with open(self._open(path, os.O_RDWR, ctx), "r+", encoding="utf-8") as f:
+                self._as_read(path, ctx)
+                try:
+                    book = json.load(f)
+                except json.JSONDecodeError as e:
+                    raise ToolError(f"{self._display(path)} is not a notebook: {e}") from None
+                cells = book.get("cells")
+                if not isinstance(cells, list):
+                    raise ToolError(f"{self._display(path)} is not a notebook: it has no cells")
+                ids = [_cell_id(c, n) for n, c in enumerate(cells)]
+                if cell_id is not None and cell_id not in ids:
+                    raise ToolError(f"There is no cell {cell_id!r} in {self._display(path)}")
+                at = ids.index(cell_id) if cell_id is not None else None
+                if mode == "insert":
+                    if kind is None:
+                        raise ToolError("Inserting a cell needs its cell_type")
+                    new: dict[str, Any] = {"cell_type": kind, "id": secrets.token_hex(4),
+                                           "metadata": {}, "source": source}
+                    if kind == "code":
+                        new |= {"execution_count": None, "outputs": []}
+                    cells.insert(0 if at is None else at + 1, new)
+                    done = f"Inserted cell {new['id']}"
+                elif at is None:
+                    raise ToolError(f"{mode} needs the cell_id of the cell")
+                elif mode == "delete":
+                    del cells[at]
+                    done = f"Deleted cell {cell_id}"
+                else:
+                    cell = cells[at]
+                    cell["source"] = source
+                    if kind is not None and kind != cell.get("cell_type"):
+                        cell["cell_type"] = kind
+                        if kind == "markdown":
+                            cell.pop("outputs", None)
+                            cell.pop("execution_count", None)
+                    if cell.get("cell_type") == "code":
+                        cell["outputs"], cell["execution_count"] = [], None
+                    done = f"Replaced cell {cell_id}"
+                f.seek(0)
+                f.truncate()
+                json.dump(book, f, indent=1, ensure_ascii=False)
+                f.write("\n")
+            self._saw(path, ctx)
+            return f"{done} in {self._display(path)}"
+
+        return await asyncio.to_thread(edit)
 
     def _as_read(self, path: Path, ctx: ToolContext) -> None:
         """Refuse to change a file that is there unless the conversation read it and it
@@ -719,8 +850,15 @@ class ShellFilesTools(Tools):
         around = args.get("-C", 0)
         before, after = args.get("-B", around), args.get("-A", around)
         limit = min(args.get("head_limit", MAX_SEARCH_MATCHES), MAX_SEARCH_MATCHES)
+        kind = args.get("type")
+        if kind is not None and kind not in FILE_TYPES:
+            raise ToolError(f"Unknown type {kind!r}; the types are: {', '.join(FILE_TYPES)}")
+        name_globs = FILE_TYPES[kind] if kind is not None else ()
+        multiline = args.get("multiline") is True
+        flags = (re.IGNORECASE if args.get("-i") else 0) | (re.DOTALL | re.MULTILINE
+                                                             if multiline else 0)
         try:
-            regex = re.compile(args["pattern"], re.IGNORECASE if args.get("-i") else 0)
+            regex = re.compile(args["pattern"], flags)
         except re.error as e:
             raise ToolError(f"Invalid regular expression: {e}") from None
 
@@ -732,10 +870,14 @@ class ShellFilesTools(Tools):
                                                self._ignored_above(base)):
                     if name_glob and not fnmatch(name, name_glob):
                         continue
+                    if name_globs and not any(fnmatch(name, g) for g in name_globs):
+                        continue
                     if (data := _regular_file(name, within)) is None or b"\0" in data[:8192]:
                         continue
-                    lines = data.decode("utf-8", "replace").splitlines()
-                    hits = [n for n, line in enumerate(lines, 1) if regex.search(line)]
+                    text = data.decode("utf-8", "replace")
+                    lines = text.splitlines()
+                    hits = (_spanned(regex, text) if multiline else
+                            [n for n, line in enumerate(lines, 1) if regex.search(line)])
                     if not hits:
                         continue
                     if output == "files_with_matches":
@@ -892,6 +1034,17 @@ def _with_context(rel: str, lines: Sequence[str], hits: Sequence[int],
     return out
 
 
+def _spanned(regex: re.Pattern[str], text: str) -> list[int]:
+    """The numbers of the lines the matches of a multiline pattern cover."""
+    starts = [0, *(i + 1 for i, c in enumerate(text) if c == "\n")]
+    hits: set[int] = set()
+    for m in regex.finditer(text):
+        first = bisect.bisect_right(starts, m.start())
+        last = bisect.bisect_right(starts, max(m.start(), m.end() - 1))
+        hits.update(range(first, last + 1))
+    return sorted(n for n in hits if n <= len(text.splitlines()))
+
+
 def _glob(pattern: str) -> re.Pattern[str]:
     """A glob as a regular expression over a relative path: `*` and `?` within one folder,
     `**/` any number of folders, `**` anything, `[...]` a set, `{a,b}` either."""
@@ -929,6 +1082,27 @@ def _glob(pattern: str) -> re.Pattern[str]:
     if depth:
         raise ToolError(f"Unclosed {{ in the pattern {pattern!r}")
     return re.compile("".join(out), re.DOTALL)
+
+
+def _cell_id(cell: dict[str, Any], n: int) -> str:
+    """A cell's id; one without (a notebook older than nbformat 4.5) by its place."""
+    return str(cell.get("id") or f"cell-{n}")
+
+
+def _joined(source: Any) -> str:
+    return "".join(source) if isinstance(source, list) else str(source)
+
+
+def _output_text(output: dict[str, Any]) -> str:
+    """What a cell's output shows as text: a stream, a result's text, an error's name."""
+    if "text" in output:
+        return _joined(output["text"]).strip()
+    data = output.get("data", {})
+    if "text/plain" in data:
+        return _joined(data["text/plain"]).strip()
+    if output.get("output_type") == "error":
+        return f"{output.get('ename', 'Error')}: {output.get('evalue', '')}"
+    return "[image]" if any(k.startswith("image/") for k in data) else ""
 
 
 def _version(path: Path) -> tuple[int, int, int]:

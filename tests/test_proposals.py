@@ -91,7 +91,7 @@ async def test_dismissing_tells_the_agent(make):
 async def test_invalid_proposals_are_errors(make):
     h = await harness(make, [
         Step(calls=[call("propose", {"call": {"name": "nope"}, "reason": "x"}, id="a"),
-                    call("propose", {"call": {"name": "op_status", "arguments": {}},
+                    call("propose", {"call": {"name": "TaskOutput", "arguments": {}},
                                      "reason": "x"}, id="b")]),
         Step(text="ok")])
     await h.turn("hi")
@@ -115,7 +115,7 @@ async def test_withdrawing_and_stop_remove_the_card(make):
     h = await harness(make, [
         Step(calls=[call("propose", {"call": WRITE, "reason": "Messy"}, id="p")]),
         Step(text="Proposed."),
-        Step(calls=[call("op_cancel", {"call_id": "p"})]), Step(text="Withdrawn."),
+        Step(calls=[call("TaskStop", {"task_id": "p"})]), Step(text="Withdrawn."),
         Step(calls=[call("propose", {"call": WRITE, "reason": "Again"}, id="q")]),
         Step(text="Proposed again.")])
     await h.turn("hi")

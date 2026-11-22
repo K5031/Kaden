@@ -1037,7 +1037,7 @@ async def test_a_sub_session_sits_under_its_conversation_and_opens_in_place(
     from tests.test_sub_sessions import finish, parent
 
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Write a haiku"}, id="s")]),
+        Step(calls=[call("Agent", {"description": "Write a haiku", "prompt": "Write a haiku", "run_in_background": True}, id="s")]),
         Step(text="Started."), Step(text="Got it.")],
         [finish("Haiku written."), {"text": "Here is the haiku."}, {"text": "Shorter now."}])
     controller = Controller(h.runtime, ConversationModel())
@@ -1084,7 +1084,7 @@ async def test_the_windows_own_conversation_is_heard_while_a_sub_session_shows(
     from tests.test_sub_sessions import finish, parent
 
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Write a haiku"}, id="s")]),
+        Step(calls=[call("Agent", {"description": "Write a haiku", "prompt": "Write a haiku", "run_in_background": True}, id="s")]),
         Step(text="Started.")],
         [finish("Haiku written."), {"text": "Here is the haiku."}])
     controller = Controller(h.runtime, ConversationModel())
@@ -1179,7 +1179,7 @@ async def test_child_rows_have_a_menu(make, qapp, tmp_path, child_env):
     from tests.test_sub_sessions import finish, parent
 
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Tidy the notes"}, id="s")]),
+        Step(calls=[call("Agent", {"description": "Tidy the notes", "prompt": "Tidy the notes", "run_in_background": True}, id="s")]),
         Step(text="Started."), Step(text="Thanks.")],
         [finish("Tidied."), {"text": "Done."}])
     controller = Controller(h.runtime, ConversationModel())
@@ -1402,7 +1402,7 @@ async def test_deleting_a_conversation_deletes_its_sub_sessions(make, qapp, tmp_
     from tests.test_sub_sessions import finish, parent
 
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Write a haiku"}, id="s")]),
+        Step(calls=[call("Agent", {"description": "Write a haiku", "prompt": "Write a haiku", "run_in_background": True}, id="s")]),
         Step(text="Started."), Step(text="Got it.")],
         [finish("Haiku written."), {"text": "Done."}])
     controller = Controller(h.runtime, ConversationModel())
@@ -1566,7 +1566,7 @@ async def test_leaving_a_sub_session_for_its_parent_never_shows_the_old_chat(
     from tests.test_sub_sessions import finish, parent
 
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Research"}, id="s")]),
+        Step(calls=[call("Agent", {"description": "Research", "prompt": "Research", "run_in_background": True}, id="s")]),
         Step(text="Started."), Step(text="Noted.")], [finish("Done.")])
     await h.turn("Start research")
     parent_id = h.conversation.id
@@ -1663,7 +1663,7 @@ async def test_a_sub_session_still_opening_gives_way_to_a_later_click(
     from tests.test_sub_sessions import finish, parent
 
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Research"}, id="s")]),
+        Step(calls=[call("Agent", {"description": "Research", "prompt": "Research", "run_in_background": True}, id="s")]),
         Step(text="Started."), Step(text="Noted.")], [finish("Done.")])
     await h.turn("Start research")
     await eventually(lambda: sessions.sessions and sessions.sessions[0].state == "done"
@@ -1700,7 +1700,7 @@ async def test_the_open_chat_clicked_while_a_sub_session_opens_stays(
     from tests.test_sub_sessions import finish, parent
 
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("start_session", {"task": "Research"}, id="s")]),
+        Step(calls=[call("Agent", {"description": "Research", "prompt": "Research", "run_in_background": True}, id="s")]),
         Step(text="Started."), Step(text="Noted.")], [finish("Done.")])
     await h.turn("Start research")
     await eventually(lambda: sessions.sessions and sessions.sessions[0].state == "done"
@@ -1806,11 +1806,11 @@ async def test_the_checklist_is_part_of_the_conversation(make, qapp):
     from kadence.frontends.desktop.window import PlanCard
 
     h: Harness = await make()
-    plan = [{"text": "Read the code", "status": "doing"}, {"text": "Fix the bug"}]
-    later = [{"text": "Read the code", "status": "done"},
-             {"text": "Fix the bug", "status": "doing"}]
-    h.core.add(Step(calls=[call("update_plan", {"items": plan})]),
-               Step(calls=[call("update_plan", {"items": later}), call("look", {"q": 1})]))
+    plan = [{"content": "Read the code", "activeForm": "Read the code", "status": "in_progress"}, {"status": "pending", "content": "Fix the bug", "activeForm": "Fix the bug"}]
+    later = [{"content": "Read the code", "activeForm": "Read the code", "status": "completed"},
+             {"content": "Fix the bug", "activeForm": "Fix the bug", "status": "in_progress"}]
+    h.core.add(Step(calls=[call("TodoWrite", {"todos": plan})]),
+               Step(calls=[call("TodoWrite", {"todos": later}), call("look", {"q": 1})]))
     h.tools.hanging("look")
     await h.start()
     window, controller, _ = await open_window(h)

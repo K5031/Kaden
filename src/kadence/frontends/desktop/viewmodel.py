@@ -221,7 +221,7 @@ class NoticeItem:
 
 @dataclass(eq=False)
 class ChecklistItem:
-    """The plan as the agent last wrote it (its update_plan calls), shown under the newest
+    """The plan as the agent last wrote it (its TodoWrite calls), shown under the newest
     message while the agent works and gone when it stops."""
 
     steps: tuple[PlanItem, ...]
@@ -618,11 +618,11 @@ class ConversationModel:
             if isinstance(block, ToolCall):
                 if card := card_of(block):
                     self._set_card(card)
-                if block.name == "update_plan":
+                if block.name == "TodoWrite":
                     self._show_plan(plan_steps(block.arguments))
 
     def _show_plan(self, steps: tuple[PlanItem, ...]) -> None:
-        """The checklist of the work under way, as the agent's newest update_plan call
+        """The checklist of the work under way, as the agent's newest TodoWrite call
         leaves it."""
         if self._plan is None or not steps:
             self._drop_plan()

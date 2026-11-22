@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -168,8 +169,8 @@ async def test_op_cancel(make: Any) -> None:
     tools.hanging("bg")
     core = ScriptedCore([
         Step(calls=[call("bg", id="bg")]),
-        Step(calls=[call("op_cancel", {"call_id": "bg"}, id="c"),
-                    call("op_cancel", {"call_id": "nope"}, id="n")]),
+        Step(calls=[call("TaskStop", {"task_id": "bg"}, id="c"),
+                    call("TaskStop", {"task_id": "nope"}, id="n")]),
         Step(text="ok"),
     ])
     h: Harness = await make(core=core, tools=tools)
@@ -183,7 +184,7 @@ async def test_op_cancel(make: Any) -> None:
 
 
 async def test_op_status_unknown(make: Any) -> None:
-    core = ScriptedCore([Step(calls=[call("op_status", {"call_id": "nope"}, id="s")]),
+    core = ScriptedCore([Step(calls=[call("TaskOutput", {"task_id": "nope"}, id="s")]),
                          Step(text="ok")])
     h: Harness = await make(core=core)
     await h.start()
@@ -191,22 +192,21 @@ async def test_op_status_unknown(make: Any) -> None:
     assert (await h.results())["s"].status == ToolStatus.ERROR
 
 
-async def test_op_status_wait_clamped(make: Any, monkeypatch: Any) -> None:
-    from kadence.runtime import orchestrator
-
-    monkeypatch.setattr(orchestrator, "_OP_STATUS_MAX_WAIT_S", 0.2)
+async def test_task_output_blocks_for_at_most_its_timeout(make: Any) -> None:
     tools = FakeTools()
     tools.slow("bg", 5)
     core = ScriptedCore([
         Step(calls=[call("bg", id="b1")]),
-        Step(calls=[call("op_status", {"call_id": "b1", "wait_s": 3600}, id="s")]),
+        Step(calls=[call("TaskOutput", {"task_id": "b1", "timeout": 200}, id="s"),
+                    call("TaskOutput", {"task_id": "b1", "block": False}, id="n")]),
         Step(text="ok"),
     ])
-    h: Harness = await make(core=core, tools=tools)
+    h: Harness = await make(core=core, tools=tools, initial_wait_s=0.05)
     await h.start()
     await asyncio.wait_for(h.turn("go"), timeout=3)
-    result = (await h.results())["s"]
-    assert result.status == ToolStatus.OK and "Invalid arguments" not in result.content
+    results = await h.results()
+    assert results["s"].status == ToolStatus.OK and "is running" in results["s"].content
+    assert "is running" in results["n"].content
 
 
 async def run_turn(make: Any, ids: list[str], **config: Any) -> tuple[Harness, list[Any]]:
@@ -260,7 +260,7 @@ async def test_reserved_names_dropped(make: Any) -> None:
         return ToolOutput("module recall")
 
     tools.add(ToolSpec("recall", "impostor", {"type": "object"}, True), fake_recall)
-    tools.add(ToolSpec("op_status", "impostor", {"type": "object"}, True), fake_recall)
+    tools.add(ToolSpec("TaskOutput", "impostor", {"type": "object"}, True), fake_recall)
     tools.instant("fine")
     core = ScriptedCore([Step(calls=[call("recall", {"query": "x"}, id="r")]), Step(text="ok")])
     h: Harness = await make(core=core, tools=tools)
@@ -268,7 +268,7 @@ async def test_reserved_names_dropped(make: Any) -> None:
     await h.turn("go")
     specs = {t.name: t for t in await h.runtime.list_tools()}
     assert specs["recall"].description == RECALL.description  # Memory offered it first
-    assert specs["op_status"].description == BUILTIN_TOOLS["op_status"].description
+    assert specs["TaskOutput"].description == BUILTIN_TOOLS["TaskOutput"].description
     assert "fine" in specs
     assert tools.started == []
     assert (await h.results())["r"].content != "module recall"
@@ -324,11 +324,13 @@ async def test_a_foreground_tool_is_waited_for_past_the_initial_wait(make: Any) 
 
 async def test_a_foreground_tool_times_out_at_its_timeout(make: Any) -> None:
     tools = FakeTools()
-    tools.hanging("cmd", progress="started", foreground=True)
+    spec = tools.hanging("cmd", progress="started", foreground=True)
+    tools.specs["cmd"] = replace(spec, parameters={  # a limit only where the tool takes one
+        "type": "object", "properties": {"timeout": {"type": "number"}}})
     core = ScriptedCore([Step(calls=[call("cmd", {"timeout": 200}, id="c")]), Step(text="ok")])
-    h: Harness = await make(core=core, tools=tools, initial_wait_s=0.05)
+    h: Harness = await make(core=core, tools=tools, initial_wait_s=0.05)  # grace: 0.2 s
     await h.start()
-    await asyncio.wait_for(h.turn("go"), 5)
+    await asyncio.wait_for(h.turn("go"), 5)  # the tool's own limit first, the runtime's after
     result = (await h.results())["c"]
     assert result.status == ToolStatus.TIMED_OUT and "started" in result.content
 
@@ -363,9 +365,35 @@ async def test_stop_ends_a_foreground_call(make: Any) -> None:
 
 
 def test_a_foreground_timeout_is_two_minutes_unless_set_and_at_most_ten() -> None:
-    from kadence.runtime.orchestrator import foreground_timeout
+    from kadence.api import foreground_timeout
 
     assert foreground_timeout({}) == 120
     assert foreground_timeout({"timeout": 5000}) == 5
     assert foreground_timeout({"timeout": 10**9}) == 600
     assert foreground_timeout({"timeout": "soon"}) == 120
+
+
+async def test_a_prompted_result_is_answered_from_it_by_the_light_model(make: Any) -> None:
+    """As Claude Code's WebFetch: the call's prompt and the page go to the model that does
+    maintenance, and its answer is the result."""
+    tools = FakeTools()
+
+    async def page(call: Any, ctx: Any) -> ToolOutput:
+        return ToolOutput("The capital of France is Paris. Lots of other text.")
+
+    tools.add(ToolSpec("Fetch", "fetch", {"type": "object"}, True, answers_prompt=True), page)
+
+    def answer(request: Any) -> Step:
+        text = request.messages[-1].blocks[0].text
+        assert "What is the capital?" in text and "Paris" in text
+        return Step(text="Paris.")
+
+    core = ScriptedCore([Step(calls=[call("Fetch", {"prompt": "What is the capital?"}, id="f"),
+                                     call("Fetch", {}, id="g")]),
+                         Step(text="ok")], maintenance=answer)
+    h: Harness = await make(core=core, tools=tools)
+    await h.start()
+    await h.turn("go")
+    results = await h.results()
+    assert results["f"].status == ToolStatus.OK and results["f"].content == "Paris."
+    assert results["g"].content.startswith("The capital of France")  # no prompt: the page
