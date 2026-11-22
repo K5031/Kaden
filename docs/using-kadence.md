@@ -93,6 +93,23 @@ doesn't match the input, trust the input.
 
 The permission level is set in [Settings](settings.md#permissions).
 
+### Plan mode
+
+For a bigger change, have the agent plan first. Choose **Plan mode** in the permission
+picker under the message box (it then reads "Plan mode"), or the agent turns it on itself.
+In plan mode the agent only looks around: it reads and searches, and anything that would
+change something is refused. When its plan is ready, a card above the message box shows it:
+
+| Answer | Effect |
+|---|---|
+| Approve | Plan mode ends and the agent carries out the plan |
+| Approve and… | The same, after setting the permission level you pick |
+| Keep planning | The agent stays in plan mode and waits for you |
+
+Or type what to change: the agent revises the plan. Turning plan mode off in the picker
+approves a plan that waits. Plan mode lasts until the plan is approved, you turn it off,
+or you switch conversations.
+
 ### Proposals
 
 When the agent has an idea of its own (tidying a folder, handing a side task to a

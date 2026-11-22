@@ -24,6 +24,7 @@ from kadence.api import (
     DESCRIPTION_ARG,
     DUTY_TOOLS,
     PERMISSION_CEILING_ENV,
+    PLAN_MODE_TOOLS,
     SKILL_TOOL,
     TOOL_SEARCH,
     AgentConfig,
@@ -76,6 +77,9 @@ from kadence.api import (
     PermissionResolved,
     PermissionRule,
     PlanItem,
+    PlanModeChanged,
+    PlanProposed,
+    PlanResolved,
     PlanStatus,
     Proposal,
     ProposalMade,
@@ -177,6 +181,12 @@ ANSWER_SYSTEM = (
 ANSWER_MAX_TOKENS = 4_000
 _RUNTIME_TOOLS = (frozenset(BUILTIN_TOOLS) | frozenset(DUTY_TOOLS)
                   | {SKILL_TOOL.name, TOOL_SEARCH.name})
+PLAN_MODE_PROMPT = (
+    "Plan mode is on. The user wants your plan before anything changes: you must not edit "
+    "files, run commands that change anything or otherwise change the system; such calls "
+    "are refused. Read and search to understand the task, ask with AskUserQuestion where "
+    "the approach is open, then present a concise plan with ExitPlanMode and wait for the "
+    "user's approval.")
 DEFER_OVER_CHARS = 40_000  # deferrable tools' definitions together, about 10k tokens
 
 
@@ -422,6 +432,10 @@ class Runtime:
         # The open AskUserQuestion and what its answers settle.
         self._question: tuple[QuestionAsked, asyncio.Future[Mapping[str, str] | str]] | None = (
             None)
+        # Plan mode for the open conversation, and the ExitPlanMode that waits: its answer
+        # is (approved, feedback).
+        self._plan_mode = False
+        self._plan: tuple[PlanProposed, asyncio.Future[tuple[bool, str | None]]] | None = None
         self._loaded: dict[str, set[str]] = {}  # per conversation: deferred tools loaded
         self._flush_tasks: set[asyncio.Task[None]] = set()
         self._duration_task: asyncio.Task[None] | None = None
@@ -450,6 +464,8 @@ class Runtime:
             duty_wake_at=self._duty_wake_at,
             help_needed=self._help,
             pending_question=self._question[0] if self._question else None,
+            plan_mode=self._plan_mode,
+            pending_plan=self._plan[0] if self._plan else None,
             proposals=tuple(p for p, _ in self._proposals.values()),
         )
 
@@ -527,6 +543,7 @@ class Runtime:
         conversation, resumed = await self._open_conversation(options)
         if self._conversation is None or conversation.id != self._conversation.id:
             self._grants.clear()
+            self._set_plan_mode(False, "conversation")
         self._plan_call = None
         self._spoken = None
         self._conversation = conversation
@@ -584,6 +601,9 @@ class Runtime:
         self._sendable()
         if self._question is not None and not files and text.strip():
             self._settle_question(text.strip())  # an answer in the user's own words
+            return
+        if self._plan is not None and not files and text.strip():
+            self._settle_plan(False, text.strip())  # sent back, with the message as feedback
             return
         attached = tuple([await self._attach(path) for path in files])
         self._answered()
@@ -723,10 +743,10 @@ class Runtime:
                 self._log.decision("skill_skipped", problem=problem)
 
     def _system(self) -> str:
-        """The system prompt with the skills' listing."""
-        section = skill_files.prompt(self._skills)
-        return f"{self._config.system_prompt}\n\n{section}" if section else \
-            self._config.system_prompt
+        """The system prompt with the skills' listing and, in plan mode, what it allows."""
+        sections = [self._config.system_prompt, skill_files.prompt(self._skills),
+                    PLAN_MODE_PROMPT if self._plan_mode else ""]
+        return "\n\n".join(s for s in sections if s)
 
     def _project(self) -> str | None:
         """Whose long-term memory: the open conversation's work folder (Memory.notes)."""
@@ -864,8 +884,8 @@ class Runtime:
         if self._stopping:
             return AgentState.STOPPING
         if self._cycle_active or self._cycle_requested:
-            return (AgentState.AWAITING_PERMISSION if self._prompts or self._question
-                    else self._phase)
+            return (AgentState.AWAITING_PERMISSION
+                    if self._prompts or self._question or self._plan else self._phase)
         return self._base
 
     def _update_state(self) -> None:
@@ -1826,6 +1846,12 @@ class Runtime:
                         ) -> tuple[ToolResult, float]:
         if after:
             await asyncio.wait(after)
+        if self._plan_mode and not (spec.read_only or call.name in PLAN_MODE_TOOLS):
+            self._log.decision("plan_mode_refused", call_id=call.id, name=call.name)
+            return ToolResult(call.id, ToolStatus.REFUSED, (
+                "Refused: plan mode is on, so only calls that read run. Look around, then "
+                "present your plan with ExitPlanMode; once the user approves it, you can "
+                "make changes.")), 0.0
         try:
             if call.name == "propose":
                 return self._propose(call), 0.0
@@ -2295,6 +2321,19 @@ class Runtime:
                 return ToolStatus.OK, "Goal reached; the duty has ended."
             case "AskUserQuestion":
                 return ToolStatus.OK, await self._ask(call)
+            case "EnterPlanMode":
+                if self._plan_mode:
+                    return ToolStatus.OK, "Already in plan mode."
+                self._set_plan_mode(True, "model")
+                return ToolStatus.OK, (
+                    "Entered plan mode. Explore and design your approach: you can read and "
+                    "look around, but not change anything. When your plan is ready, present "
+                    "it with ExitPlanMode for the user's approval.")
+            case "ExitPlanMode":
+                if not self._plan_mode:
+                    return ToolStatus.ERROR, ("You are not in plan mode: there is no plan to "
+                                              "approve. Go ahead with the task.")
+                return await self._propose_plan(call)
             case "ToolSearch":
                 found = self._search_tools(args["query"].strip(), args.get("max_results", 5))
                 if not found:
@@ -2358,6 +2397,77 @@ class Runtime:
                                     if isinstance(answers, str) else answers))
         if not answered.done():
             answered.set_result(answers)
+        self._update_state()
+
+    # ── Plan mode ────────────────────────────────────────────────────────
+
+    async def set_plan_mode(self, on: bool) -> None:
+        if self._conversation is None:
+            raise RuntimeStateError("not started", Refusal.NOT_STARTED)
+        if not on and self._plan is not None:
+            self._settle_plan(True, None)  # leaving plan mode approves the waiting plan
+            return
+        self._set_plan_mode(on, "user")
+
+    def _set_plan_mode(self, on: bool, by: str) -> None:
+        if on == self._plan_mode:
+            return
+        self._plan_mode = on
+        self._log.decision("plan_mode", on=on, by=by)
+        self._emit(PlanModeChanged(on))
+
+    async def _propose_plan(self, call: ToolCall) -> tuple[ToolStatus, str]:
+        """Wait for the user to approve the plan or send it back, and say which as Claude
+        Code's ExitPlanMode does."""
+        plan = call.arguments["plan"]
+        proposed = PlanProposed(call.id, plan)
+        answered: asyncio.Future[tuple[bool, str | None]] = (
+            asyncio.get_running_loop().create_future())
+        self._plan = (proposed, answered)
+        self._log.decision("plan_proposed", call_id=call.id, plan_chars=len(plan))
+        self._emit(proposed)
+        self._update_state()
+        try:
+            approved, feedback = await answered
+        finally:
+            if self._plan is not None and self._plan[0] is proposed:
+                self._plan = None
+                self._emit(PlanResolved(call.id, None))
+            self._update_state()
+        if approved:
+            return ToolStatus.OK, ("User has approved your plan. You can now start coding. "
+                                   "Start with updating your todo list if applicable.\n\n"
+                                   f"## Approved Plan:\n{plan}")
+        if feedback:
+            return ToolStatus.REFUSED, (
+                "The user did not approve the plan; you are still in plan mode. They said: "
+                f"\"{feedback}\". Revise the plan with that in mind and present it again "
+                "with ExitPlanMode.")
+        return ToolStatus.REFUSED, (
+            "The user did not approve the plan and wants to keep planning; you are still in "
+            "plan mode. Stop and wait for them to say how to go on.")
+
+    async def resolve_plan(self, call_id: CallId, approve: bool, feedback: str | None = None,
+                           permissions: PermissionPolicy | None = None) -> None:
+        if self._plan is None or self._plan[0].call_id != call_id:
+            raise RuntimeStateError(f"no plan {call_id} is waiting", Refusal.NOT_PENDING)
+        if approve and permissions is not None:
+            await self.update_settings(SettingsUpdate(permissions=permissions))
+            if self._plan is None or self._plan[0].call_id != call_id:
+                raise RuntimeStateError(f"no plan {call_id} is waiting", Refusal.NOT_PENDING)
+        self._settle_plan(approve, feedback.strip() if feedback and feedback.strip() else None)
+
+    def _settle_plan(self, approved: bool, feedback: str | None) -> None:
+        assert self._plan is not None
+        proposed, answered = self._plan
+        self._plan = None
+        self._log.decision("plan_resolved", call_id=proposed.call_id, approved=approved,
+                           feedback=feedback is not None)
+        if approved:
+            self._set_plan_mode(False, "approval")
+        self._emit(PlanResolved(proposed.call_id, approved, feedback))
+        if not answered.done():
+            answered.set_result((approved, feedback))
         self._update_state()
 
     def _describe(self, op: Operation) -> str:

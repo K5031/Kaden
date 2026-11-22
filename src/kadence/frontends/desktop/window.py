@@ -112,6 +112,7 @@ from kadence.api import (
     PermissionPolicy,
     PermissionRequest,
     PermissionRule,
+    PlanProposed,
     Proposal,
     QuestionAsked,
     RuntimeAPI,
@@ -1425,6 +1426,58 @@ class QuestionCard(QFrame):
             for text, buttons in self.choices})
 
 
+class PlanApprovalCard(QFrame):
+    """The plan the agent waits to have approved (ExitPlanMode): Approve, Approve and… a
+    permission level for what follows, or Keep planning. A reply typed instead sends it
+    back with that reply."""
+
+    PLAN_HEIGHT = 360  # past this, the plan scrolls
+
+    def __init__(self, proposed: PlanProposed,
+                 resolve: Callable[[str, bool, PermissionPolicy | None], None]) -> None:
+        super().__init__()
+        self.setObjectName("prompt")
+        self.resolve, self.call_id = resolve, proposed.call_id
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 10, 12, 10)
+        layout.addWidget(_label("Kadence's plan", role="strong"))
+        self.plan = MarkdownView()
+        self.plan.setMarkdown(proposed.plan)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setMaximumHeight(self.PLAN_HEIGHT)
+        scroll.setWidget(self.plan)
+        layout.addWidget(scroll)
+        buttons = QHBoxLayout()
+        self.approve = _primary(QPushButton("Approve"))
+        self.approve.clicked.connect(lambda: self._answer(True))
+        buttons.addWidget(self.approve)
+        self.approve_and = QPushButton("Approve and…")
+        menu = QMenu(self.approve_and)
+        self.levels: dict[PermissionPolicy, QAction] = {}
+        for policy, label in PERMISSION_LABELS.items():
+            if policy is PermissionPolicy.DENY:
+                continue
+            action = menu.addAction(label)
+            action.triggered.connect(lambda _=False, p=policy: self._answer(True, p))
+            self.levels[policy] = action
+        self.approve_and.setMenu(menu)
+        buttons.addWidget(self.approve_and)
+        self.keep = QPushButton("Keep planning")
+        self.keep.clicked.connect(lambda: self._answer(False))
+        buttons.addWidget(self.keep)
+        buttons.addWidget(_label("or type what to change", tone="muted"))
+        buttons.addStretch()
+        layout.addLayout(buttons)
+        self.setAccessibleName("The agent's plan")
+
+    def _answer(self, approve: bool, permissions: PermissionPolicy | None = None) -> None:
+        self.setEnabled(False)  # the card goes when PlanResolved arrives
+        self.resolve(self.call_id, approve, permissions)
+
+
 class ProposalCard(QFrame):
     """A call the agent proposed: it runs only if the user approves it."""
 
@@ -1944,6 +1997,8 @@ class ConversationView(QScrollArea):
                 _discard(child.widget())
         if (asked := self.model.question) is not None:
             self.prompts.addWidget(QuestionCard(asked, self.controller.answer_question))
+        if (proposed := self.model.pending_plan) is not None:
+            self.prompts.addWidget(PlanApprovalCard(proposed, self.controller.resolve_plan))
         for request in self.model.prompts.values():
             self.prompts.addWidget(PermissionCard(request, self.controller.resolve))
         for proposal in self.model.proposals.values():
@@ -2237,6 +2292,11 @@ class MainWindow(QMainWindow):
             action.setCheckable(True)
             action.triggered.connect(lambda _=False, p=policy: self.choose_permissions(p))
             self.permission_actions[policy] = action
+        permissions_menu.addSeparator()
+        self.plan_action = permissions_menu.addAction("Plan mode")
+        self.plan_action.setCheckable(True)
+        self.plan_action.setToolTip("Only look around until you approve a plan")
+        self.plan_action.triggered.connect(lambda on: self.controller.set_plan_mode(on))
         self.permissions_button.setMenu(permissions_menu)
         footer.addStretch(1)
         footer.addWidget(self.permissions_button)
@@ -2558,11 +2618,14 @@ class MainWindow(QMainWindow):
         policy = self.home.model.permissions
         self.permissions_button.setVisible(policy is not None)
         if policy is not None:
-            self.permissions_button.setText(PERMISSION_SHORT[policy])
+            self.permissions_button.setText("Plan mode" if model.plan_mode
+                                            else PERMISSION_SHORT[policy])
             self.permissions_button.setToolTip(f"What the agent may do: "
                                                f"{PERMISSION_LABELS[policy].lower()}")
             for each, action in self.permission_actions.items():
                 action.setChecked(each == policy)
+        self.plan_action.setChecked(model.plan_mode)
+        self.plan_action.setEnabled(model.conversation is not None)
         conversation = model.conversation
         if conversation is not None:
             self.title_label.setText(conversation_label(

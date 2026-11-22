@@ -14,8 +14,9 @@ had no counterpart. The user asked for a complete match.
 ## Decision
 
 What counts is Claude Code's standard tool set, the one every session has. Its tools for
-features Kadence does not have (plan mode, worktrees, scheduled agents, teams, Monitor,
-workflows) are out of scope; so are the Claude app's own tools, which `propose` and
+features Kadence does not have (worktrees, scheduled agents, teams, Monitor, workflows)
+are out of scope, and `EnterPlanMode` and `ExitPlanMode` come with
+[plan mode](2026-11-22-plan-mode.md); so are the Claude app's own tools, which `propose` and
 `wrap_up` already mirror, and Kadence's duty tools (`ask_for_help`, `finish_goal`), the
 Memory tools and `screenshot`, which have no counterpart.
 

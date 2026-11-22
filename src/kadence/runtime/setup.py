@@ -190,3 +190,10 @@ class SetupRuntime:
 
     async def answer_question(self, call_id: str, answers: Mapping[str, str]) -> None:
         self._refuse()
+
+    async def set_plan_mode(self, on: bool) -> None:
+        self._refuse()
+
+    async def resolve_plan(self, call_id: str, approve: bool, feedback: str | None = None,
+                           permissions: PermissionPolicy | None = None) -> None:
+        self._refuse()

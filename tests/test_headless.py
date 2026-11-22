@@ -282,3 +282,26 @@ async def test_a_cancelled_request_is_forgotten_at_once():
     process.stdout.feed_eof()
     process.stderr.feed_eof()
     await channel.ended.wait()
+
+
+async def test_plan_mode_is_driven_over_the_channel(make, clients):
+    h: Harness = await make(core=ScriptedCore([
+        Step(calls=[call("ExitPlanMode", {"plan": "1. Do it"}, id="x")]),
+        Step(text="Doing it.")]), permissions=PermissionPolicy.ASK)
+    client = clients()
+    await client.run(h.runtime)
+    await client.request("start")
+    assert (await client.request("set_plan_mode", on=True))["result"] is None
+    await eventually(lambda: client.events("PlanModeChanged"))
+    await client.request("send", text="plan it")
+    [proposed] = await eventually(lambda: client.events("PlanProposed"))
+    assert proposed == {"type": "PlanProposed", "call_id": "x", "plan": "1. Do it"}
+    assert (await client.request("snapshot"))["result"]["pending_plan"]["call_id"] == "x"
+    reply = await client.request("resolve_plan", call_id="x", approve=True,
+                                 permissions="allow_workspace")
+    assert reply["result"] is None
+    [resolved] = await eventually(lambda: client.events("PlanResolved"))
+    assert resolved["approved"] is True
+    snapshot = (await client.request("snapshot"))["result"]
+    assert snapshot["plan_mode"] is False
+    assert (await h.runtime.settings()).permissions == PermissionPolicy.ALLOW_WORKSPACE

@@ -915,6 +915,32 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
                                       "items": _QUESTION}},
          "required": ["questions"]},
     ),
+    # Plan mode (RuntimeAPI.set_plan_mode): only read-only calls and PLAN_MODE_TOOLS run.
+    "EnterPlanMode": ToolSpec(
+        "EnterPlanMode",
+        "Use it before a non-trivial implementation task (a new feature, several valid "
+        "approaches, changes across several files, unclear requirements) to get the "
+        "user's sign-off on your approach before you change anything. It turns on plan "
+        "mode: you may then only read and look around (find files, search, read them), "
+        "and you design an approach; ask with AskUserQuestion where the approach is "
+        "open, then present your plan with ExitPlanMode. Skip it for small, clear tasks "
+        "and for pure research.",
+        {"type": "object", "properties": {}},
+    ),
+    # Waits for the user's approval (PlanProposed, resolve_plan).
+    "ExitPlanMode": ToolSpec(
+        "ExitPlanMode",
+        "In plan mode, when your plan is ready: present it for the user's approval. It "
+        "waits for their answer: approved, plan mode ends and you carry out the plan; sent "
+        "back, you stay in plan mode with their feedback. Only for planning the steps of "
+        "a task that changes things, not for research. Don't ask \"Is this plan okay?\" "
+        "with AskUserQuestion: this is that question.",
+        {"type": "object",
+         "properties": {"plan": {"type": "string", "minLength": 1,
+                                 "description": "The plan, in markdown: concise, the steps "
+                                                "and the files they touch."}},
+         "required": ["plan"]},
+    ),
     # Ends the turn when it is the only call in its message (no request follows); frontends
     # show it as a card from the transcript (see SUGGESTION_TOOLS). An option with a call is
     # a Proposal with card=True and the wrap_up call's id.
@@ -1052,6 +1078,11 @@ TOOL_SEARCH = ToolSpec(
 # ask_for_help: question, replies), while no user message follows it. A click on an option
 # sends its label as the user's message, or approves its call's Proposal.
 SUGGESTION_TOOLS = frozenset({"wrap_up", "ask_for_help"})
+
+# What runs in plan mode besides read-only tools: the runtime's built-ins that change
+# nothing outside the conversation.
+PLAN_MODE_TOOLS = frozenset({"EnterPlanMode", "ExitPlanMode", "AskUserQuestion", "TodoWrite",
+                             "wrap_up", "TaskStop", "ask_for_help", "finish_goal"})
 
 # No module may declare these names.
 RESERVED_TOOL_NAMES = (frozenset(BUILTIN_TOOLS) | frozenset(DUTY_TOOLS)
@@ -1499,6 +1530,8 @@ class RuntimeSnapshot:
     proposals: Sequence[Proposal] = ()  # waiting for the user
     help_needed: str | None = None  # see HelpNeeded
     pending_question: QuestionAsked | None = None  # see QuestionAsked
+    plan_mode: bool = False  # see PlanModeChanged
+    pending_plan: PlanProposed | None = None  # see PlanProposed
 
 
 # Runtime events. TextDelta / ReasoningDelta / ToolCallDelta are reused from Core's stream.
@@ -1694,6 +1727,34 @@ class QuestionAnswered:
 
 
 @dataclass(frozen=True, slots=True)
+class PlanModeChanged:
+    """Plan mode turned on or off for the open conversation (set_plan_mode, EnterPlanMode,
+    an approved plan). In it only read-only calls and PLAN_MODE_TOOLS run; the others are
+    refused."""
+
+    on: bool
+
+
+@dataclass(frozen=True, slots=True)
+class PlanProposed:
+    """The agent's ExitPlanMode call waits for the user to approve its plan (markdown)
+    with resolve_plan. The state is AWAITING_PERMISSION while one waits."""
+
+    call_id: CallId
+    plan: str
+
+
+@dataclass(frozen=True, slots=True)
+class PlanResolved:
+    """The waiting plan is answered: approved (plan mode ends) or sent back with the
+    user's feedback, if any; approved None when it ended unanswered (Stop)."""
+
+    call_id: CallId
+    approved: bool | None
+    feedback: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class MaintenanceStarted:
     """Emitted when Memory first uses inference during maintain()."""
 
@@ -1773,6 +1834,9 @@ type RuntimeEvent = (
     | HelpNeeded
     | QuestionAsked
     | QuestionAnswered
+    | PlanModeChanged
+    | PlanProposed
+    | PlanResolved
     | ProposalMade
     | ProposalResolved
     | MaintenanceStarted
@@ -1818,8 +1882,10 @@ class RuntimeAPI(Protocol):
     notify follows send's column.
 
     resolve_permission is first-wins; an unknown or already-resolved id raises
-    RuntimeStateError. answer_question follows resolve_permission's column; while a
-    question is open, send answers it instead of queueing. cancel_operation is valid in any state while the call is running
+    RuntimeStateError. answer_question and resolve_plan follow resolve_permission's column;
+    while a question is open, send answers it instead of queueing, and while a plan waits,
+    send (without files) sends it back with the text as feedback. set_plan_mode is valid
+    in any state with a conversation open (NOT_STARTED raises). cancel_operation is valid in any state while the call is running
     and raises RuntimeStateError otherwise.
     stop is a no-op in IDLE, STOPPED and FAILED unless operations are outstanding, in
     which case it performs a full Stop.
@@ -1998,6 +2064,18 @@ class RuntimeAPI(Protocol):
     async def answer_question(self, call_id: CallId, answers: Mapping[str, str]) -> None:
         """Answer the open AskUserQuestion: for each question (by its text), the labels
         chosen, joined with ", ", or the user's own words. Emits QuestionAnswered."""
+
+    async def set_plan_mode(self, on: bool) -> None:
+        """Turn plan mode on or off for the open conversation; another conversation opened
+        starts without it. Turning it off while a plan waits approves the plan. Emits
+        PlanModeChanged when it changes."""
+
+    async def resolve_plan(self, call_id: CallId, approve: bool, feedback: str | None = None,
+                           permissions: PermissionPolicy | None = None) -> None:
+        """Answer the waiting ExitPlanMode. Approved: plan mode ends and, with
+        `permissions`, the permission setting is changed first, as update_settings would
+        (clamped to any ceiling). Not approved: plan mode stays, and `feedback` goes to the
+        agent. Emits PlanResolved."""
 
 
 @dataclass(frozen=True, slots=True)

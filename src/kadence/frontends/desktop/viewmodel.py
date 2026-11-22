@@ -52,6 +52,9 @@ from kadence.api import (
     PermissionResolved,
     PermissionRule,
     PlanItem,
+    PlanModeChanged,
+    PlanProposed,
+    PlanResolved,
     Proposal,
     ProposalMade,
     ProposalResolved,
@@ -341,6 +344,8 @@ class ConversationModel:
         self.prompts: dict[str, PermissionRequest] = {}
         self.proposals: dict[str, Proposal] = {}  # shown with the prompts
         self.question: QuestionAsked | None = None  # the agent waits for its answers
+        self.plan_mode = False  # the agent only looks around until its plan is approved
+        self.pending_plan: PlanProposed | None = None  # waits for the user's approval
         self.card: Card | None = None  # the agent's wrap-up card under its answer
         self.last_seq = -1
         self.state = AgentState.NOT_STARTED
@@ -409,6 +414,8 @@ class ConversationModel:
         self.prompts.clear()
         self.proposals.clear()
         self.question = snapshot.pending_question
+        self.plan_mode = snapshot.plan_mode
+        self.pending_plan = snapshot.pending_plan
         self.card = None
         self._tools.clear()
         self._cards.clear()
@@ -522,6 +529,16 @@ class ConversationModel:
             case QuestionAnswered(call_id=call_id):
                 if self.question is not None and self.question.call_id == call_id:
                     self.question = None
+                    self.on_change(PromptsChanged())
+            case PlanModeChanged(on=on):
+                self.plan_mode = on
+                self.on_change(StatusChanged())
+            case PlanProposed():
+                self.pending_plan = event
+                self.on_change(PromptsChanged())
+            case PlanResolved(call_id=call_id):
+                if self.pending_plan is not None and self.pending_plan.call_id == call_id:
+                    self.pending_plan = None
                     self.on_change(PromptsChanged())
             case ProposalMade(proposal=proposal):
                 self.proposals[proposal.id] = proposal
@@ -1105,6 +1122,13 @@ class Controller:
 
     def resolve_proposal(self, proposal_id: str, accept: bool) -> None:
         self.command(self.runtime.resolve_proposal(proposal_id, accept))
+
+    def set_plan_mode(self, on: bool) -> None:
+        self.command(self.runtime.set_plan_mode(on))
+
+    def resolve_plan(self, call_id: str, approve: bool,
+                     permissions: PermissionPolicy | None = None) -> None:
+        self.command(self.runtime.resolve_plan(call_id, approve, permissions=permissions))
 
     def select_model(self, model_id: str) -> None:
         self.command(self.runtime.select_model(model_id))

@@ -33,6 +33,7 @@ from kadence.api import (
     PermissionPolicy,
     Role,
     SettingsUpdate,
+    ToolStatus,
 )
 from kadence.frontends.desktop import app_menu, theme
 from kadence.frontends.desktop import window as window_module
@@ -2056,3 +2057,55 @@ async def test_the_agents_questions_are_answered_from_a_card(make, qapp):
     result = (await h.results())["q"]
     assert '"Which database?"="Postgres"' in result.content
     assert '"Which parts?"="API, UI"' in result.content
+
+
+async def test_plan_mode_is_turned_on_from_the_permission_picker(make, qapp):
+    h: Harness = await make()
+    await h.start()
+    window, _, _ = await open_window(h)
+    window.plan_action.trigger()
+    await eventually(lambda: h.runtime.snapshot().plan_mode
+                     and window.permissions_button.text() == "Plan mode")
+    assert window.plan_action.isChecked()
+    window.plan_action.trigger()
+    await eventually(lambda: not h.runtime.snapshot().plan_mode
+                     and window.permissions_button.text() != "Plan mode")
+
+
+async def test_the_agents_plan_is_approved_from_a_card(make, qapp):
+    from kadence.frontends.desktop.window import PlanApprovalCard
+
+    h: Harness = await make(permissions=PermissionPolicy.ASK)
+    h.core.add(Step(calls=[call("ExitPlanMode", {"plan": "1. Add the column"}, id="x")]),
+               Step(text="On it."))
+    await h.start()
+    await h.runtime.set_plan_mode(True)
+    window, controller, _ = await open_window(h)
+    controller.send("add a column")
+    await eventually(lambda: window.prompts.count() == 1)
+    card = window.prompts.itemAt(0).widget()
+    assert isinstance(card, PlanApprovalCard) and "Add the column" in card.plan.toPlainText()
+    card.levels[PermissionPolicy.ALLOW_WORKSPACE].trigger()
+    await eventually(lambda: window.prompts.count() == 0 and not controller.model.busy)
+    assert (await h.results())["x"].status == ToolStatus.OK
+    assert not h.runtime.snapshot().plan_mode
+    assert (await h.runtime.settings()).permissions == PermissionPolicy.ALLOW_WORKSPACE
+
+
+async def test_a_plan_sent_back_from_its_card_keeps_plan_mode(make, qapp):
+    from kadence.frontends.desktop.window import PlanApprovalCard
+
+    h: Harness = await make()
+    h.core.add(Step(calls=[call("ExitPlanMode", {"plan": "1. Add the column"}, id="x")]),
+               Step(text="Waiting."))
+    await h.start()
+    await h.runtime.set_plan_mode(True)
+    window, controller, _ = await open_window(h)
+    controller.send("add a column")
+    await eventually(lambda: window.prompts.count() == 1)
+    card = window.prompts.itemAt(0).widget()
+    assert isinstance(card, PlanApprovalCard)
+    card.keep.click()
+    await eventually(lambda: window.prompts.count() == 0 and not controller.model.busy)
+    assert (await h.results())["x"].status == ToolStatus.REFUSED
+    assert h.runtime.snapshot().plan_mode

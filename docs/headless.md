@@ -41,6 +41,8 @@ drives its sub-sessions this way:
 | `resolve_permission` | `request_id`, `decision` (`allow_once`, `allow_conversation`, `deny`) |
 | `resolve_proposal` | `proposal_id`, `accept` (true or false) |
 | `answer_question` | `call_id`, `answers`: for each question (by its text), the labels chosen (several joined with ", ") or your own words |
+| `set_plan_mode` | `on` (true or false) |
+| `resolve_plan` | `call_id`, `approve` (true or false), optional `feedback`, optional `permissions` (a permission level to set first when approving) |
 | `snapshot` | none |
 | `history` | `conversation_id`, optional `before`, `limit` |
 | `list_conversations` | optional `include_archived` |
@@ -77,7 +79,9 @@ that is not the user's words, use `notify` with a `text` instead of `send`.
 comes as `ProposalMade`: answer it with `resolve_proposal`. A question the agent asks
 with its work paused comes as `HelpNeeded`: answer it with `send`. Questions with choices
 that the agent waits on come as `QuestionAsked`: answer them with `answer_question`, or
-with `send`, which answers them all in your words.
+with `send`, which answers them all in your words. In plan mode (`PlanModeChanged`), a
+plan the agent waits to have approved comes as `PlanProposed`: answer it with
+`resolve_plan`, or with `send`, which sends it back with your words as feedback.
 
 **The wrap-up card is a tool call.** A turn that leaves a decision may end with a `wrap_up` call:
 `question`, up to three `options` with the agent's pick first, and an optional `recap` (an `ask_for_help` call
