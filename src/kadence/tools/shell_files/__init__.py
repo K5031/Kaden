@@ -20,6 +20,7 @@ import contextlib
 import io
 import os
 import re
+import secrets
 import shutil
 import signal
 import stat
@@ -89,7 +90,9 @@ SHELL = ToolSpec(
     description=(
         "Run a shell command (sh) in the workspace and return its combined stdout and "
         "stderr plus the exit code. Output is truncated to the first and last part when "
-        "long. Non-zero exit codes are reported as errors."
+        "long. Non-zero exit codes are reported as errors. The folder a command ends in is "
+        "where the next one starts, in this conversation, while it is inside the "
+        "workspace; elsewhere, the next starts in the workspace."
     ),
     parameters=_object({"command": _STRING, "unsandboxed": {"type": "boolean"}}, ["command"]),
     stall_timeout=SHELL_STALL_TIMEOUT,
@@ -269,6 +272,9 @@ class ShellFilesTools(Tools):
         # Each conversation's files as it last read or wrote them: (conversation, file)
         # to what _version says of it.
         self._seen: dict[tuple[str, Path], tuple[int, int, int]] = {}
+        self._folders: dict[str, Path] = {}  # where each conversation's shell is now
+        # The line a command ends with to say where it ended; never part of its output.
+        self._where = f"\x1b[kadence-folder-{secrets.token_hex(8)}]"
         self._set_root(self._default)
         self._handlers: dict[str, Callable[[dict[str, Any], ToolContext], Awaitable[str]]] = {
             "shell": self._shell,
@@ -422,15 +428,23 @@ class ShellFilesTools(Tools):
         # Our own pipe rather than PIPE: asyncio's Process.wait() also waits for its pipes
         # to close, which never happens while a backgrounded child holds stdout.
         read_fd, write_fd = os.pipe()
+        folder = self._folders.get(ctx.conversation_id, self.root)
+        if not await asyncio.to_thread(folder.is_dir):
+            folder = self.root
+        # The command, then where it ended, on a line of its own; its exit code stays.
+        script = (f"{args['command']}\n__kadence_status=$?\n"
+                  f"printf '\\n%s%s\\n' '{self._where}' \"$(pwd -P)\"\n"
+                  "exit $__kadence_status\n")
         try:
-            sandbox = [] if self._sandbox is None or args.get("unsandboxed") else self._sandbox
+            sandbox = [] if self._sandbox is None or args.get("unsandboxed") else [
+                *self._sandbox[:-1], str(folder)]  # its --chdir
             proc = await asyncio.create_subprocess_exec(
-                *sandbox, "sh", "-c", args["command"],
+                *sandbox, "sh", "-c", script,
                 env=sandbox_environment(os.environ) if sandbox else None,
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=write_fd,
                 stderr=asyncio.subprocess.STDOUT,
-                cwd=self.root,
+                cwd=folder,
                 start_new_session=True,  # own process group, so cancellation reaches children
             )
         except BaseException:
@@ -443,7 +457,7 @@ class ShellFilesTools(Tools):
             lambda: asyncio.StreamReaderProtocol(stream), os.fdopen(read_fd, "rb", 0)
         )
         output = _OutputBuffer(MAX_OUTPUT_CHARS)
-        reader = asyncio.create_task(_pump(stream, output, ctx))
+        reader = asyncio.create_task(_pump(stream, output, ctx, self._where))
         try:
             code = await proc.wait()
             with contextlib.suppress(TimeoutError):
@@ -456,10 +470,24 @@ class ShellFilesTools(Tools):
             with contextlib.suppress(asyncio.CancelledError):
                 await reader
             transport.close()
-        text = output.text()
+        text = self._ended_in(output.text(), ctx)
         if code != 0:
             raise ToolError(f"{text}\n[exit code {code}]".lstrip())
         return f"{text}\n[exit code 0]".lstrip()
+
+    def _ended_in(self, text: str, ctx: ToolContext) -> str:
+        """The output without the line that says where the command ended, which is kept
+        for the conversation's next command if it is in the workspace."""
+        at = text.rfind("\n" + self._where)
+        if at == -1:
+            return text  # it ended before saying: by exit, or killed
+        end = text.find("\n", at + 1)
+        where = Path(text[at + 1 + len(self._where): end if end != -1 else None])
+        if where.is_relative_to(self.root):
+            self._folders[ctx.conversation_id] = where
+        else:
+            self._folders.pop(ctx.conversation_id, None)
+        return text[:at] + (text[end + 1:] if end != -1 else "")
 
     # ── files ────────────────────────────────────────────────────────────
 
@@ -729,13 +757,17 @@ class _OutputBuffer:
         return self._head + self._tail
 
 
-async def _pump(stream: asyncio.StreamReader, out: _OutputBuffer, ctx: ToolContext) -> None:
+async def _pump(stream: asyncio.StreamReader, out: _OutputBuffer, ctx: ToolContext,
+                hidden: str = "") -> None:
+    """Keep what the command writes, and show its newest line as progress; a line that
+    starts with `hidden` is never shown."""
     last_report = 0.0
     pending: str | None = None
     while chunk := await stream.read(65536):
         text = chunk.decode("utf-8", "replace")
         out.append(text)
-        lines = [line for line in re.split(r"[\r\n]", text) if line.strip()]
+        lines = [line for line in re.split(r"[\r\n]", text)
+                 if line.strip() and not (hidden and line.startswith(hidden))]
         if lines:
             pending = lines[-1][:200]
         now = time.monotonic()

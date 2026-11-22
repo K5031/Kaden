@@ -72,6 +72,25 @@ async def test_shell_runs_in_workspace(tools, workspace, tmp_path):
     assert Path(out.content.splitlines()[0]).resolve() == workspace.resolve()
 
 
+async def test_the_shell_keeps_its_folder_from_one_command_to_the_next(tools, workspace,
+                                                                       tmp_path):
+    """Within the workspace and the conversation; a folder outside the workspace is not
+    kept, and another conversation starts in the workspace."""
+    moved = await run(tools, tmp_path, "shell", command="cd pkg && echo moved")
+    assert moved.content == "moved\n\n[exit code 0]"  # as ever: nothing of the bookkeeping
+    here = await run(tools, tmp_path, "shell", command="pwd")
+    assert here.content.splitlines()[0] == str((workspace / "pkg").resolve())
+    elsewhere = await tools.execute(ToolCall("c", "shell", {"command": "pwd"}),
+                                    RecordingContext("c", conversation_id="another"))
+    assert elsewhere.content.splitlines()[0] == str(workspace.resolve())
+    await run(tools, tmp_path, "shell", command="cd /")
+    back = await run(tools, tmp_path, "shell", command="pwd")
+    assert back.content.splitlines()[0] == str(workspace.resolve())
+    await run(tools, tmp_path, "shell", command="cd pkg; false")  # it failed, and moved
+    assert (await run(tools, tmp_path, "shell", command="pwd")).content.splitlines()[0] == (
+        str((workspace / "pkg").resolve()))
+
+
 async def test_shell_truncates_long_output(tools, tmp_path):
     out = await run(tools, tmp_path, "shell", command="seq 1 200000")
     assert len(out.content) < MAX_OUTPUT_CHARS + 200
