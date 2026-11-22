@@ -37,6 +37,7 @@ from kadence.runtime import (
     ModuleState,
     Restart,
     RuntimeConfig,
+    hooks,
     run_instance,
 )
 from kadence.runtime.modules import (
@@ -92,9 +93,9 @@ def read_config(path: Path, *, required: bool,
         if sections is not None:
             if name not in sections:
                 raise SystemExit(f"{path}: unknown key {name!r}; known: {', '.join(sections)}")
-        elif name not in (*DEFAULT_FACTORIES, "runtime"):
+        elif name not in (*DEFAULT_FACTORIES, "runtime", "hooks"):
             raise SystemExit(f"{path}: unknown section {name!r}; "
-                             f"known: {', '.join(DEFAULT_FACTORIES)}, runtime")
+                             f"known: {', '.join(DEFAULT_FACTORIES)}, runtime, hooks")
     return data
 
 
@@ -330,6 +331,10 @@ def load_config(args: Launch, *, launcher: str = WINDOW,
     data = read_config(path, required=args.config is not None)
     modules = load_modules(path, data)
     runtime = load_runtime(path, data)
+    try:
+        runtime["hooks"] = hooks.parse(data.get("hooks", []), str(path))
+    except ValueError as e:
+        raise SystemExit(str(e)) from None
     saved = read_saved(data_dir / SETTINGS_FILE)
     chosen = {kind: module_id(kind, spec) for kind, spec in modules.items()}
     chosen.update(saved.pop("modules", {}))

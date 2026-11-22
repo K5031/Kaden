@@ -191,6 +191,30 @@ at the next start. The output of `kadence --show-config` is a valid `config.toml
 from. A file that is not valid stops Kadence with a one-line message naming the mistake; a
 module that rejects its options opens the settings with the message instead.
 
+### Hooks
+
+Your own commands, run before or after the agent uses a tool. For example, format code
+after every edit, and stop any command that deletes:
+
+```toml
+[[hooks]]
+when = "after"
+tool = "edit_file"        # one tool by name; leave it out for every tool
+command = "ruff format ."
+
+[[hooks]]
+when = "before"
+tool = "shell"
+command = "~/bin/no-deleting.sh"
+```
+
+A hook gets the call as JSON on its input (`tool`, `arguments`, `folder`, and after the
+call its `result`) and runs in the conversation's folder, as you, outside the sandbox.
+When it exits with code **2**, what it wrote to standard error goes to the agent: before a
+call, the call is refused with that reason; after one, it is added to the result. Any
+other exit code, or a hook still running after a minute, changes nothing. Kadence's own
+tools (the plan, background work) run no hooks.
+
 With Claude models that always think (Opus 5.x, Sonnet 5.x, Haiku 5.x), Kadence asks for a
 summary of the thinking to be streamed, so you see it under **Thinking…** as it happens.
 To change that, set `thinking` in the Core's options for that model, for example

@@ -116,6 +116,7 @@ from kadence.api import (
     attachment_text,
 )
 from kadence.runtime import duty as duties
+from kadence.runtime import hooks
 from kadence.runtime import skills as skill_files
 from kadence.runtime.budget import BudgetTracker, calibrated, cost_of, estimate_tokens, has_prices
 from kadence.runtime.config import (
@@ -1770,12 +1771,39 @@ class Runtime:
             logger.exception("tool call handling failed")
             return ToolResult(call.id, ToolStatus.ERROR, f"Runtime error: {e}"), 0.0
 
+    async def _hooked(self, when: str, call: ToolCall,
+                      result: ToolResult | None = None) -> str | None:
+        """Run the user's hooks for `call`; what one that says something (exit code 2)
+        wrote, or None."""
+        said = []
+        for hook in self._config.hooks:
+            if not hook.covers(when, call.name):
+                continue
+            folder = self._conversation.folder if self._conversation is not None else None
+            payload: dict[str, Any] = {
+                "when": when, "tool": call.name, "arguments": self._bare(call).arguments,
+                "conversation_id": self._conversation.id if self._conversation else None,
+                "folder": folder}
+            if result is not None:
+                payload["result"] = {"status": result.status.value, "content": result.content}
+            outcome = await hooks.run(hook, payload, Path(folder) if folder else None)
+            if outcome.code == hooks.SAYS:
+                self._log.decision("hook", call_id=call.id, when=when, command=hook.command)
+                said.append(outcome.said or "a hook said no, and gave no reason")
+            elif outcome.code != 0:
+                self._log.decision("hook_failed", call_id=call.id, when=when,
+                                   command=hook.command, code=outcome.code,
+                                   said=outcome.said[:500])
+        return "\n".join(said) or None
+
     async def _run_module_call(self, call: ToolCall, spec: ToolSpec
                                ) -> tuple[ToolResult, float]:
         not_started = ToolResult(call.id, ToolStatus.CANCELLED,
                                  "Not started: the agent was stopped.")
         if self._stopping:
             return not_started, 0.0
+        if said := await self._hooked("before", call):
+            return ToolResult(call.id, ToolStatus.REFUSED, f"Refused by a hook: {said}"), 0.0
         try:
             owner = self._tool_owner.get(call.name)
             confined = owner is not None and await owner.confined(self._bare(call))
@@ -1798,7 +1826,10 @@ class Runtime:
         if not op.supervisor.done() and (self._stopping or op.cancel_requested):
             await asyncio.wait({op.supervisor})
         if op.supervisor.done():
-            return op.supervisor.result(), op.duration
+            result = op.supervisor.result()
+            if said := await self._hooked("after", call, result):
+                result = replace(result, content=f"{result.content}\n[hook] {said}")
+            return result, op.duration
         op.backgrounded = True
         self._log.decision("backgrounded", call_id=call.id)
         self._emit(ToolBackgrounded(call.id))
