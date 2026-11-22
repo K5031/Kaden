@@ -844,6 +844,7 @@ The design is in [the note](notes/implemented/2026-11-12-voice-conversation.md);
 |---|---|
 | End of a turn | 0.9 s of silence (`engine.END_OF_TURN_S`); sounds under 0.25 s are not speech |
 | Voice | Kokoro speaker 3, `af_heart`, at normal speed; not a setting |
+| Playback | 16-bit stereo, each sample in both channels (`audio.as_played`): a one-channel stream reaches only the left ear on PipeWire through Qt's output |
 | Threads | Half the CPU's cores, at most 8, for recognition and for speech |
 | Models folder | `<data dir>/voice/`, beside `desktop.json`; a window without a data folder has no voice mode |
 | Download | One model after another from sherpa-onnx's GitHub releases to `<name>.part`, unpacked beside it and renamed into place; the sizes in `download.MODELS` are for the question and the progress only |

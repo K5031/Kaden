@@ -394,3 +394,17 @@ def test_a_microphone_that_reports_no_error_is_open(qapp, monkeypatch):
     microphone = audio.Microphone(heard.append)
     microphone.start()  # does not raise NoMicrophone
     microphone.stop()
+
+
+def test_speech_is_played_on_both_channels():
+    """Mono sent as one channel reaches only the left ear on some sound servers (PipeWire
+    with Qt): each sample goes to both channels."""
+    import numpy as np
+    from PySide6.QtMultimedia import QAudioFormat
+
+    from kaden.frontends.desktop.voice.audio import as_played
+
+    sound, pcm = as_played(np.array([0.5, -0.25], np.float32), 22050)
+    assert (sound.sampleRate(), sound.channelCount()) == (22050, 2)
+    assert sound.sampleFormat() == QAudioFormat.SampleFormat.Int16
+    assert np.frombuffer(pcm, np.int16).tolist() == [16383, 16383, -8191, -8191]

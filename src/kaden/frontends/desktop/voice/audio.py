@@ -83,6 +83,18 @@ class Microphone(QObject):
                                  self._format.sampleFormat()))
 
 
+def as_played(samples: np.ndarray, rate: int) -> tuple[QAudioFormat, bytes]:
+    """Mono speech as the sound output gets it: 16-bit stereo, each sample in both
+    channels. Sent as one channel, it reaches only the left ear on some sound servers
+    (PipeWire with Qt's output)."""
+    sound = QAudioFormat()
+    sound.setSampleRate(rate)
+    sound.setChannelCount(2)
+    sound.setSampleFormat(QAudioFormat.SampleFormat.Int16)
+    mono = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
+    return sound, np.repeat(mono, 2).tobytes()
+
+
 class Speaker(QObject):
     """turns.Player on the default sound output."""
 
@@ -95,11 +107,7 @@ class Speaker(QObject):
         self.stop()
         if not len(samples):
             return
-        sound = QAudioFormat()
-        sound.setSampleRate(rate)
-        sound.setChannelCount(1)
-        sound.setSampleFormat(QAudioFormat.SampleFormat.Int16)
-        pcm = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+        sound, pcm = as_played(samples, rate)
         buffer = QBuffer(self)
         buffer.setData(QByteArray(pcm))
         buffer.open(QIODevice.OpenModeFlag.ReadOnly)
