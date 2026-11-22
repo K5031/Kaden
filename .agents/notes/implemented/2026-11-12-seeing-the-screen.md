@@ -12,7 +12,7 @@ wrong with this window", typed or in voice mode, and have the agent see it.
 
 A tool `screenshot`, without arguments, in `kadence.tools.shell_files` (`screen.py`). It
 captures the whole desktop, all monitors, and returns the picture as an attachment of the
-tool result, the way `read_file` returns a picture, so every Core that shows pictures to
+tool result, the way `Read` returns a picture, so every Core that shows pictures to
 its model shows this one. Every frontend has it, since it belongs to the Tools module.
 
 - **Capture** is done by KDE's Spectacle (`spectacle -b -n -f -o <file>`), run as a child

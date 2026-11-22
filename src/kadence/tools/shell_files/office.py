@@ -1,5 +1,5 @@
 """Word, Excel and PowerPoint files as text a model can read: for a file the user attaches
-(attachments.py) and one the agent reads (read_file)."""
+(attachments.py) and one the agent reads (Read)."""
 
 from __future__ import annotations
 

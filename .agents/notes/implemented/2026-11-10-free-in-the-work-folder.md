@@ -56,17 +56,17 @@ after the user allows it.
 A sandboxed command, which runs unasked, can create links in the work folder that point
 anywhere, and the file tools run outside the sandbox. So a call judged confined, which
 `execute` is told (`ToolContext.confined`), checks the file it actually opened (`ShellFilesTools._open`, by `/proc/self/fd`), not only the path
-it was given: a link swapped in after the check is refused. `search_files` reads regular
+it was given: a link swapped in after the check is refused. `Grep` reads regular
 files only and skips links, as ripgrep does by default.
 
 ### Shell: a sandbox
 
-The shell tool takes an argument, `unsandboxed` (default false).
+The shell tool (`Bash`) takes an argument, `dangerouslyDisableSandbox` (default false).
 
 - **Sandboxed** when the sandbox works: the command runs under
   [bubblewrap](https://github.com/containers/bubblewrap) and the call is confined. The
   tool's description tells the model what the sandbox hides.
-- **`unsandboxed: true`**, or no working sandbox: the command runs with the user's rights
+- **`dangerouslyDisableSandbox: true`**, or no working sandbox: the command runs with the user's rights
   and is not confined, so it prompts.
 
 Inside the sandbox (`shell_files._sandbox`):
@@ -108,14 +108,14 @@ user choose each chat's folder.
   shells have too many ways to reach a file, and a wrong guess runs unasked.
 - **Read-only home instead of a hidden one.** Tools installed under the home folder
   (`~/.cargo`, `~/.local/bin`, caches) would keep working, but with the network allowed a
-  command could read keys and tokens there and send them anywhere. `unsandboxed` covers
+  command could read keys and tokens there and send them anywhere. `dangerouslyDisableSandbox` covers
   the commands that need more.
 - **Folders outside the work folder that are read without asking** (a library the
   project is installed with, next to its folder). Built twice and taken out: as a Tools
   option in `config.toml`, which decides ahead of time what every other permission asks
   for when it is needed, and as a tool the agent calls to ask for a folder, which is a
   special case of the question that already exists. A command that needs something
-  outside runs with `unsandboxed`, the user is asked, and may allow it for the
+  outside runs with `dangerouslyDisableSandbox`, the user is asked, and may allow it for the
   conversation.
 - **No network in the sandbox.** The strongest containment, but it breaks installing
   packages and fetching anything, which agents do constantly.

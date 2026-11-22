@@ -62,7 +62,7 @@ def searched(stop: str = "end_turn", searches: int = 1) -> list:
 
 
 def request(model: str = OPUS, messages=None) -> InferenceRequest:
-    search = ToolSpec("web_search", "search", {"type": "object"})
+    search = ToolSpec("WebSearch", "search", {"type": "object"})
     return InferenceRequest(model, "", messages or [user("Who plays the final?")],
                             [search, WEATHER_TOOL])
 
@@ -73,7 +73,7 @@ def driver() -> AnthropicDriver:
 
 
 async def test_web_search_is_offered_as_anthropics_own(driver):
-    assert [t.name for t in await driver.core.list_tools()] == ["web_search"]
+    assert [t.name for t in await driver.core.list_tools()] == ["WebSearch"]
     driver.stub.queue(Reply(events=[message_start(), *text_block(0, ["ok"]), *finish("end_turn")]))
     await collect(driver.core, request())
     tools = driver.stub.bodies[-1]["tools"]

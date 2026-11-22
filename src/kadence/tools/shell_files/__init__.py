@@ -18,6 +18,7 @@ import asyncio
 import base64
 import contextlib
 import io
+import math
 import os
 import re
 import secrets
@@ -86,7 +87,7 @@ def _object(properties: dict[str, Any], required: Sequence[str] = ()) -> dict[st
 _STRING = {"type": "string"}
 
 SHELL = ToolSpec(
-    name="shell",
+    name="Bash",
     description=(
         "Run a shell command (sh) in the workspace and return its combined stdout and "
         "stderr plus the exit code. Output is truncated to the first and last part when "
@@ -94,14 +95,15 @@ SHELL = ToolSpec(
         "where the next one starts, in this conversation, while it is inside the "
         "workspace; elsewhere, the next starts in the workspace."
     ),
-    parameters=_object({"command": _STRING, "unsandboxed": {"type": "boolean"}}, ["command"]),
+    parameters=_object({"command": _STRING, "dangerouslyDisableSandbox": {"type": "boolean"}},
+                       ["command"]),
     stall_timeout=SHELL_STALL_TIMEOUT,
 )
 SANDBOX_NOTE = (
     " Commands run in a sandbox: they can read and write the workspace, read the system "
     "and use the network, but the rest of the home directory and environment variables "
     "holding keys or tokens are hidden, and nothing outside the workspace can be "
-    "changed. Set `unsandboxed` to true only when a command needs something outside; "
+    "changed. Set `dangerouslyDisableSandbox` to true only when a command needs something outside; "
     "the user is then asked first, so say why."
 )
 # Variables whose names look like secrets (API keys, tokens, passwords) are left out of a
@@ -110,10 +112,11 @@ SECRET_NAME = re.compile(r"KEY|TOKEN|SECRET|PASSW|CREDENTIAL", re.IGNORECASE)
 SANDBOX_CHECK_TIMEOUT = 5.0  # seconds for the one test run of the sandbox at startup
 FILE_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
-        name="read_file",
+        name="Read",
         description=(
-            "Read a UTF-8 text file. Optional 1-based start line `offset` and line `limit` "
-            f"(default {MAX_READ_LINES}). A picture (PNG, JPEG, GIF, WebP) is shown to you. "
+            "Read a UTF-8 text file, its lines numbered as `cat -n` numbers them (the number, "
+            "a tab, the line); the number and tab are not part of the file. Optional 1-based "
+            f"start line `offset` and line `limit` (default {MAX_READ_LINES}). A picture (PNG, JPEG, GIF, WebP) is shown to you. "
             "A PDF is read as the text of its pages: all of them, or those `pages` names, "
             "such as \"3\" or \"2-5\". Set `view` to look at the pages themselves, for a "
             "scan, a chart or a layout the text does not carry: at most "
@@ -124,25 +127,25 @@ FILE_SPECS: tuple[ToolSpec, ...] = (
         ),
         parameters=_object(
             {
-                "path": _STRING,
+                "file_path": _STRING,
                 "offset": {"type": "integer", "minimum": 1},
                 "limit": {"type": "integer", "minimum": 1},
                 "pages": {"type": "string", "description": "For a PDF: a page or a range."},
                 "view": {"type": "boolean",
                          "description": "For a PDF: the pages as they look, not their text."},
             },
-            ["path"],
+            ["file_path"],
         ),
         read_only=True,
     ),
     ToolSpec(
-        name="write_file",
+        name="Write",
         description="Create or overwrite a text file, creating parent directories. A file that is "
             "there must have been read in this conversation, and be unchanged since.",
-        parameters=_object({"path": _STRING, "content": _STRING}, ["path", "content"]),
+        parameters=_object({"file_path": _STRING, "content": _STRING}, ["file_path", "content"]),
     ),
     ToolSpec(
-        name="edit_file",
+        name="Edit",
         description=(
             "Replace an exact string in a file, which must have been read in this "
             "conversation and be unchanged since. `old_string` must occur exactly once unless "
@@ -150,39 +153,44 @@ FILE_SPECS: tuple[ToolSpec, ...] = (
         ),
         parameters=_object(
             {
-                "path": _STRING,
+                "file_path": _STRING,
                 "old_string": {"type": "string", "minLength": 1},
                 "new_string": _STRING,
                 "replace_all": {"type": "boolean"},
             },
-            ["path", "old_string", "new_string"],
+            ["file_path", "old_string", "new_string"],
         ),
     ),
     ToolSpec(
-        name="list_files",
+        name="Glob",
         description=(
-            "List files under a directory (default: workspace root), skipping hidden "
-            "directories and what .gitignore files leave out. `pattern` is a glob matched "
-            "against the file name, or against the relative path when it contains '/'."
+            "List the files under a directory (default: workspace root) whose path relative "
+            "to it matches a glob `pattern`, the most recently changed first: `*` and `?` "
+            "stay within one folder, `**/` is any number of folders, `{a,b}` either. "
+            "Hidden directories and what .gitignore files leave out are skipped."
         ),
-        parameters=_object({"path": _STRING, "pattern": _STRING}),
+        parameters=_object({"pattern": {"type": "string", "minLength": 1}, "path": _STRING},
+                           ["pattern"]),
         read_only=True,
     ),
     ToolSpec(
-        name="search_files",
+        name="Grep",
         description=(
-            "Search text files under a directory for a Python regular expression. Returns "
-            "`path:line: text` matches, with `context` lines before and after each as "
-            "`path-line- text`; `output` \"files\" lists only the files that match and "
-            "\"count\" how many lines match in each. `glob` filters file names. Hidden "
-            "directories, what .gitignore files leave out, binary files and files over 1 MB "
-            "are skipped."
+            "Search text files under a directory for a Python regular expression. "
+            "`output_mode` \"files_with_matches\" (the default) lists the files that match, "
+            "\"count\" how many lines match in each, \"content\" the matching lines as "
+            "`path:line: text`, with `-A` lines after, `-B` before or `-C` around each as "
+            "`path-line- text`. `-i` ignores case, `glob` filters file names, `head_limit` "
+            "keeps the first entries. Hidden directories, what .gitignore files leave out, "
+            "binary files and files over 1 MB are skipped."
         ),
         parameters=_object(
             {"pattern": {"type": "string", "minLength": 1}, "path": _STRING, "glob": _STRING,
-             "ignore_case": {"type": "boolean"},
-             "context": {"type": "integer", "minimum": 0, "maximum": 10},
-             "output": {"enum": ["content", "files", "count"]}},
+             "output_mode": {"enum": ["files_with_matches", "count", "content"]},
+             "-i": {"type": "boolean"},
+             **{flag: {"type": "integer", "minimum": 0, "maximum": 10}
+                for flag in ("-A", "-B", "-C")},
+             "head_limit": {"type": "integer", "minimum": 1}},
             ["pattern"],
         ),
         read_only=True,
@@ -277,12 +285,12 @@ class ShellFilesTools(Tools):
         self._where = f"\x1b[kadence-folder-{secrets.token_hex(8)}]"
         self._set_root(self._default)
         self._handlers: dict[str, Callable[[dict[str, Any], ToolContext], Awaitable[str]]] = {
-            "shell": self._shell,
-            "read_file": self._read_file,
-            "write_file": self._write_file,
-            "edit_file": self._edit_file,
-            "list_files": self._list_files,
-            "search_files": self._search_files,
+            "Bash": self._shell,
+            "Read": self._read_file,
+            "Write": self._write_file,
+            "Edit": self._edit_file,
+            "Glob": self._list_files,
+            "Grep": self._search_files,
             **{name: self._web_call(name) for name in web.NAMES},
             screen.NAME: self._screenshot,
         }
@@ -313,9 +321,10 @@ class ShellFilesTools(Tools):
             return True
         if not self._bounded or call.name not in self._handlers or call.name == screen.NAME:
             return False
-        if call.name == "shell":
-            return self._sandbox is not None and call.arguments.get("unsandboxed") is not True
-        path = call.arguments.get("path", ".")
+        if call.name == SHELL.name:
+            return (self._sandbox is not None
+                    and call.arguments.get("dangerouslyDisableSandbox") is not True)
+        path = call.arguments.get("file_path", call.arguments.get("path", "."))
         return isinstance(path, str) and await asyncio.to_thread(self._inside, path)
 
     def _inside(self, raw: str) -> bool:
@@ -436,7 +445,7 @@ class ShellFilesTools(Tools):
                   f"printf '\\n%s%s\\n' '{self._where}' \"$(pwd -P)\"\n"
                   "exit $__kadence_status\n")
         try:
-            sandbox = [] if self._sandbox is None or args.get("unsandboxed") else [
+            sandbox = [] if self._sandbox is None or args.get("dangerouslyDisableSandbox") else [
                 *self._sandbox[:-1], str(folder)]  # its --chdir
             proc = await asyncio.create_subprocess_exec(
                 *sandbox, "sh", "-c", script,
@@ -492,7 +501,7 @@ class ShellFilesTools(Tools):
     # ── files ────────────────────────────────────────────────────────────
 
     async def _read_file(self, args: dict[str, Any], ctx: ToolContext) -> str | ToolOutput:
-        path = self._path(args["path"])
+        path = self._path(args["file_path"])
         offset = args.get("offset", 1)
         limit = args.get("limit", MAX_READ_LINES)
         if await asyncio.to_thread(path.is_dir):
@@ -527,10 +536,10 @@ class ShellFilesTools(Tools):
                         notes.append(f"[more lines follow; use offset {number} to read on]")
                         break
                     if size + len(line) > MAX_READ_CHARS:
-                        selected.append(line[: MAX_READ_CHARS - size])
+                        selected.append(f"{number:>6}\t{line[: MAX_READ_CHARS - size]}")
                         notes.append(f"[truncated at {MAX_READ_CHARS} characters]")
                         break
-                    selected.append(line)
+                    selected.append(f"{number:>6}\t{line}")
                     size += len(line)
             text = "".join(selected)
             return "\n".join([text, *notes]) if notes else text
@@ -623,7 +632,7 @@ class ShellFilesTools(Tools):
             pass
 
     async def _write_file(self, args: dict[str, Any], ctx: ToolContext) -> str:
-        path = self._path(args["path"])
+        path = self._path(args["file_path"])
         content: str = args["content"]
 
         def write() -> None:
@@ -640,7 +649,7 @@ class ShellFilesTools(Tools):
         return f"Wrote {len(content)} characters to {self._display(path)}"
 
     async def _edit_file(self, args: dict[str, Any], ctx: ToolContext) -> str:
-        path = self._path(args["path"])
+        path = self._path(args["file_path"])
         old, new = args["old_string"], args["new_string"]
         replace_all = args.get("replace_all", False)
 
@@ -668,15 +677,21 @@ class ShellFilesTools(Tools):
 
     async def _list_files(self, args: dict[str, Any], ctx: ToolContext) -> str:
         base = self._path(args.get("path"))
-        pattern = args.get("pattern", "*")
+        pattern = _glob(args["pattern"])
 
-        def list_(cancelled: threading.Event) -> list[str]:
+        def list_(cancelled: threading.Event) -> list[tuple[float, str]]:
             found = []
             folder = self._open_folder(base, ctx)
             try:
-                for rel, name, _ in _walk(folder, cancelled, ctx, self._ignored_above(base)):
-                    if fnmatch(rel if "/" in pattern else name, pattern):
-                        found.append(rel)
+                for rel, name, within in _walk(folder, cancelled, ctx,
+                                               self._ignored_above(base)):
+                    if pattern.fullmatch(rel):
+                        try:
+                            changed = os.stat(name, dir_fd=within,
+                                              follow_symlinks=False).st_mtime
+                        except OSError:  # gone since it was listed
+                            continue
+                        found.append((-changed, rel))
                         if len(found) > MAX_LIST_ENTRIES:
                             break
             finally:
@@ -684,7 +699,7 @@ class ShellFilesTools(Tools):
             return found
 
         found = await _cancellable_thread(list_)
-        lines = sorted(found[:MAX_LIST_ENTRIES])
+        lines = [rel for _, rel in sorted(found[:MAX_LIST_ENTRIES])]
         if len(found) > MAX_LIST_ENTRIES:
             lines.append(f"[truncated at {MAX_LIST_ENTRIES} entries]")
         return "\n".join(lines) if lines else "No files found"
@@ -692,10 +707,12 @@ class ShellFilesTools(Tools):
     async def _search_files(self, args: dict[str, Any], ctx: ToolContext) -> str:
         base = self._path(args.get("path"))
         name_glob = args.get("glob")
-        output, context = args.get("output", "content"), args.get("context", 0)
+        output = args.get("output_mode", "files_with_matches")
+        around = args.get("-C", 0)
+        before, after = args.get("-B", around), args.get("-A", around)
+        limit = min(args.get("head_limit", MAX_SEARCH_MATCHES), MAX_SEARCH_MATCHES)
         try:
-            regex = re.compile(args["pattern"],
-                               re.IGNORECASE if args.get("ignore_case") else 0)
+            regex = re.compile(args["pattern"], re.IGNORECASE if args.get("-i") else 0)
         except re.error as e:
             raise ToolError(f"Invalid regular expression: {e}") from None
 
@@ -713,22 +730,22 @@ class ShellFilesTools(Tools):
                     hits = [n for n, line in enumerate(lines, 1) if regex.search(line)]
                     if not hits:
                         continue
-                    if output == "files":
+                    if output == "files_with_matches":
                         matches.append(rel)
                     elif output == "count":
                         matches.append(f"{rel}:{len(hits)}")
                     else:
-                        matches += _with_context(rel, lines, hits, context)
-                    if len(matches) > MAX_SEARCH_MATCHES:
+                        matches += _with_context(rel, lines, hits, before, after)
+                    if len(matches) > limit:
                         return matches
             finally:
                 os.close(folder)
             return matches
 
         matches = await _cancellable_thread(search)
-        lines = matches[:MAX_SEARCH_MATCHES]
-        if len(matches) > MAX_SEARCH_MATCHES:
-            lines.append(f"[truncated at {MAX_SEARCH_MATCHES} matches]")
+        lines = matches[:limit]
+        if len(matches) > limit and limit < args.get("head_limit", math.inf):
+            lines.append(f"[truncated at {limit} entries]")
         return "\n".join(lines) if lines else "No matches"
 
 
@@ -848,16 +865,16 @@ def _ignored(rules: Sequence[_Rules], rel: str, folder: bool) -> bool:
 
 
 def _with_context(rel: str, lines: Sequence[str], hits: Sequence[int],
-                  context: int) -> list[str]:
-    """The lines that match, as `path:line: text`, each with `context` lines around it as
-    `path-line- text`; "--" between groups that do not touch."""
-    if not context:
+                  before: int, after: int) -> list[str]:
+    """The lines that match, as `path:line: text`, each with `before` and `after` lines
+    around it as `path-line- text`; "--" between groups that do not touch."""
+    if not before and not after:
         return [f"{rel}:{n}: {lines[n - 1][:500]}" for n in hits]
     out: list[str] = []
     shown = set(hits)
     last = 0
     for n in hits:
-        first, end = max(1, n - context), min(len(lines), n + context)
+        first, end = max(1, n - before), min(len(lines), n + after)
         if last and first > last + 1:
             out.append("--")
         for m in range(max(first, last + 1), end + 1):
@@ -865,6 +882,45 @@ def _with_context(rel: str, lines: Sequence[str], hits: Sequence[int],
             out.append(f"{rel}{sep}{m}{sep} {lines[m - 1][:500]}")
         last = max(last, end)
     return out
+
+
+def _glob(pattern: str) -> re.Pattern[str]:
+    """A glob as a regular expression over a relative path: `*` and `?` within one folder,
+    `**/` any number of folders, `**` anything, `[...]` a set, `{a,b}` either."""
+    out, i, depth = [], 0, 0
+    while i < len(pattern):
+        c = pattern[i]
+        if pattern.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+            continue
+        if pattern.startswith("**", i):
+            out.append(".*")
+            i += 2
+            continue
+        if c == "*":
+            out.append("[^/]*")
+        elif c == "?":
+            out.append("[^/]")
+        elif c == "[" and (end := pattern.find("]", i + 2)) != -1:
+            body = pattern[i + 1:end].replace("\\", "\\\\")
+            out.append("[^" + body[1:] + "]" if body[0] in "!^" else "[" + body + "]")
+            i = end + 1
+            continue
+        elif c == "{":
+            out.append("(?:")
+            depth += 1
+        elif c == "}" and depth:
+            out.append(")")
+            depth -= 1
+        elif c == "," and depth:
+            out.append("|")
+        else:
+            out.append(re.escape(c))
+        i += 1
+    if depth:
+        raise ToolError(f"Unclosed {{ in the pattern {pattern!r}")
+    return re.compile("".join(out), re.DOTALL)
 
 
 def _version(path: Path) -> tuple[int, int, int]:

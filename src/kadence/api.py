@@ -1111,7 +1111,7 @@ class PermissionRule:
         program and its subcommand (`git status`), the whole command where the program
         runs code of any kind or commands are chained, else the tool."""
         command = call.arguments.get("command")
-        if call.name != "shell" or not isinstance(command, str) or not command.split():
+        if call.name != "Bash" or not isinstance(command, str) or not command.split():
             return cls(call.name, allow=allow)
         words = command.split()
         if words[0] in _RUNS_CODE or _CHAINED.search(command):

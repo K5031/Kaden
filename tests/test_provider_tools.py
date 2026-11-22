@@ -17,7 +17,7 @@ from tests.conftest import Harness
 from tests.fakes.core import ScriptedCore, Step
 from tests.fakes.tools import FakeTools
 
-SEARCH = ToolSpec("web_search", "Search the web (run by the provider).",
+SEARCH = ToolSpec("WebSearch", "Search the web (run by the provider).",
                   {"type": "object", "properties": {"query": {"type": "string"}}})
 USE = ServerToolUse("srv_1", "web_search", {"query": "worlds 2026 final"},
                     "Searched the web for “worlds 2026 final”",
@@ -29,8 +29,8 @@ async def harness(make: Any, *steps: Step, **config: Any) -> Harness:
     core = ScriptedCore([*steps, Step(text="done")])
     core.tools = [SEARCH]
     tools = FakeTools()
-    tools.instant("web_search", "Kadence's own search")
-    tools.instant("web_fetch", "a page")
+    tools.instant("WebSearch", "Kadence's own search")
+    tools.instant("WebFetch", "a page")
     return await make(core=core, tools=tools, **config)
 
 
@@ -39,7 +39,7 @@ async def test_the_providers_tool_is_offered_in_place_of_a_modules(make: Any) ->
     await h.start()
     await h.turn("who plays the final?")
     offered = {t.name: t for t in h.core.requests[0].tools}
-    assert offered["web_search"].description == SEARCH.description and "web_fetch" in offered
+    assert offered["WebSearch"].description == SEARCH.description and "WebFetch" in offered
 
 
 async def test_its_use_is_recorded_not_run(make: Any) -> None:

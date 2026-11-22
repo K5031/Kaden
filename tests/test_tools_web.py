@@ -86,19 +86,19 @@ async def run(tools: ShellFilesTools, tmp_path: Path, name: str, **args):
 
 async def test_web_tools_are_offered_read_only_and_confined(tools):
     specs = {s.name: s for s in await tools.list_tools()}
-    assert specs["web_search"].read_only and specs["web_fetch"].read_only
-    assert await tools.confined(ToolCall("c", "web_search", {"query": "x"}))
-    assert await tools.confined(ToolCall("c", "web_fetch", {"url": "https://example.com"}))
+    assert specs["WebSearch"].read_only and specs["WebFetch"].read_only
+    assert await tools.confined(ToolCall("c", "WebSearch", {"query": "x"}))
+    assert await tools.confined(ToolCall("c", "WebFetch", {"url": "https://example.com"}))
 
 
 async def test_web_tools_are_confined_even_when_the_folder_is_no_boundary():
     tools = ShellFilesTools(Path.home(), web_tools=web.Web(search=fake_search))
-    assert await tools.confined(ToolCall("c", "web_search", {"query": "x"}))
-    assert not await tools.confined(ToolCall("c", "read_file", {"path": "a"}))
+    assert await tools.confined(ToolCall("c", "WebSearch", {"query": "x"}))
+    assert not await tools.confined(ToolCall("c", "Read", {"file_path": "a"}))
 
 
 async def test_search_lists_results_with_links(tools, tmp_path):
-    out = await run(tools, tmp_path, "web_search", query="asyncio taskgroup", max_results=3)
+    out = await run(tools, tmp_path, "WebSearch", query="asyncio taskgroup", max_results=3)
     assert not out.is_error
     assert searches[-1] == ("asyncio taskgroup", 3)
     assert out.content.startswith(web.UNTRUSTED)
@@ -107,13 +107,13 @@ async def test_search_lists_results_with_links(tools, tmp_path):
 
 
 async def test_search_defaults_and_failures(tools, tmp_path):
-    await run(tools, tmp_path, "web_search", query="defaults")
+    await run(tools, tmp_path, "WebSearch", query="defaults")
     assert searches[-1] == ("defaults", web.DEFAULT_RESULTS)
-    empty = await run(tools, tmp_path, "web_search", query="nothing")
+    empty = await run(tools, tmp_path, "WebSearch", query="nothing")
     assert not empty.is_error and empty.content.startswith("Nothing found for 'nothing'")
     assert f"after {web.SEARCH_ATTEMPTS} tries" in empty.content
     assert "refuse" in empty.content  # it may be the engines, not the query
-    broken = await run(tools, tmp_path, "web_search", query="broken")
+    broken = await run(tools, tmp_path, "WebSearch", query="broken")
     assert broken.is_error and "unavailable" in broken.content
 
 
@@ -132,12 +132,12 @@ async def test_an_empty_or_failed_search_is_tried_again(tmp_path):
         return answer
 
     tools = ShellFilesTools(tmp_path, web_tools=web.Web(search=flaky, retry_delay=0))
-    out = await run(tools, tmp_path, "web_search", query="worlds")
+    out = await run(tools, tmp_path, "WebSearch", query="worlds")
     assert not out.is_error and "1. Found" in out.content and len(calls) == 3
 
 
 async def test_fetch_extracts_the_main_text_as_markdown(tools, tmp_path):
-    out = await run(tools, tmp_path, "web_fetch", url="https://example.com/article")
+    out = await run(tools, tmp_path, "WebFetch", url="https://example.com/article")
     assert not out.is_error, out.content
     assert out.content.startswith("URL: https://example.com/article\n" + web.UNTRUSTED)
     assert "TaskGroup waits for every task" in out.content
@@ -146,7 +146,7 @@ async def test_fetch_extracts_the_main_text_as_markdown(tools, tmp_path):
 
 
 async def test_fetch_follows_redirects_and_reports_the_final_url(tools, tmp_path):
-    out = await run(tools, tmp_path, "web_fetch", url="https://example.com/moved")
+    out = await run(tools, tmp_path, "WebFetch", url="https://example.com/moved")
     assert out.content.startswith("URL: https://other.example/article")
 
 
@@ -154,24 +154,24 @@ async def test_fetch_connects_to_the_address_it_checked(tools, tmp_path):
     """No second lookup at connect time, so a name cannot be switched to a local address
     between the check and the request (DNS rebinding)."""
     connections.clear()
-    await run(tools, tmp_path, "web_fetch", url="https://example.com/data.json")
+    await run(tools, tmp_path, "WebFetch", url="https://example.com/data.json")
     assert connections == [("93.184.215.14", "example.com", "example.com")]
-    await run(tools, tmp_path, "web_fetch", url="http://[2606:4700::1111]:8080/data.json")
+    await run(tools, tmp_path, "WebFetch", url="http://[2606:4700::1111]:8080/data.json")
     assert connections[-1] == ("2606:4700::1111", "[2606:4700::1111]:8080", None)
 
 
 async def test_fetch_returns_text_and_json_as_they_are(tools, tmp_path):
-    out = await run(tools, tmp_path, "web_fetch", url="https://example.com/data.json")
+    out = await run(tools, tmp_path, "WebFetch", url="https://example.com/data.json")
     assert '"a": [\n    1,' in out.content
 
 
 async def test_fetch_cuts_long_pages_and_continues_at_start(tools, tmp_path):
-    first = await run(tools, tmp_path, "web_fetch", url="https://example.com/long.txt")
+    first = await run(tools, tmp_path, "WebFetch", url="https://example.com/long.txt")
     assert f"call again with start={web.MAX_PAGE_CHARS}" in first.content
-    rest = await run(tools, tmp_path, "web_fetch", url="https://example.com/long.txt",
+    rest = await run(tools, tmp_path, "WebFetch", url="https://example.com/long.txt",
                      start=web.MAX_PAGE_CHARS)
     assert rest.content.endswith("\n" + "x" * 500)
-    past = await run(tools, tmp_path, "web_fetch", url="https://example.com/long.txt",
+    past = await run(tools, tmp_path, "WebFetch", url="https://example.com/long.txt",
                      start=10**6)
     assert past.is_error and "past the end" in past.content
 
@@ -187,7 +187,7 @@ async def test_fetch_cuts_long_pages_and_continues_at_start(tools, tmp_path):
     ("ftp://example.com/x", "not an http or https address"),
 ])
 async def test_fetch_refuses_local_addresses_and_other_schemes(tools, tmp_path, url, message):
-    out = await run(tools, tmp_path, "web_fetch", url=url)
+    out = await run(tools, tmp_path, "WebFetch", url=url)
     assert out.is_error and message in out.content
 
 
@@ -199,7 +199,7 @@ async def test_fetch_refuses_local_addresses_and_other_schemes(tools, tmp_path, 
     ("/file.pdf", "application/pdf"),
 ])
 async def test_fetch_failures_are_error_results(tools, tmp_path, path, message):
-    out = await run(tools, tmp_path, "web_fetch", url=f"https://example.com{path}")
+    out = await run(tools, tmp_path, "WebFetch", url=f"https://example.com{path}")
     assert out.is_error and message in out.content
 
 
@@ -209,7 +209,7 @@ async def test_a_network_error_is_an_error_result(tmp_path):
 
     tools = ShellFilesTools(tmp_path, web_tools=web.Web(
         transport=httpx2.MockTransport(fail), resolve=fake_resolve))
-    out = await run(tools, tmp_path, "web_fetch", url="https://example.com/")
+    out = await run(tools, tmp_path, "WebFetch", url="https://example.com/")
     assert out.is_error and "could not be read" in out.content
 
 

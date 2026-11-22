@@ -465,7 +465,7 @@ def test_a_page_that_begins_with_a_result_leaves_it_to_the_page_before():
     call, when the earlier page is loaded, and never as a step of its own."""
     from kadence.frontends.desktop.viewmodel import ToolItem
 
-    call_ = ToolCall("c1", "read_file", {"path": "a.txt"})
+    call_ = ToolCall("c1", "Read", {"file_path": "a.txt"})
     older = [Message("u1", Role.USER, (Text("read it"),), 0.0),
              Message("a1", Role.ASSISTANT, (call_,), 0.0)]
     newer = [Message("t1", Role.TOOL, (ToolResult("c1", ToolStatus.OK, "the text"),), 0.0),
@@ -476,7 +476,7 @@ def test_a_page_that_begins_with_a_result_leaves_it_to_the_page_before():
     assert model.oldest_id == "a2"  # the result is asked for again, with the page before
     model.prepend([*older, newer[0]], page_size=3)
     [step] = of(model, ToolItem)
-    assert (step.name, step.content) == ("read_file", "the text")
+    assert (step.name, step.content) == ("Read", "the text")
 
 
 def test_thinking_before_and_after_a_plan_update_is_one_line():
@@ -746,11 +746,11 @@ def test_relative_dates():
 
 
 def test_a_tool_call_with_a_description_shows_it_as_its_title():
-    tool = ToolItem("c", "shell", '{"command": "ls -la", "step_summary": "List the files"}')
+    tool = ToolItem("c", "Bash", '{"command": "ls -la", "step_summary": "List the files"}')
     assert tool.summary == "List the files" and tool.detail == "ls -la"
     plain = ToolItem("c", "remember", '{"text": "Studies CS at UCL"}')
     assert plain.summary == "Studies CS at UCL" and plain.sentence is None
-    streaming = ToolItem("c", "shell", '{"command": "ls')
+    streaming = ToolItem("c", "Bash", '{"command": "ls')
     assert streaming.summary == '{"command": "ls'
 
 

@@ -267,7 +267,7 @@ async def test_memory_keeps_attachments_and_searches_a_files_text_not_image_data
 
 
 def _exchange(*attached: object) -> list[Message]:
-    call = ToolCall("c1", "read_file", {"path": "shot.png"})
+    call = ToolCall("c1", "Read", {"file_path": "shot.png"})
     return [_message(Text("look at it")),
             Message("a", Role.ASSISTANT, (call,), time.time()),
             Message("t", Role.TOOL, (ToolResult("c1", ToolStatus.OK, "Read shot.png.",
@@ -347,16 +347,16 @@ async def test_the_file_tool_shows_a_picture_and_on_request_a_pdfs_pages(
     tools = ShellFilesTools(workspace)
 
     async def read(**arguments: object) -> ToolOutput:
-        return await tools.execute(ToolCall("c", "read_file", arguments),
+        return await tools.execute(ToolCall("c", "Read", arguments),
                                    RecordingContext("c"))
 
-    picture = await read(path="shot.png")
+    picture = await read(file_path="shot.png")
     assert picture.attachments == (Image("image/png", base64.b64encode(PNG).decode(),
                                          "shot.png"),)
     assert "shot.png" in picture.content
-    text = await read(path="report.pdf")
+    text = await read(file_path="report.pdf")
     assert not text.attachments and "[Page 2]\nCosts fell in April" in text.content
-    part = await read(path="report.pdf", pages="2-3", view=True)  # the pages, when asked for
+    part = await read(file_path="report.pdf", pages="2-3", view=True)  # the pages, when asked for
     [some] = part.attachments
     assert some.pages == 2 and "Sales rose" not in some.text and "Outlook for May" in some.text
     assert part.content == "[PDF, 3 pages; pages 2-3 attached]"

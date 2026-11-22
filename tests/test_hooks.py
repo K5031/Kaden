@@ -25,9 +25,9 @@ def script(tmp_path: Path, name: str, body: str) -> str:
 
 def tools() -> FakeTools:
     made = FakeTools()
-    made.instant("shell", "ran", read_only=False)
+    made.instant("Bash", "ran", read_only=False)
     made.instant("read", "the text")
-    made.confined_names = {"shell", "read"}  # in the work folder: nothing asks
+    made.confined_names = {"Bash", "read"}  # in the work folder: nothing asks
     return made
 
 
@@ -37,9 +37,9 @@ async def test_a_hook_before_a_call_can_refuse_it_with_its_reason(make: Any, tmp
         f"open({str(seen)!r}, 'a').write(json.dumps(call) + '\\n')\n"
         "if 'rm ' in call['arguments'].get('command', ''):\n"
         "    print('no deleting in this project', file=sys.stderr)\n"
-        "    sys.exit(2)\n")), tool="shell")
-    core = ScriptedCore([Step(calls=[call("shell", {"command": "rm -rf build"}, id="a"),
-                                     call("shell", {"command": "ls"}, id="b"),
+        "    sys.exit(2)\n")), tool="Bash")
+    core = ScriptedCore([Step(calls=[call("Bash", {"command": "rm -rf build"}, id="a"),
+                                     call("Bash", {"command": "ls"}, id="b"),
                                      call("read", id="c")]), Step(text="ok")])
     h: Harness = await make(core=core, tools=tools(), hooks=(hook,), permissions=PermissionPolicy.ALLOW_WORKSPACE)
     await h.start()
@@ -50,7 +50,7 @@ async def test_a_hook_before_a_call_can_refuse_it_with_its_reason(make: Any, tmp
     assert results["b"].status == ToolStatus.OK and results["c"].status == ToolStatus.OK
     calls = [json.loads(line) for line in seen.read_text().splitlines()]
     assert [c["arguments"] for c in calls] == [{"command": "rm -rf build"}, {"command": "ls"}]
-    assert calls[0]["tool"] == "shell" and calls[0]["when"] == "before"  # only its tool
+    assert calls[0]["tool"] == "Bash" and calls[0]["when"] == "before"  # only its tool
 
 
 async def test_a_hook_after_a_call_sees_its_result_and_can_add_to_it(make: Any, tmp_path):
@@ -59,7 +59,7 @@ async def test_a_hook_after_a_call_sees_its_result_and_can_add_to_it(make: Any, 
         "assert call['result']['content'].startswith('ran')\n"
         "print('2 style problems in main.py', file=sys.stderr)\n"
         "sys.exit(2)\n")))
-    core = ScriptedCore([Step(calls=[call("shell", {"command": "make"}, id="a")]),
+    core = ScriptedCore([Step(calls=[call("Bash", {"command": "make"}, id="a")]),
                          Step(text="ok")])
     h: Harness = await make(core=core, tools=tools(), hooks=(hook,), permissions=PermissionPolicy.ALLOW_WORKSPACE)
     await h.start()
@@ -75,7 +75,7 @@ async def test_a_hook_that_fails_or_hangs_does_not_stop_the_work(make: Any, tmp_
     monkeypatch.setattr("kadence.runtime.hooks.TIMEOUT_S", 0.5)
     broken = Hook("before", script(tmp_path, "broken", "sys.exit(1)\n"))
     slow = Hook("before", script(tmp_path, "slow", "import time\ntime.sleep(30)\n"))
-    core = ScriptedCore([Step(calls=[call("shell", {"command": "ls"}, id="a")]),
+    core = ScriptedCore([Step(calls=[call("Bash", {"command": "ls"}, id="a")]),
                          Step(text="ok")])
     h: Harness = await make(core=core, tools=tools(), hooks=(broken, slow), permissions=PermissionPolicy.ALLOW_WORKSPACE)
     await h.start()
@@ -113,6 +113,6 @@ def test_hooks_are_read_from_the_configuration(tmp_path):
     from kadence.__main__ import Launch, load_config
 
     (tmp_path / "config.toml").write_text(
-        '[[hooks]]\nwhen = "after"\ntool = "edit_file"\ncommand = "ruff format ."\n')
+        '[[hooks]]\nwhen = "after"\ntool = "Edit"\ncommand = "ruff format ."\n')
     assert load_config(Launch(tmp_path)).runtime.hooks == (
-        Hook("after", "ruff format .", tool="edit_file"),)
+        Hook("after", "ruff format .", tool="Edit"),)

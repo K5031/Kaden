@@ -62,7 +62,7 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def steps() -> list[Step]:
-    return [Step(calls=[call("shell", {"command": COMMAND}, id="c1")]), Step(text="Done.")]
+    return [Step(calls=[call("Bash", {"command": COMMAND}, id="c1")]), Step(text="Done.")]
 
 
 async def transcript(data_dir: Path) -> list[Any]:
@@ -76,7 +76,7 @@ async def transcript(data_dir: Path) -> list[Any]:
 
 def assert_wired(messages: list[Any], workspace: Path) -> None:
     assert [m.role for m in messages] == [Role.USER, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT]
-    assert messages[1].blocks == (ToolCall("c1", "shell", {"command": COMMAND}),)
+    assert messages[1].blocks == (ToolCall("c1", "Bash", {"command": COMMAND}),)
     [result] = messages[2].blocks
     assert isinstance(result, ToolResult) and result.status is ToolStatus.OK
     assert "wired" in result.content

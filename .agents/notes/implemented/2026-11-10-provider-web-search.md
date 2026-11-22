@@ -4,7 +4,7 @@ Status: implemented — a Core may offer tools its provider runs; with Claude, A
 
 ## Problem
 
-Kadence's own `web_search` goes through `ddgs`, which reads search engines' public pages
+Kadence's own `WebSearch` goes through `ddgs`, which reads search engines' public pages
 without an API. The engines turn some of those requests away, and `ddgs` then reports "No
 results found": common queries failed about one time in three (2026-11-10). Retrying lowers
 the misses but cannot remove them, and engines may block more over time. Anthropic runs web
@@ -17,7 +17,7 @@ about $10 per 1 000 searches.
 
 - `Core.list_tools()`, optional (default none): tools the provider runs during the
   request itself. The runtime offers them after its built-ins and Memory's and before the
-  Tools modules', so Kadence's own `web_search` (a Tools module's) is dropped while the
+  Tools modules', so Kadence's own `WebSearch` (a Tools module's) is dropped while the
   provider's is offered, and comes back when it is not. The runtime never runs, gates or
   counts them: they touch nothing on the user's computer. The Core turns each into the
   provider's own tool by name.
@@ -32,7 +32,7 @@ about $10 per 1 000 searches.
 
 ### The Anthropic Core
 
-- Offers `web_search`: `web_search_20260209` (dynamic filtering) where the model has it,
+- Offers `WebSearch`, sent as Anthropic's `web_search`: `web_search_20260209` (dynamic filtering) where the model has it,
   else `web_search_20250305`, at most 5 searches per request, $0.01 each.
 - Keeps every server-side block of a turn as the API sent it. With dynamic filtering the
   model runs code that calls the search, and the blocks refer to each other by id, so they

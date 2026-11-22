@@ -89,9 +89,9 @@ def test_an_attached_office_file_goes_with_its_text(tmp_path: Path):
 
 async def test_the_file_tool_reads_office_files_like_text(tools, workspace, tmp_path):  # noqa: F811
     make_xlsx(workspace / "sales.xlsx")
-    whole = await run(tools, tmp_path, "read_file", path="sales.xlsx")
-    assert whole.content.startswith("## Sheet: Sales\n| Region | Units |")
-    part = await run(tools, tmp_path, "read_file", path="sales.xlsx", offset=3, limit=1)
-    assert part.content.startswith("| North | 12 |") and "use offset 4" in part.content
+    whole = await run(tools, tmp_path, "Read", file_path="sales.xlsx")
+    assert whole.content.startswith("     1\t## Sheet: Sales\n     2\t| Region | Units |")
+    part = await run(tools, tmp_path, "Read", file_path="sales.xlsx", offset=3, limit=1)
+    assert part.content.startswith("     3\t| North | 12 |") and "use offset 4" in part.content
     (workspace / "broken.pptx").write_bytes(b"nope")
-    assert (await run(tools, tmp_path, "read_file", path="broken.pptx")).is_error
+    assert (await run(tools, tmp_path, "Read", file_path="broken.pptx")).is_error

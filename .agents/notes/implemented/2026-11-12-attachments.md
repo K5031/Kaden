@@ -45,7 +45,7 @@ apps (2026-11-12), with a small preview above the message box for images.
   text there and a picture in a user message right after the tool results (or as a line
   of text for a profile without vision). A result that arrives late, from a backgrounded
   call, is a text block in a user message and only names them.
-- **The file tool** uses that (`read_file`): a picture is shown to the model; a PDF is
+- **The file tool** uses that (`Read`): a picture is shown to the model; a PDF is
   read as the text of its pages under `[Page n]` marks, and with `view` goes as a
   document of the pages asked for, at most 20 per call, with that text; Word, Excel and PowerPoint files are converted to text and read by
   lines like any text file. This is how the agent looks at what it finds by itself, and
@@ -80,12 +80,12 @@ apps (2026-11-12), with a small preview above the message box for images.
 - **A PDF as its extracted text only.** Works with every provider and needs no block of
   its own, but loses what Claude reads from the pages themselves: tables, charts, scans.
   The text is kept in the block as the fallback.
-- **One way in: a dropped file as a path the model opens with `read_file`.** The runtime
+- **One way in: a dropped file as a path the model opens with `Read`.** The runtime
   would treat attachments like any tool call, with no `Tools.attach`. But every attachment
   would cost a model step, a file outside the work folder would ask for permission
   (unless attached paths were pre-approved, which is special treatment again), and the
   model might not open it.
-- **`read_file` shows a PDF's pages by default,** as Claude Code's Read does. Built first;
+- **`Read` shows a PDF's pages by default,** as Claude Code's Read does. Built first;
   but most PDFs read fine as text at a fraction of the cost, so the pages are on request.
 - **Tool results that stay text.** No contract change, but the agent could not look at a
   picture in a project or a scanned PDF it found.

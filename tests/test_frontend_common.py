@@ -37,11 +37,11 @@ def test_tightening_and_unrelated_changes_need_no_confirmation():
 def test_taking_back_a_never_is_loosening():
     from kadence.api import PermissionRule
 
-    never, always = PermissionRule("shell", "rm", allow=False), PermissionRule("web_fetch")
+    never, always = PermissionRule("Bash", "rm", allow=False), PermissionRule("WebFetch")
     current = settings(permission_rules=(never, always))
     assert loosening(current, SettingsUpdate(permission_rules=[never])) == []
     assert loosening(current, SettingsUpdate(permission_rules=[always])) == [
-        "asks again about what you said never to: shell: rm"]
+        "asks again about what you said never to: Bash: rm"]
 
 
 def test_raising_removing_and_loosening_are_each_named():
@@ -107,7 +107,7 @@ def test_a_prompt_says_what_the_call_does_and_where():
     from kadence.api import PermissionRequest, ToolCall
     from kadence.frontends.common import PERMISSION_LABELS, request_note
 
-    call = ToolCall("c", "shell", {})
+    call = ToolCall("c", "Bash", {})
     notes = {(read_only, confined): request_note(PermissionRequest("p", call, read_only, confined))
              for read_only in (True, False) for confined in (True, False)}
     assert notes[False, False] == "It may change things, and can reach outside the work folder."

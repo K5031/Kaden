@@ -127,8 +127,8 @@ async def test_an_answer_can_be_kept_for_every_conversation(make, qapp):
     from kadence.api import PermissionRule
 
     h: Harness = await make(permissions=PermissionPolicy.ASK)
-    h.tools.instant("shell", read_only=False)
-    h.core.add(Step(calls=[call("shell", {"command": "git status -s"})]), Step(text="ok"))
+    h.tools.instant("Bash", read_only=False)
+    h.core.add(Step(calls=[call("Bash", {"command": "git status -s"})]), Step(text="ok"))
     await h.start()
     window, controller, _ = await open_window(h)
     controller.send("look")
@@ -140,12 +140,12 @@ async def test_an_answer_can_be_kept_for_every_conversation(make, qapp):
     always.menu().actions()[0].trigger()
     await eventually(lambda: window.prompts.count() == 0 and not controller.model.busy)
     settings = await h.runtime.settings()
-    assert settings.permission_rules == (PermissionRule("shell", "git status"),)
+    assert settings.permission_rules == (PermissionRule("Bash", "git status"),)
 
     dialog = SettingsDialog(window, h.runtime, controller, settings, [], 0.0)
     dialog.open()
     assert [dialog.rules.item(i).text() for i in range(dialog.rules.count())] == [
-        "Always allow: shell: git status"]
+        "Always allow: Bash: git status"]
     dialog.rules.setCurrentRow(0)
     dialog.remove_rule.click()
     dialog._save()
@@ -535,8 +535,8 @@ async def test_the_folder_item_is_hidden_for_tools_with_a_fixed_folder(make, qap
 
 async def test_a_command_shows_its_description_with_the_command_behind_it(make, qapp):
     h: Harness = await make(permissions=PermissionPolicy.ASK)
-    h.tools.instant("shell", read_only=False)
-    h.core.add(Step(calls=[call("shell", {"command": "rm -rf build",
+    h.tools.instant("Bash", read_only=False)
+    h.core.add(Step(calls=[call("Bash", {"command": "rm -rf build",
                                           "step_summary": "Remove the old build"})]),
                Step(text="done"))
     await h.start()
@@ -549,7 +549,7 @@ async def test_a_command_shows_its_description_with_the_command_behind_it(make, 
     assert "rm -rf build" in texts  # what actually runs, on its own line
     [tool] = widgets(window, ToolCard)
     assert tool.title.text() == "Remove the old build"
-    assert tool.title.toolTip() == "shell: rm -rf build"
+    assert tool.title.toolTip() == "Bash: rm -rf build"
     assert tool.name.isHidden()  # the sentence says what the tool is
 
 

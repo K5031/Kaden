@@ -717,7 +717,7 @@ async def test_long_tool_output_is_shortened_for_the_summary_not_the_archive(ope
     log = "BUILDSTART " + "x" * 50_000 + " BUILDEND"
     body = "PAGESTART " + "y" * 50_000
     exchange = [
-        Message("call", Role.ASSISTANT, (ToolCall("c1", "write_file",
+        Message("call", Role.ASSISTANT, (ToolCall("c1", "Write",
                                                   {"path": "a", "content": body}),), time.time()),
         Message("res", Role.TOOL, (ToolResult("c1", ToolStatus.OK, log),), time.time()),
     ]

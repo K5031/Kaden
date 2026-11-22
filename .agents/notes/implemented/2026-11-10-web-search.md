@@ -17,8 +17,8 @@ in `kadence/tools/shell_files/web.py`:
 
 | Tool | Does | Returns |
 |---|---|---|
-| `web_search(query, max_results?)` | searches the web (default 8 results, at most 20) | numbered results: title, URL, snippet |
-| `web_fetch(url, start?)` | downloads one page and extracts its main text | the final URL and the text as Markdown, cut at 30 000 characters with a note to continue at `start` |
+| `WebSearch(query, max_results?)` | searches the web (default 8 results, at most 20) | numbered results: title, URL, snippet |
+| `WebFetch(url, start?)` | downloads one page and extracts its main text | the final URL and the text as Markdown, cut at 30 000 characters with a note to continue at `start` |
 
 - **Search backend:** [ddgs](https://pypi.org/project/ddgs/) (DuckDuckGo and other
   engines, no account or key). It is synchronous, so it runs in a thread with a 10 s
@@ -27,7 +27,7 @@ in `kadence/tools/shell_files/web.py`:
   to 5 redirects by hand; [trafilatura](https://pypi.org/project/trafilatura/) extracts
   the main content as Markdown with links and tables, in a thread. Plain text and JSON
   are returned as they are; other types (PDF, images) are an error.
-- **Public addresses only.** `web_fetch` refuses a host that resolves to a loopback,
+- **Public addresses only.** `WebFetch` refuses a host that resolves to a loopback,
   private or link-local address, checked at every redirect. The request goes to the
   address that was checked (`Host` header and TLS name kept), so a name cannot resolve to
   a public address for the check and a local one for the connection (DNS rebinding).

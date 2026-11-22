@@ -83,7 +83,7 @@ _OVERFLOW_MESSAGES = ("prompt is too long", "exceed context limit", "context win
 # Anthropic's own web search (Core.list_tools): run on Anthropic's side, $10 per 1 000
 # searches. Models with dynamic filtering take the newer version.
 WEB_SEARCH = ToolSpec(
-    "web_search",
+    "WebSearch",
     "Search the web for anything recent or that you are not sure of. Anthropic runs the "
     "search; link the pages your answer relies on.",
     {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
@@ -499,7 +499,7 @@ def search_tool(model: str) -> JSON:
     """Anthropic's web search for `model`, at most MAX_SEARCHES uses per request."""
     version = ("web_search_20260209" if model.startswith(_DYNAMIC_FILTERING)
                else "web_search_20250305")
-    return {"type": version, "name": WEB_SEARCH.name, "max_uses": MAX_SEARCHES}
+    return {"type": version, "name": "web_search", "max_uses": MAX_SEARCHES}
 
 
 def to_tool(spec: ToolSpec) -> JSON:

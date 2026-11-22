@@ -199,12 +199,12 @@ after every edit, and stop any command that deletes:
 ```toml
 [[hooks]]
 when = "after"
-tool = "edit_file"        # one tool by name; leave it out for every tool
+tool = "Edit"             # one tool by name (Bash, Read, Write, Edit, Glob, Grep, ...); leave it out for every tool
 command = "ruff format ."
 
 [[hooks]]
 when = "before"
-tool = "shell"
+tool = "Bash"
 command = "~/bin/no-deleting.sh"
 ```
 
