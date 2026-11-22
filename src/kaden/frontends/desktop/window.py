@@ -217,7 +217,7 @@ COLUMN_WIDTH = 780  # px: the conversation and the message box, centred
 RECENT_FOLDERS = 6  # a new chat's folder menu: its own and recent ones
 WINDOW_BUTTON = QSize(38, 28)  # minimize, maximize and close, at the header's top
 COPIED_MS = 1500  # a reply's copy button shows a tick this long
-SIDEBAR_WIDTH = 320  # px at 100%: room for a title and a sub-session's under it
+SIDEBAR_WIDTH = 288  # px at 100%, as Claude's: room for a title and a sub-session's under it
 TOOL_TONES = {ToolStatus.OK: "ok", ToolStatus.ERROR: "error", ToolStatus.ABANDONED: "warning",
               ToolStatus.TIMED_OUT: "warning", ToolStatus.INTERRUPTED: "warning"}
 # Item data the sidebar and memory rows are drawn from.
@@ -2236,7 +2236,7 @@ class MainWindow(QMainWindow):
 
         self.composer = QFrame(objectName="composer")
         box = QVBoxLayout(self.composer)  # what is attached, then the row to write in
-        box.setContentsMargins(6, 6, 6, 6)
+        box.setContentsMargins(10, 12, 10, 12)  # Claude's room around the text
         box.setSpacing(4)
         self.attachments = AttachmentStrip()
         box.addWidget(self.attachments)
@@ -2335,7 +2335,7 @@ class MainWindow(QMainWindow):
         column.addWidget(self.scroll, 1)
         column.addLayout(bottom_row)
 
-        splitter = QSplitter()
+        splitter = self.splitter = QSplitter()
         splitter.setHandleWidth(1)
         splitter.addWidget(sidebar)
         splitter.addWidget(main)
@@ -2523,7 +2523,13 @@ class MainWindow(QMainWindow):
         """Make everything larger (steps > 0), smaller, or its normal size (0)."""
         app = QApplication.instance()
         assert isinstance(app, QApplication)
-        theme.set_zoom(app, theme.zoom_step(theme.zoom(), steps) if steps else 1.0)
+        before = theme.zoom()
+        theme.set_zoom(app, theme.zoom_step(before, steps) if steps else 1.0)
+        # The sidebar grows and shrinks with everything else, as Claude's does, keeping the
+        # width the user dragged it to in proportion.
+        sidebar, rest = self.splitter.sizes()
+        wider = round(sidebar * theme.zoom() / before)
+        self.splitter.setSizes([wider, max(rest - (wider - sidebar), 0)])
 
     def set_theme(self, name: str) -> None:
         """Light, dark, or whatever the desktop is set to; remembered like the zoom."""

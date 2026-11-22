@@ -388,7 +388,7 @@ Design: [Agent Note](notes/proposed/2026-11-07-desktop-app.md).
 | Toolkit-free | `kaden.frontends.common`: permission labels, money formatting, `loosening()` |
 | Look | Fusion style plus a palette and style sheet from `theme.py`; light or dark from `QStyleHints.colorScheme()`, followed live |
 | Accent | Indigo `#5B5BD6` (light), `#8C8CF5` (dark); the rest neutral gray |
-| Text sizes | Relative to the system font: small 0.85×, title 1.15×, heading 1.45× |
+| Text sizes | Relative to the base text (15 px at 100%, `theme.BASE_PX`): small 0.85×, title 1.15×, heading 1.45× |
 | Sidebar row | Title (the title, else the first message, else "New chat"), date (time today, "Yesterday", weekday within a week, else "3 Nov", plus the year when not this year), and the first message as a second line when the title is not it |
 | Your messages | At most 75 % of the transcript's width |
 | Message box | Grows with its text to 6 lines |
@@ -607,6 +607,7 @@ Design: [Agent Note](notes/implemented/2026-11-10-step-descriptions.md).
 | Live title | The latest step not yet ended, with its state (preparing, running, in the background) |
 | Ended title | As Claude shows a finished run: the last step's sentence, and the problems counted by label beside it ("1 failed, 1 declined"). Drawn as Claude draws it: the words, muted, then a chevron (`ThinkingLine`, as for thinking); unfolded, each step is a rounded row (`#tool`, the card colour) with a small arrow on its left, the whole row opening its details |
 | Step text | As Claude shows a step: the model's `step_summary`, else `common.tool_sentence`: a phrase per Claude Code tool from its arguments ("Read main.py", "Search for “TODO” in src", "Fetch docs.python.org"), the tool's phrase alone while its input still arrives ("Run a command"), "Server: tool name" for a tool server's tool, "Use <name>" for any other; past tense once done. The raw input stays in the tooltip and the details. Permission and proposal cards use the same words |
+| Proportions | As Claude's app: text at 15 px at 100% zoom (`theme.BASE_PX`, whatever the desktop's font size), the sidebar 288 px at 100%, the conversation and message box 780 px wide, the message box padded 12 px above and below its text |
 | Cancel | The desktop group line has Cancel for its live step; each step keeps its own |
 | Step rows | No box; "done" is not shown, its duration is in the tooltip; other states stay visible |
 
@@ -773,9 +774,9 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Turn gap | Your message has 6 px more above it and 18 px more below it than the 12 px between items, so a new turn reads as one and Kaden's reply starts clearly apart from it (about 38 px, as in Claude) |
 | Reply text | Lines at 118% of the font's line spacing (about 1.6 em; 145% made them nearly double-spaced); inline code at 0.88 of the text size on the selection colour; a fenced code block at that size in one box of the selection colour with 10 px padding and corners of 8 px radius (a `QTextFrame` around its lines, which Qt makes paragraphs of; the view paints the box itself, since a frame's own background is square), its lines at normal height without space between them, long lines wrapped. A 22 px header in the box names the block's language at the left and has a copy button at the right, a child of the view placed over the frame, which shows a tick for 1.5 s. Code blocks that follow each other get an HTML comment between them before Qt reads the Markdown (`_code_blocks_apart`), since Qt makes one run of lines of them |
 | Syntax colours | Pygments (`desktop/syntax.py`), for a code block whose fence names a language Pygments knows; no guessing for the others. Six colours per theme: keyword, string, comment, number, name (functions, classes, decorators, attributes) and builtin; everything else keeps the text colour |
-| Sidebar look | Rows and New chat at 0.92 of the system font (the header title at 1.0, semi-bold), so the list reads lighter at any system size; the menu and New chat use drawn line icons like the window controls; sub-sessions hang on one thin guide line instead of a corner each; a working sub-session's dot has its own room, clear of the title |
+| Sidebar look | Rows and New chat at 0.92 of the base text (the header title at 1.0, semi-bold), so the list reads lighter at any system size; the menu and New chat use drawn line icons like the window controls; sub-sessions hang on one thin guide line instead of a corner each; a working sub-session's dot has its own room, clear of the title |
 | Folder picker | In the middle of a new chat, under its greeting, as an outlined button with the folder icon; only before its first message (and only when the Tools take a folder): the folder's name; its menu lists that folder (checked) and those of recent conversations, newest first, six in all, then Choose folder…. Picking one starts the new chat there |
-| Sidebar | Starts 320 px wide at 100% zoom, scaled with it; the divider can be dragged, and the width is not saved |
+| Sidebar | Starts 288 px wide at 100% zoom (as Claude's), scaled with it, and rescaled by each zoom change in proportion (a width the user dragged to included); the divider can be dragged, and the width is not saved |
 
 ## Compaction lines
 

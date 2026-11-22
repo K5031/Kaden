@@ -1452,7 +1452,7 @@ async def test_the_sidebar_starts_wide_enough_to_read_titles(make, qapp):
     window.show()
     await asyncio.sleep(0.05)
     sidebar = window.findChild(QSplitter).sizes()[0]
-    assert sidebar >= 320 * theme.zoom()
+    assert sidebar >= 288 * theme.zoom()
     window.close()
 
 
@@ -2122,3 +2122,31 @@ def test_the_thinking_line_counts_the_seconds_until_the_thinking_is_over(qapp):
     bubble.refresh()
     bubble._render()
     assert bubble.thinking.text() == "Thought for 1m 13s" and not bubble.ticking.isActive()
+
+
+
+def test_text_is_claudes_size_at_100_percent(qapp):
+    from PySide6.QtGui import QFontInfo
+
+    assert theme.zoom() == 1.0
+    assert QFontInfo(qapp.font()).pixelSize() == theme.BASE_PX
+
+
+async def test_zooming_rescales_the_sidebar_with_the_text(make, qapp, unzoomed):
+    from PySide6.QtWidgets import QSplitter
+
+    h: Harness = await make()
+    await h.start()
+    window, _, _ = await open_window(h)
+    window.resize(1600, 900)
+    window.show()
+    await asyncio.sleep(0.05)
+    splitter = window.findChild(QSplitter)
+    window.zoom(1)  # 110%
+    await asyncio.sleep(0.05)
+    assert splitter.sizes()[0] == pytest.approx(288 * 1.1, abs=2)
+    splitter.setSizes([400, 1200])  # the user dragged it wider
+    window.zoom(0)  # back to 100%: the dragged width shrinks by the same share
+    await asyncio.sleep(0.05)
+    assert splitter.sizes()[0] == pytest.approx(400 / 1.1, abs=2)
+    window.close()

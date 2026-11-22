@@ -75,6 +75,7 @@ _choice = "system"
 ZOOM_LEVELS = (0.67, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0)
 _zoom = 1.0
 _base_pt: float | None = None  # the app font's size before any zoom
+BASE_PX = 15  # the app's text at 100%, in pixels: Claude's, whatever the desktop's is
 
 
 def current() -> Palette:
@@ -120,7 +121,8 @@ def apply(app: QApplication, dark: bool | None = None) -> None:
         dark = system_is_dark() if _choice == "system" else _choice == "dark"
     _current = DARK if dark else LIGHT
     if _base_pt is None:
-        _base_pt = app.font().pointSizeF()
+        screen = app.primaryScreen()
+        _base_pt = BASE_PX * 72 / (screen.logicalDotsPerInch() if screen else 96)
     font = QFont(app.font())
     font.setPointSizeF(_base_pt * _zoom)
     app.setFont(font)
