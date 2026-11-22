@@ -9,6 +9,10 @@ config.toml and settings.toml, its spending limit and the conversation's work fo
 works on its task as a goal. Its permission prompts wait for the user, who answers them
 where the child is open. Each child's record (session.json) keeps it listed after a
 restart; opening a child that is not running starts it again on its conversation.
+
+With `isolation: "worktree"` a child works in its own git worktree of the conversation's
+repository, on a new branch (kadence.frontends.worktrees). When it ends, the worktree is
+removed if it has no changes, and kept with its branch if it has.
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ import shutil
 import sys
 import tomllib
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -57,7 +61,9 @@ from kadence.api import (
     ToolStatus,
     UsageUpdated,
 )
+from kadence.frontends import worktrees
 from kadence.frontends.remote import Channel, RemoteRuntime
+from kadence.frontends.worktrees import GitError, Worktree
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +85,11 @@ START = ToolSpec(
     "question if it needs one. With `run_in_background` you get on with other work and "
     "are told the outcome when it ends; several can run at once. The user can open and "
     "talk to each. Once the call has returned, you get a notice whenever it stops "
-    "working. Start one when the user asked for the work; when it is your own idea, "
-    "propose it (propose) instead.",
+    "working. With `isolation: \"worktree\"` it works in its own git worktree of the "
+    "repository, on a new branch, so its changes do not collide with yours or other "
+    "subagents'; a worktree it left unchanged is removed when it ends, and the result "
+    "names the path and branch of one it changed. Start one when the user asked for the "
+    "work; when it is your own idea, propose it (propose) instead.",
     {"type": "object",
      "properties": {
          "description": {"type": "string", "minLength": 1},
@@ -90,7 +99,10 @@ START = ToolSpec(
                         "description": "The most it may spend, in US dollars. Leave it "
                                        "out unless the task calls for a limit; the "
                                        "user's limit per sub-session, where they set "
-                                       "one, applies anyway."}},
+                                       "one, applies anyway."},
+         "isolation": {"type": "string", "enum": ["worktree"],
+                       "description": "\"worktree\": a git worktree of its own. The "
+                                      "folder must be in a git repository."}},
      "required": ["description", "prompt"]},
     timeout=math.inf,
     foreground=True,
@@ -156,6 +168,7 @@ class SubSession:
     archived: bool = False
     has_goal: bool = False  # its goal is not reached yet
     budget_usd: float | None = None  # its own spending limit; None: none
+    worktree: Worktree | None = None  # with isolation "worktree"
     step: str | None = field(default=None, compare=False)  # what it is doing now
     messages: list[Message] = field(default_factory=list, compare=False)
     returncode: int | None = field(default=None, compare=False)
@@ -219,9 +232,10 @@ class SubSession:
 
     def record(self) -> dict[str, Any]:
         """What session.json keeps."""
-        return {k: getattr(self, k) for k in (
+        return {**{k: getattr(self, k) for k in (
             "id", "task", "conversation_id", "state", "report", "question", "failure",
-            "spent", "child_conversation_id", "title", "archived", "has_goal", "budget_usd")}
+            "spent", "child_conversation_id", "title", "archived", "has_goal", "budget_usd")},
+            "worktree": asdict(self.worktree) if self.worktree is not None else None}
 
 
 class SubSessions(Tools):
@@ -237,6 +251,8 @@ class SubSessions(Tools):
         self._next = max((int(s.id) for s in self.sessions if s.id.isdigit()), default=0) + 1
         self.limit_usd = self._read_limit()
         self._closing: set[asyncio.Task[None]] = set()
+        self._ending: dict[str, asyncio.Task[None]] = {}  # a child's _ended, while it runs
+        self._git = asyncio.Lock()  # one worktree added or removed at a time
         self._saved: dict[str, dict[str, Any]] = {s.id: s.record() for s in self.sessions}
         self._write: asyncio.Future[None] | None = None
         # Notices for parent conversations: a child ended a turn nobody was waiting for.
@@ -301,9 +317,12 @@ class SubSessions(Tools):
             await self.delete(session)
 
     async def delete(self, session: SubSession) -> None:
-        """Stop it and erase its folder for good."""
+        """Stop it and erase its folder for good; a worktree it changed is kept."""
         if (channel := self._unhear(session)) is not None:
             await channel.close(STOP_GRACE_S)
+        if (ending := self._ending.get(session.id)) is not None:
+            await asyncio.gather(ending, return_exceptions=True)
+        await self._tidy(session)
         if self._write is not None:
             await asyncio.gather(self._write, return_exceptions=True)
         await asyncio.to_thread(shutil.rmtree, session.data_dir, True)
@@ -366,8 +385,20 @@ class SubSessions(Tools):
             budget = args.get("budget_usd", self.limit_usd)
             if budget is not None and self.limit_usd is not None:
                 budget = min(budget, self.limit_usd)
+            worktree = None
+            if args.get("isolation") == "worktree":
+                if self._folder is None:
+                    return ToolOutput("Isolation \"worktree\" needs the conversation's "
+                                      "folder to be in a git repository; it has none.",
+                                      is_error=True)
+                try:
+                    worktree = await worktrees.plan(
+                        self._folder, f"agent-{ctx.conversation_id[:8]}-{self._next}")
+                except GitError as e:
+                    return ToolOutput(f"Isolation \"worktree\" needs a git repository: "
+                                      f"{e}.", is_error=True)
             session = await self._new(args["prompt"], budget, ctx.conversation_id,
-                                      args.get("description"))
+                                      args.get("description"), worktree)
         else:
             session = next((s for s in self.sessions if s.id == args["to"]), None)
             if session is None:
@@ -397,12 +428,13 @@ class SubSessions(Tools):
     # ── Children ──────────────────────────────────────────────────────────
 
     async def _new(self, task: str, budget: float | None, conversation_id: str,
-                   title: str | None = None) -> SubSession:
+                   title: str | None = None, worktree: Worktree | None = None) -> SubSession:
         session_id = str(self._next)
         self._next += 1
         folder = self.data_dir / "sessions" / f"{conversation_id[:8]}-{session_id}"
         session = SubSession(session_id, task, conversation_id, folder, has_goal=True,
-                             budget_usd=budget, title=(title or "").strip() or None)
+                             budget_usd=budget, title=(title or "").strip() or None,
+                             worktree=worktree)
         await asyncio.to_thread(folder.mkdir, parents=True)
         self.sessions.append(session)
         self._set(session)
@@ -411,7 +443,6 @@ class SubSessions(Tools):
     async def _launch(self, session: SubSession) -> None:
         self._set(session, state="starting")
         try:
-            await asyncio.to_thread(self._prepare, session.data_dir, session.budget_usd)
             live = await self._spawn(session, resume=False)
             info = await live.channel.request("start")
             session.child_conversation_id = info["id"]
@@ -427,8 +458,13 @@ class SubSessions(Tools):
         self._follow(session)
         self._set(session)
 
-    def _prepare(self, folder: Path, budget: float | None) -> None:
+    def _work_folder(self, session: SubSession) -> Path | None:
+        """Where it works: its worktree's folder, else the conversation's."""
+        return Path(session.worktree.folder) if session.worktree is not None else self._folder
+
+    def _prepare(self, session: SubSession) -> None:
         """The child's data folder: the parent's configuration, its limit and folder."""
+        folder, budget = session.data_dir, session.budget_usd
         folder.mkdir(parents=True, exist_ok=True)
         config = self.data_dir / "config.toml"
         if config.exists():
@@ -437,8 +473,8 @@ class SubSessions(Tools):
         settings = tomllib.loads(settings_file.read_text()) if settings_file.exists() else {}
         # Only its own limit, if it has one: not the parent's.
         settings["budget"] = {} if budget is None else {"max_cost_usd": budget}
-        if self._folder is not None:
-            settings["work_folder"] = str(self._folder)
+        if (work_folder := self._work_folder(session)) is not None:
+            settings["work_folder"] = str(work_folder)
         (folder / "settings.toml").write_text(tomli_w.dumps(settings))
 
     async def _running(self, session: SubSession) -> RemoteRuntime:
@@ -449,14 +485,24 @@ class SubSessions(Tools):
         return live
 
     async def _spawn(self, session: SubSession, *, resume: bool) -> RemoteRuntime:
+        """Start its process: first its data folder, or its worktree again when its
+        unchanged one was removed. Under the worktree lock, so no tidying removes the
+        worktree before the process holds it (session.live)."""
         command = [*self.command, "--headless", "--data-dir", str(session.data_dir)]
         if resume and session.child_conversation_id is not None:
             command += ["--conversation", session.child_conversation_id]
-        process = await asyncio.create_subprocess_exec(
-            *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, cwd=self._folder or session.data_dir,
-            limit=16 * 1024 * 1024)
-        session.live = RemoteRuntime(Channel(process), functools.partial(self._event, session))
+        async with self._git:
+            if (worktree := session.worktree) is not None and not await asyncio.to_thread(
+                    Path(worktree.path).exists):
+                await worktrees.add(worktree)
+            if not resume:
+                await asyncio.to_thread(self._prepare, session)
+            process = await asyncio.create_subprocess_exec(
+                *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=self._work_folder(session) or session.data_dir, limit=16 * 1024 * 1024)
+            session.live = RemoteRuntime(Channel(process),
+                                         functools.partial(self._event, session))
         return session.live
 
     async def _wait(self, session: SubSession, ctx: ToolContext) -> ToolOutput:
@@ -475,7 +521,15 @@ class SubSessions(Tools):
             session.awaited -= 1
         if session.state == "done" and not self._viewers.get(session.id):
             self._close(session)
-        return ToolOutput(self._outcome(session), is_error=session.state == "failed")
+        if (ending := self._ending.get(session.id)) is not None:
+            await asyncio.shield(ending)  # its process quits, and its worktree is tidied
+        text = self._outcome(session)
+        if (worktree := session.worktree) is not None:
+            if await asyncio.to_thread(Path(worktree.path).exists):
+                text += f"\nIts worktree: {worktree.path}, on branch {worktree.branch}."
+            else:
+                text += "\nIt changed nothing, so its worktree was removed."
+        return ToolOutput(text, is_error=session.state == "failed")
 
     def _outcome(self, session: SubSession) -> str:
         match session.state:
@@ -552,10 +606,28 @@ class SubSessions(Tools):
         self.notes.setdefault(session.conversation_id, []).append(note)
 
     async def _ended(self, session: SubSession, channel: Channel) -> None:
-        session.returncode = await channel.close(STOP_GRACE_S)
-        if session.running:  # it ended by itself
-            self._set(session, state="failed", failure=self._why(None, channel))
-        self._set(session)
+        try:
+            session.returncode = await channel.close(STOP_GRACE_S)
+            if session.running:  # it ended by itself
+                self._set(session, state="failed", failure=self._why(None, channel))
+            await self._tidy(session)
+            self._set(session)
+        finally:
+            if self._ending.get(session.id) is asyncio.current_task():
+                del self._ending[session.id]
+
+    async def _tidy(self, session: SubSession) -> None:
+        """Remove its worktree, with its branch, if it has no changes and no process."""
+        if (worktree := session.worktree) is None:
+            return
+        async with self._git:
+            try:
+                if (session.live is None
+                        and await asyncio.to_thread(Path(worktree.path).exists)
+                        and not await worktrees.changed(worktree)):
+                    await worktrees.remove(worktree)
+            except GitError as e:
+                logger.warning("worktree %s not tidied: %s", worktree.path, e)
 
     def _unhear(self, session: SubSession) -> Channel | None:
         """Stop listening to its process, if it has one: the channel is then the caller's
@@ -570,6 +642,7 @@ class SubSessions(Tools):
         if (channel := self._unhear(session)) is not None:
             task = asyncio.create_task(self._ended(session, channel))
             self._closing.add(task)
+            self._ending[session.id] = task
             task.add_done_callback(self._closing.discard)
 
     @staticmethod
@@ -586,7 +659,9 @@ class SubSessions(Tools):
         for record in sorted((self.data_dir / "sessions").glob(f"*/{RECORD}")):
             try:
                 data = json.loads(record.read_text())
-                session = SubSession(data_dir=record.parent, **data)
+                worktree = data.pop("worktree", None)
+                session = SubSession(data_dir=record.parent, **data,
+                                     worktree=Worktree(**worktree) if worktree else None)
             except (OSError, ValueError, TypeError):
                 logger.warning("unreadable sub-session record %s", record)
                 continue

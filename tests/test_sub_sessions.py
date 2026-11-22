@@ -4,6 +4,7 @@ for self-contained tasks; each reports back and can be watched while it works.""
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -25,7 +26,8 @@ def finish(report: str) -> dict[str, Any]:
 
 
 async def parent(make: Any, tmp_path: Path, steps: list[Step], child_script: list[Any],
-                 child_runtime: dict[str, Any] | None = None) -> tuple[Harness, SubSessions]:
+                 child_runtime: dict[str, Any] | None = None, folder: Path | None = None
+                 ) -> tuple[Harness, SubSessions]:
     data = tmp_path / "parent"
     data.mkdir()
     (data / "config.toml").write_text(tomli_w.dumps({
@@ -36,7 +38,7 @@ async def parent(make: Any, tmp_path: Path, steps: list[Step], child_script: lis
     h: Harness = await make(core=ScriptedCore(steps), data_dir=data, more_tools=[sessions],
                             permissions=PermissionPolicy.ASK)
     h.auto_approve()
-    await h.start(folder=str(tmp_path))
+    await h.start(folder=str(folder or tmp_path))
     return h, sessions
 
 
@@ -437,3 +439,94 @@ async def test_an_agent_in_the_foreground_is_waited_for_and_named_by_its_descrip
     assert result.status == ToolStatus.OK and "Haiku written." in result.content
     [child] = sessions.sessions
     assert (child.title, child.task) == ("Haiku", "Write a haiku")
+
+
+# ── Worktrees ─────────────────────────────────────────────────────────────
+
+
+def git(folder: Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(folder), "-c", "user.name=t", "-c",
+                           "user.email=t@example.com", *args], check=True,
+                          capture_output=True, text=True).stdout
+
+
+def repository(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    (repo / "sub").mkdir(parents=True)
+    (repo / "sub" / "a.txt").write_text("a\n")
+    git(repo, "init", "-q", "-b", "main")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "first")
+    return repo
+
+
+def isolated(prompt: str, **more: Any) -> dict[str, Any]:
+    return {"description": prompt, "prompt": prompt, "isolation": "worktree", **more}
+
+
+async def test_a_subagent_that_changes_nothing_leaves_no_worktree(make, tmp_path, child_env):
+    repo = repository(tmp_path)
+    h, sessions = await parent(make, tmp_path, [
+        Step(calls=[call("Agent", isolated("Read the code"), id="s")]),
+        Step(text="Read.")],
+        [finish("Nothing to change."), {"text": "Done."}], folder=repo / "sub")
+    await asyncio.wait_for(h.turn("Read it"), 60)
+    [child] = sessions.sessions
+    name = f"agent-{h.conversation.id[:8]}-1"
+    worktree = repo / ".claude" / "worktrees" / name
+    settings = tomllib.loads((child.data_dir / "settings.toml").read_text())
+    assert settings["work_folder"] == str(worktree / "sub")  # the same place inside it
+    result = (await h.results())["s"]
+    assert result.status == ToolStatus.OK and "Nothing to change." in result.content
+    assert "removed" in result.content
+    assert not worktree.exists()
+    assert git(repo, "branch", "--list", f"worktree-{name}") == ""
+    assert name not in git(repo, "worktree", "list")
+
+    remote = await sessions.open(child)  # opening it again adds the worktree again
+    assert (worktree / "sub" / "a.txt").read_text() == "a\n"
+    sessions.release(child, remote)
+    await eventually(lambda: not worktree.exists(), timeout=20)  # and it is removed again
+
+
+async def test_a_subagents_changes_stay_in_its_worktree(make, tmp_path, child_env):
+    repo = repository(tmp_path)
+    h, sessions = await parent(make, tmp_path, [
+        Step(calls=[call("Agent", isolated("Change the code", run_in_background=True),
+                         id="s")]),
+        Step(text="Started."),
+        Step(calls=[call("SendMessage", {"to": "1", "message": "Go on."}, id="m")]),
+        Step(text="Answered."),
+        Step(text="Changed.")],
+        [{"calls": [{"name": "ask_for_help", "arguments": {"question": "Ready?"}}]},
+         {"text": "Waiting."}, finish("Changed a.txt."), {"text": "Done."}],
+        folder=repo)
+    await h.turn("Change it")
+    child = await eventually(lambda: sessions.sessions and sessions.sessions[0].state
+                             == "waiting" and sessions.sessions[0], timeout=30)
+    name = f"agent-{h.conversation.id[:8]}-1"
+    worktree = repo / ".claude" / "worktrees" / name
+    (worktree / "sub" / "a.txt").write_text("b\n")  # what the subagent changed
+    assert (repo / "sub" / "a.txt").read_text() == "a\n"  # not in the parent's checkout
+    answered = await eventually(lambda: outcome(h.store.conversations[h.conversation.id]
+                                                .messages, "m"), timeout=30)
+    assert "Changed a.txt." in answered.content
+    assert str(worktree) in answered.content and f"worktree-{name}" in answered.content
+    await eventually(lambda: child.returncode is not None, timeout=15)
+    assert worktree.exists() and git(repo, "branch", "--list", f"worktree-{name}")
+    await eventually(lambda: [s.worktree for s in SubSessions(h.data_dir).sessions]
+                     == [child.worktree], timeout=10)  # its record keeps it
+    await sessions.delete(child)  # its changes are the user's: deleting it keeps them
+    assert (worktree / "sub" / "a.txt").read_text() == "b\n"
+
+
+async def test_isolation_outside_a_git_repository_is_an_error(make, tmp_path, child_env):
+    folder = tmp_path / "plain"
+    folder.mkdir()
+    h, sessions = await parent(make, tmp_path, [
+        Step(calls=[call("Agent", isolated("Change the code"), id="s")]),
+        Step(text="No.")], [], folder=folder)
+    await asyncio.wait_for(h.turn("Go"), 30)
+    result = (await h.results())["s"]
+    assert result.status == ToolStatus.ERROR and "git repository" in result.content
+    assert sessions.sessions == []

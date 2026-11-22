@@ -14,8 +14,8 @@ had no counterpart. The user asked for a complete match.
 ## Decision
 
 What counts is Claude Code's standard tool set, the one every session has. Its tools for
-features Kadence does not have (plan mode, worktrees, scheduled agents, teams, Monitor,
-workflows) are out of scope; so are the Claude app's own tools, which `propose` and
+features Kadence does not have (plan mode, `EnterWorktree` and `ExitWorktree`, scheduled
+agents, teams, Monitor, workflows) are out of scope; so are the Claude app's own tools, which `propose` and
 `wrap_up` already mirror, and Kadence's duty tools (`ask_for_help`, `finish_goal`), the
 Memory tools and `screenshot`, which have no counterpart.
 
@@ -28,7 +28,7 @@ optional parameter: a plan step's due time and note, a subagent's budget.
 | `TaskStop` | `task_id` | stops a background call, a subagent waited for by one, or withdraws a proposal |
 | `Skill` | `skill`, `args` | loads a skill |
 | `TodoWrite` | `todos`: `content`, `status` (pending, in_progress, completed), `activeForm`, `due`, `due_in_minutes`, `note` | the plan; a step no longer needed is left out (the user can still drop one); the checklist shows a step in progress by its `activeForm` |
-| `Agent` | `description`, `prompt`, `run_in_background`, `budget_usd` | a sub-session titled `description`; waited for until it ends unless `run_in_background` |
+| `Agent` | `description`, `prompt`, `run_in_background`, `isolation`, `budget_usd` | a sub-session titled `description`; waited for until it ends unless `run_in_background`; `isolation: "worktree"` gives it a git worktree ([subagents in worktrees](2026-11-22-subagents-in-worktrees.md)) |
 | `SendMessage` | `to`, `message` | answers or tells a subagent more, then waits for it |
 | `AskUserQuestion` | `questions`: `question`, `header`, `options` (`label`, `description`), `multiSelect` | ends the turn as `wrap_up` does; shown as a card, answered in the user's next message |
 | `ToolSearch` | `query`, `max_results` | loads deferred tools (below) |
