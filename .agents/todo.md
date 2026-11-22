@@ -5,7 +5,9 @@ Agent Note (`notes/proposed/`) and leaves this list.
 
 ## From the user
 
-- **A visual avatar for Kadence** (2026-11-21). What it is to look like and where it
-  shows is not said yet. The mascot was taken out on 2026-11-20 as unprofessional, so
-  this is something else than that.
+- **A visual avatar for Kadence** (2026-11-21), not urgent. The user wants a desktop pet:
+  a cute 2D anime chibi of their avatar (long orange hair, amber eyes, an orange flower
+  with a black ribbon, a white capelet dress) living on the desktop. Art drawn in code was
+  not good enough; it needs frames from an image model, which the user would make. Not the
+  old mascot.
 - **An upgraded tool system** (2026-11-21). What should be better is not said yet.
