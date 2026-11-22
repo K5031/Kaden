@@ -98,14 +98,14 @@ class DesktopFrontend(Frontend):
 
     async def _hand_over(self, data_dir: Path) -> None:
         """Another Kadence has the data folder: bring its window forward, or, when none
-        answers (a terminal has it), say so once."""
+        answers (one with no window has it), say so once."""
         from PySide6.QtWidgets import QMessageBox
 
         if await single.show_other(data_dir):
             return
         box = QMessageBox(QMessageBox.Icon.Information, "Kadence",
-                          "Kadence is already open, probably in a terminal. Quit it there, "
-                          "then open Kadence again.")
+                          "Kadence is already running without a window, using the same "
+                          "data. Quit it, then open Kadence again.")
         closed = asyncio.get_running_loop().create_future()
         box.finished.connect(lambda _: closed.done() or closed.set_result(None))
         box.open()

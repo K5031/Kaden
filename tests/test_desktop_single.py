@@ -71,6 +71,6 @@ async def test_with_no_window_to_bring_forward_one_message_says_why(tmp_path, qa
     await eventually(lambda: [b for b in qapp.topLevelWidgets()
                               if isinstance(b, QMessageBox) and b.isVisible()])
     [box] = [b for b in qapp.topLevelWidgets() if isinstance(b, QMessageBox) and b.isVisible()]
-    assert "terminal" in box.text()
+    assert "without a window" in box.text()
     box.buttons()[0].click()
     await asyncio.wait_for(run, 5)

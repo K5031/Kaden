@@ -419,7 +419,7 @@ def duty_status(duty: Duty | None, wake_at: float | None, state: AgentState,
     if wake_at is not None:
         return f"Duty: next check-in {_when(wake_at)}"
     if state in (AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED):
-        return "Duty paused: activate to resume"
+        return "Duty paused: send a message to resume"
     return "Duty: working"
 
 

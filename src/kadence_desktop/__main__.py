@@ -1,7 +1,7 @@
 """Briefcase app module: the bundle runs `python -m kadence_desktop`.
 
 The package's one program starts the window launcher, or, run as `kadence` or `kd` (links
-the package adds), the terminal launcher."""
+the package adds), the command's launcher, which opens the app or runs headless."""
 
 import sys
 from pathlib import Path

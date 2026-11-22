@@ -1,8 +1,8 @@
 """A launcher for Kadence in the Linux app menu, for an install that is not a bundle.
 
 A desktop entry and an icon in the user's XDG data directory, which desktops pick up by
-themselves. The entry starts the window launcher with this install's Python: a menu has
-no terminal for `kadence` to run a terminal frontend in.
+themselves. The entry starts the window launcher with this install's Python, which runs
+the app in its own process.
 
 The icon's name carries a hash of its content: desktops cache icons by name (KDE keeps
 showing a replaced file), so a new icon gets a new name and older ones are removed. KDE's

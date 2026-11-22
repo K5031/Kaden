@@ -651,7 +651,7 @@ Design: [Agent Note](notes/implemented/2026-11-10-provider-web-search.md).
 |---|---|
 | Asking | A desktop app that finds the data folder in use (`Settings.already_open`) connects to the open app's Unix socket and sends `show`; the open app brings its window forward (show normal, raise, activate) and the second exits without a window. Asyncio sockets, so it works on any loop |
 | Socket | `$XDG_RUNTIME_DIR` (else the temp folder) `/kadence-<first 16 hex of SHA-256 of the data folder's path>.sock`, short enough for a socket name; a stale one is replaced when the next app listens, and it is removed on close |
-| No answer | Another Kadence has the folder, such as a headless one (or a crash left it locked): one message, "Kadence is already open, probably in a terminal…", then the app closes |
+| No answer | Another Kadence has the folder, such as a headless one (or a crash left it locked): one message, "Kadence is already running without a window…", then the app closes |
 | Raising | Desktops may refuse to give a background program's window focus (KDE's focus-stealing prevention); the window then asks for attention in the task bar instead |
 
 ## Duties

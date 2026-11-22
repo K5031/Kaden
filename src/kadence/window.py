@@ -1,9 +1,9 @@
 """The window launcher, which `kadence` hands over to and the desktop bundle runs.
 
-It reads config.toml and settings.toml like `kadence`, runs the saved frontend when it is a
-window frontend (else the desktop app), each on the event loop its factory names, and
-roots the Tools at ~/Kadence unless a work folder is set: a double-clicked app's working
-directory is meaningless. Restart now starts the instance again in this process, or on
+It reads config.toml and settings.toml like `kadence`, and runs the saved frontend when it
+is a window frontend (else the desktop app), each on the event loop its factory names. The
+Tools start in the folder it is started in, or the saved work folder; each chat is then
+given a folder of its own. Restart now starts the instance again in this process, or on
 another loop when the next frontend needs one. Nothing here assumes a GUI toolkit.
 """
 
