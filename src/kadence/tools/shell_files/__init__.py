@@ -134,13 +134,15 @@ FILE_SPECS: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         name="write_file",
-        description="Create or overwrite a text file, creating parent directories.",
+        description="Create or overwrite a text file, creating parent directories. A file that is "
+            "there must have been read in this conversation, and be unchanged since.",
         parameters=_object({"path": _STRING, "content": _STRING}, ["path", "content"]),
     ),
     ToolSpec(
         name="edit_file",
         description=(
-            "Replace an exact string in a file. `old_string` must occur exactly once unless "
+            "Replace an exact string in a file, which must have been read in this "
+            "conversation and be unchanged since. `old_string` must occur exactly once unless "
             "`replace_all` is true."
         ),
         parameters=_object(
@@ -264,6 +266,9 @@ class ShellFilesTools(Tools):
                                    stall_timeout=shell_stall_timeout)
         self._web = web_tools or web.Web()
         self._screen = screen_tools or screen.Screen.found()
+        # Each conversation's files as it last read or wrote them: (conversation, file)
+        # to what _version says of it.
+        self._seen: dict[tuple[str, Path], tuple[int, int, int]] = {}
         self._set_root(self._default)
         self._handlers: dict[str, Callable[[dict[str, Any], ToolContext], Awaitable[str]]] = {
             "shell": self._shell,
@@ -464,6 +469,7 @@ class ShellFilesTools(Tools):
         limit = args.get("limit", MAX_READ_LINES)
         if await asyncio.to_thread(path.is_dir):
             raise ToolError(f"{self._display(path)} is a directory")
+        await asyncio.to_thread(self._saw, path, ctx)
         if path.suffix.lower() in attachments.IMAGE_TYPES:
             return await asyncio.to_thread(self._read_image, path, ctx)
         if path.suffix.lower() == ".pdf":
@@ -565,15 +571,42 @@ class ShellFilesTools(Tools):
                          "them with view true to look at them.]")
         return "\n".join(parts)
 
+    def _as_read(self, path: Path, ctx: ToolContext) -> None:
+        """Refuse to change a file that is there unless the conversation read it and it
+        is as it was then: a change made meanwhile (by the user, a command) would be
+        overwritten unseen. Blocking."""
+        try:
+            now = _version(path)
+        except FileNotFoundError:
+            return  # a new file
+        seen = self._seen.get((ctx.conversation_id, path.resolve()))
+        if seen is None:
+            raise ToolError(f"Read {self._display(path)} first: you have not read it in "
+                            "this conversation.")
+        if seen != now:
+            raise ToolError(f"{self._display(path)} changed since you read it; read it "
+                            "again before changing it.")
+
+    def _saw(self, path: Path, ctx: ToolContext) -> None:
+        """The conversation knows the file as it is now. Blocking."""
+        try:
+            self._seen[(ctx.conversation_id, path.resolve())] = _version(path)
+        except OSError:
+            pass
+
     async def _write_file(self, args: dict[str, Any], ctx: ToolContext) -> str:
         path = self._path(args["path"])
         content: str = args["content"]
 
         def write() -> None:
+            existed = os.path.lexists(path)
             self._within(path.parent, ctx).mkdir(parents=True, exist_ok=True)
             with open(self._open(path, os.O_WRONLY | os.O_CREAT, ctx), "w", encoding="utf-8") as f:
+                if existed:  # checked once it is open: where it leads is refused first
+                    self._as_read(path, ctx)
                 f.truncate()
                 f.write(content)
+            self._saw(path, ctx)
 
         await asyncio.to_thread(write)
         return f"Wrote {len(content)} characters to {self._display(path)}"
@@ -585,6 +618,7 @@ class ShellFilesTools(Tools):
 
         def edit() -> int:
             with open(self._open(path, os.O_RDWR, ctx), "r+", encoding="utf-8") as f:
+                self._as_read(path, ctx)
                 text = f.read()
                 count = text.count(old)
                 if count == 1 or (count > 1 and replace_all):
@@ -598,6 +632,7 @@ class ShellFilesTools(Tools):
                     f"old_string occurs {count} times in {self._display(path)}; "
                     "add context to make it unique or set replace_all"
                 )
+            self._saw(path, ctx)
             return count
 
         count = await asyncio.to_thread(edit)
@@ -798,6 +833,13 @@ def _with_context(rel: str, lines: Sequence[str], hits: Sequence[int],
             out.append(f"{rel}{sep}{m}{sep} {lines[m - 1][:500]}")
         last = max(last, end)
     return out
+
+
+def _version(path: Path) -> tuple[int, int, int]:
+    """What tells one state of a file from the next: its size, its time of change and
+    its inode, which a file replaced by another (an editor's save) changes."""
+    info = path.stat()
+    return info.st_size, info.st_mtime_ns, info.st_ino
 
 
 def _regular_file(name: str, within: int) -> bytes | None:

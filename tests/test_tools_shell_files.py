@@ -1,4 +1,5 @@
 import asyncio
+import os
 import shutil
 from pathlib import Path
 
@@ -241,6 +242,7 @@ async def test_write_creates_parents(tools, workspace, tmp_path):
 
 async def test_edit_file(tools, workspace, tmp_path):
     (workspace / "e.txt").write_text("foo bar foo")
+    await run(tools, tmp_path, "read_file", path="e.txt")  # a file is changed as it was read
     out = await run(tools, tmp_path, "edit_file", path="e.txt", old_string="foo", new_string="x")
     assert out.is_error and "2 times" in out.content
     out = await run(tools, tmp_path, "edit_file", path="e.txt", old_string="bar", new_string="B")
@@ -300,6 +302,36 @@ async def test_search_can_ignore_case_show_context_and_list_only_files(tools, wo
     counts = await run(tools, tmp_path, "search_files", pattern="o", output="count",
                        ignore_case=True)
     assert counts.content == "hello.txt:2\nnotes.md:4"
+
+
+async def test_a_file_is_changed_only_as_it_was_read(tools, workspace, tmp_path):
+    """A file that is there is written or edited only once the conversation has read it,
+    and only while it is as it was then: a change made meanwhile is not overwritten."""
+    target = workspace / "hello.txt"
+    unread = await run(tools, tmp_path, "edit_file", path="hello.txt", old_string="world",
+                       new_string="there")
+    assert unread.is_error and "Read hello.txt first" in unread.content
+    assert (await run(tools, tmp_path, "write_file", path="hello.txt", content="x")).is_error
+    assert target.read_text() == "hello\nworld\n"
+
+    await run(tools, tmp_path, "read_file", path="hello.txt")
+    assert not (await run(tools, tmp_path, "edit_file", path="hello.txt", old_string="world",
+                          new_string="there")).is_error
+    assert not (await run(tools, tmp_path, "edit_file", path="hello.txt", old_string="there",
+                          new_string="all")).is_error  # its own change is known
+    target.write_text("hello\nchanged by the user\n")
+    os.utime(target, ns=(1, 1))  # as a change in the same instant would not be told apart
+    stale = await run(tools, tmp_path, "edit_file", path="hello.txt", old_string="hello",
+                      new_string="bye")
+    assert stale.is_error and "changed since" in stale.content
+    assert target.read_text() == "hello\nchanged by the user\n"
+
+    other = await tools.execute(ToolCall("c", "edit_file", {
+        "path": "hello.txt", "old_string": "hello", "new_string": "bye"}),
+        RecordingContext("c", conversation_id="another"))
+    assert other.is_error and "Read hello.txt first" in other.content  # each its own
+    new = await run(tools, tmp_path, "write_file", path="fresh.txt", content="new\n")
+    assert not new.is_error  # a new file needs nothing read
 
 
 # ── confined to the work folder ──
