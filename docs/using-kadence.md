@@ -112,7 +112,7 @@ question gets no plan.
 - **The agent finishes its plan before it stops.** If it ends a turn with steps open, Kadence
   sends it back once to do them or close them. When the turn ends, Kadence ticks off any
   step still open. A step stays open only when it waits for a reminder's time, for
-  background work, or for a duty's next check-in.
+  background work, or for its next check-in when it runs continuously.
 
 ### Reminders
 
@@ -125,8 +125,8 @@ is woken when the time comes, without a message from you. Next to the conversati
   while it was closed, or while Kadence was not running, is not sent late by itself: the
   agent sees it with your next message.
 - **Stop** puts reminders off until your next message.
-- For work that keeps going on its own, give the conversation a
-  [duty](concepts.md#duties) instead.
+- For work that keeps going on its own, have the conversation
+  [run continuously](concepts.md#running-continuously) instead.
 
 ### The wrap-up card
 

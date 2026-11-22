@@ -229,7 +229,8 @@ def parse_args(argv: Sequence[str] | None = None) -> Launch:
     parser.add_argument("--headless", action="store_true",
                         help="be driven by another program: JSON-RPC on stdin and stdout")
     duty = parser.add_mutually_exclusive_group()
-    duty.add_argument("--duty", help="with --headless: start a new conversation on this duty")
+    duty.add_argument("--continuous", dest="duty",
+                      help="with --headless: start a new conversation that carries this on")
     duty.add_argument("--goal", help="with --headless: start a new conversation on this goal")
     parser.add_argument("--show-config", action="store_true",
                         help="print the effective config as TOML and exit")
@@ -240,9 +241,10 @@ def start_options(args: Launch) -> dict[str, Any] | None:
     """Frontend options that start right away, or None to let the frontend ask."""
     if args.duty is not None or args.goal is not None:
         if not args.headless:
-            raise SystemExit("kadence: --duty and --goal need --headless")
+            raise SystemExit("kadence: --continuous and --goal need --headless")
         if args.conversation is not None:
-            raise SystemExit("kadence: a duty starts a new conversation; leave out --conversation")
+            raise SystemExit("kadence: --continuous and --goal start a new conversation; "
+                             "leave out --conversation")
         return {"start": True, "duty": args.duty or args.goal, "goal": args.goal is not None}
     if args.conversation is None:
         return None

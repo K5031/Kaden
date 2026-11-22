@@ -201,7 +201,7 @@ thinking off and refuse the request, so use it only with a maintenance model tha
 
 With Claude, Kadence asks Anthropic to cache each conversation, so every request after the
 first pays about a tenth or less for what was already sent. The cache lasts five minutes
-after the last request. For work with longer pauses (a duty that checks in every half
+after the last request. For work with longer pauses (a conversation that runs continuously and checks in every half
 hour), keep it for an hour instead, at a higher price for the first request:
 
 ```toml

@@ -98,12 +98,11 @@ _SAYS = {DUE: "A step in your plan is due.", CHECK_IN: "Time to check in on your
 def notice(cause: str, duty: Duty | None) -> str:
     """The message that starts a cycle a duty started. The one that turns it on states the
     task, so the transcript keeps it after the duty ends (a goal reached mid-cycle)."""
-    kind = "goal" if duty is not None and duty.kind == DutyKind.GOAL else "duty"
+    goal = duty is not None and duty.kind == DutyKind.GOAL
     if cause == TURNED_ON and duty is not None:
-        return f"New {kind}: {duty.instruction}"
-    says = _SAYS.get(cause, "{cause}").format(kind=kind, cause=cause)
-    return (f"{says} Carry on with your {kind}, or end your turn if there is "
-            "nothing to do now.")
+        return f"{'New goal' if goal else 'Runs continuously'}: {duty.instruction}"
+    says = _SAYS.get(cause, "{cause}").format(kind="goal" if goal else "work", cause=cause)
+    return f"{says} Carry on, or end your turn if there is nothing to do now."
 
 
 def next_reminder(plan: Sequence[PlanItem], after: float) -> float | None:

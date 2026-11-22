@@ -414,17 +414,18 @@ def duty_status(duty: Duty | None, wake_at: float | None, state: AgentState,
     for a due step, else None."""
     if duty is None:
         return f"Reminder at {_when(wake_at)}" if wake_at is not None else None
+    what = "Goal" if duty.kind == DutyKind.GOAL else "Continuous"
     if help_needed is not None and state in (AgentState.IDLE, AgentState.STOPPED):
-        return "Duty waiting for your answer"
+        return f"{what}: waiting for your answer"
     if wake_at is not None:
-        return f"Duty: next check-in {_when(wake_at)}"
+        return f"{what}: next check-in {_when(wake_at)}"
     if state in (AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED):
-        return "Duty paused: send a message to resume"
-    return "Duty: working"
+        return f"{what}: paused, send a message to resume"
+    return f"{what}: working"
 
 
 def help_text(question: str) -> str:
-    return f"Kadence needs your help to go on with its duty: {question}"
+    return f"Kadence needs your help to carry on: {question}"
 
 
 def _when(t: float) -> str:

@@ -96,7 +96,7 @@ async def test_turning_a_duty_on_starts_work_and_shows_it(make):
     assert "Keep the inbox answered" in request.system
     assert "update_plan" in [t.name for t in request.tools]
     assert "finish_goal" not in [t.name for t in request.tools]  # a duty, not a goal
-    assert notices(request)[0].endswith("[Runtime notice] New duty: Keep the inbox answered")
+    assert notices(request)[0].endswith("[Runtime notice] Runs continuously: Keep the inbox answered")
     [updated] = [e for e in h.rec.of(ConversationUpdated) if e.info.duty is not None]
     assert updated.info.duty == QUIET
     assert h.store.conversations[h.conversation.id].info.duty == QUIET
@@ -357,7 +357,7 @@ async def test_with_nothing_due_it_wakes_at_the_maximum_interval(make):
     wake_at = h.runtime.snapshot().duty_wake_at
     assert wake_at is not None and wake_at - time.time() <= 0.3
     await idle(h, 2)
-    assert "Time to check in on your duty." in notices(h.core.requests[1])[-1]
+    assert "Time to check in on your work." in notices(h.core.requests[1])[-1]
     await eventually(lambda: "duty: scheduled check-in" in wakes(h))  # logged with its cause
 
 

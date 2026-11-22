@@ -2308,7 +2308,7 @@ class MainWindow(QMainWindow):
         quit_action.triggered.connect(self.close)
         self.memory_action = QAction("&Memory…", self)
         self.memory_action.triggered.connect(self.open_memory)
-        self.duty_action = QAction("&Duty…", self)
+        self.duty_action = QAction("Run &continuously…", self)
         self.duty_action.setStatusTip("Give this conversation standing work it carries on "
                                       "by itself.")
         self.duty_action.triggered.connect(self.open_duty)
@@ -3077,11 +3077,11 @@ class DutyDialog(QDialog):
         super().__init__(parent)
         self.controller = controller
         duty = info.duty or Duty("")
-        self.setWindowTitle("Duty")
+        self.setWindowTitle("Run continuously")
         self.setMinimumSize(600, 520)
         form = QFormLayout(self)
         form.setContentsMargins(20, 18, 20, 16)
-        form.addRow(_label("Duty", selectable=False, role="heading"))
+        form.addRow(_label("Run continuously", selectable=False, role="heading"))
         form.addRow(_label(DUTY_HINT, tone="muted"))
         self.instruction = QPlainTextEdit(duty.instruction)
         self.instruction.setPlaceholderText("e.g. Keep my inbox answered")

@@ -969,7 +969,7 @@ async def test_the_duty_dialog_turns_a_duty_on_and_off(make, qapp):
     assert info.duty == Duty("Keep the inbox answered", DutyKind.GOAL, 60, 1800)
     assert [(i.text, i.status) for i in info.plan] == [
         ("Read mail", PlanStatus.DOING), ("Reply", PlanStatus.TODO)]
-    await eventually(lambda: "Duty" in window.duty_label.text())
+    await eventually(lambda: "Goal" in window.duty_label.text())
     window.open_duty()
     dialog = [d for d in window.findChildren(DutyDialog) if d.isVisible()][-1]
     [off] = buttons(dialog, "Turn off")
@@ -1254,7 +1254,7 @@ async def test_the_menus_live_behind_two_buttons_and_their_shortcuts_still_work(
     window, _controller, _ = await open_window(h)
     assert not window.findChildren(QMenuBar)
     texts = [a.text() for a in window.menu_button.menu().actions() if a.text()]
-    assert texts == ["&New chat", "New chat in another &folder…", "&Duty…", "S&top", "&View",
+    assert texts == ["&New chat", "New chat in another &folder…", "Run &continuously…", "S&top", "&View",
                      "&Model"]
     profile = window.profile_button.menu()
     window._fill_profile_header()
