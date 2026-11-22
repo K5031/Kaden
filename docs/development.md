@@ -11,7 +11,7 @@ budgets, background tasks, settings and the event log. It drives four swappable
 | Core | Model inference, one provider per implementation | Anthropic; OpenAI-compatible (OpenAI, DeepSeek) |
 | Memory | Conversation archive, context, long-term memory | SQLite notes (the default); Claude Code-style files per project |
 | Tools | The actions the agent can take | Shell commands and files |
-| Frontend | The user interface | Terminal app (Textual); desktop app (PySide6) |
+| Frontend | The user interface | Desktop app (PySide6) |
 
 Modules never call each other; only the runtime talks to them. Each module is a factory,
 `factory(options, paths)`, registered as a Python entry point, so a new one needs no change
@@ -34,8 +34,9 @@ the conformance suites.
 
 Optional attributes on the factory: `display_name` (shown instead of the id), `key_name`
 for a Core (the environment variable and keychain entry of its API key, which the settings
-ask for), and for a frontend `kind`: `"terminal"` (started by `kadence`, the default) or
-`"window"` (run by the window launcher, `kadence-desktop`), and `event_loop`: a
+ask for), and for a frontend `kind`: `"terminal"` (the default: it runs in the terminal
+`kadence` is started in) or `"window"` (run by the window launcher, which `kadence` starts
+as a process of its own and `kadence-desktop` is), and `event_loop`: a
 callable that runs a coroutine on the loop the frontend needs, like `asyncio.run` (the
 default). The desktop app names Qt's; a GTK or web frontend names its own. An entry point whose
 package does not import is not listed. Launchers may pass a frontend the options `start`,
@@ -65,12 +66,12 @@ src/kadence/tools/                     Tools
 src/kadence/frontends/                 Frontends; common.py is what every frontend shows the same way,
                                       headless.py, remote.py and wire.py the headless channel,
                                       sessions.py the sub-sessions a frontend hosts
-  tui/                                terminal app (Textual)
   desktop/                            desktop app: viewmodel.py (no Qt), window.py, voice/ (speech), assets
 src/kadence/skills/                    the skills Kadence comes with (runtime/skills.py loads them)
 src/kadence/window.py                  the window launcher
 src/kadence_desktop/                   the module a Briefcase bundle runs
-src/kadence/__main__.py                the `kadence` command: config, saved settings, restarts
+src/kadence/__main__.py                the `kadence` command: config, saved settings, opening the desktop app,
+                                      headless mode
 examples/                             a minimal module of each kind, to copy from
 tests/                                tests; fakes/ and conformance/ hold shared test modules
 SPEC.md                               product spec
@@ -80,11 +81,11 @@ SPEC.md                               product spec
 ## Working on the code
 
 `uv tool install --editable` runs your checkout as it is, so code changes take effect the
-next time you start `kadence`. With `"Kadence[desktop]"` and `--python 3.13`, the same
-install also has the desktop app (see [Desktop app](desktop-app.md#install)). After a
+next time you start `kadence`. Install `"Kadence[desktop]"` with `--python 3.13` to have
+the desktop app (see [Desktop app](desktop-app.md#install)). After a
 change to dependencies or entry points in `pyproject.toml`, reinstall:
-`uv tool install --editable --reinstall .`. Without installing, `uv run kadence` works from
-the checkout.
+`uv tool install --editable --reinstall ".[desktop]"`. Without installing,
+`uv run --extra desktop kadence` works from the checkout.
 
 ## Tests
 
@@ -121,7 +122,7 @@ dependencies come from `[project]` and its modules are found through their entry
 A package for the Linux you build on (here an Arch `.pkg.tar.zst`) uses the system Python,
 which must also run Briefcase and have its headers (`Python.h`) installed. The script runs
 Briefcase and adds `kadence` and `kd` to the package as links to its program, which then
-starts the terminal app (Briefcase itself makes one program per app):
+runs the `kadence` command (Briefcase itself makes one program per app):
 
 ```bash
 packaging/linux-system.sh

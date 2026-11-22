@@ -13,7 +13,7 @@ wrong with this window", typed or in voice mode, and have the agent see it.
 A tool `screenshot`, without arguments, in `kadence.tools.shell_files` (`screen.py`). It
 captures the whole desktop, all monitors, and returns the picture as an attachment of the
 tool result, the way `read_file` returns a picture, so every Core that shows pictures to
-its model shows this one. Both apps have it, since it belongs to the Tools module.
+its model shows this one. Every frontend has it, since it belongs to the Tools module.
 
 - **Capture** is done by KDE's Spectacle (`spectacle -b -n -f -o <file>`), run as a child
   process: on Wayland a program cannot read the screen itself, and Spectacle is the one
@@ -36,7 +36,7 @@ its model shows this one. Both apps have it, since it belongs to the Tools modul
   but asks the user in a dialog of its own on each capture, on top of Kadence's permission,
   and needs a D-Bus library.
 - **Capturing in the desktop frontend with Qt.** Qt cannot read the screen on Wayland
-  either, and the terminal app would have no tool.
+  either, and an instance under another frontend would have no tool.
 - **An `active window` target.** While the user types or talks to Kadence, the active
   window is Kadence's own.
 - **A module of its own.** One tool; the built-in module already carries the web tools

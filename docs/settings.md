@@ -2,9 +2,8 @@
 
 ## The settings screen
 
-Press **F2** (or type `/settings`); in the [desktop app](desktop-app.md), choose
-the gear at the bottom left (or **Ctrl+,**). Change what you need and choose **Save**; only what you
-changed is saved.
+In the [desktop app](desktop-app.md), choose the gear at the bottom left (or **Ctrl+,**).
+Change what you need and choose **Save**; only what you changed is saved.
 
 | Setting | Notes | Applies |
 |---|---|---|
@@ -15,7 +14,6 @@ changed is saved.
 | Spending limit | In US dollars; empty means no limit. | At once |
 | What the agent may do | See [Permissions](#permissions). | At the next step |
 | Instructions | The system prompt: who the agent is and how it should behave. | At the next step |
-| Folder for new chats | Terminal app only: the folder a new conversation works in. Each conversation keeps its own; see [Folders](using-kadence.md#folders). The desktop app asks for each chat's folder instead. | At the next new chat |
 | Tools | What the agent can do on your computer. | At restart |
 
 Raising or removing the spending limit, or letting the agent do more, asks you to confirm
@@ -31,10 +29,6 @@ and starts again with the new settings in the same conversation.
 After a provider change, the new provider starts with its first model; choose another one
 after the restart.
 
-**The terminal app or the desktop app** is not a setting: `kadence` starts the terminal
-app, and `kadence-desktop` or Kadence in your app menu starts the
-[desktop app](desktop-app.md). Both show the same conversations and use the same settings.
-
 **A different Memory is a different archive.** Your conversations and long-term memory stay
 where they are, but are not shown while another Memory is used; they come back when you
 switch back. The settings screen asks before saving such a change.
@@ -43,8 +37,9 @@ switch back. The settings screen asks before saving such a change.
 
 If Kadence cannot start with your settings (no API key yet, a provider or module that is no
 longer installed, wrong options in `config.toml`), it still opens, with the settings and a
-message saying what is wrong. Fix it there and choose **Restart now**. This is also what
-the first start looks like: enter your API key, then **Restart now**.
+message saying what is wrong. Fix it there and choose **Restart now**. At the first start a
+welcome window asks for your API key instead; see
+[First start](desktop-app.md#first-start).
 
 ## Installed modules
 

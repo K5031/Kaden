@@ -29,11 +29,10 @@ prompt they cannot read gets clicked away. Claude Code shows a short line per st
 - Steps fold into groups. A run of steps, with the thinking before and between them, shows
   as one closed line until clicked: the latest unfinished step's description and state
   while any runs, then the one step's description, or "N steps" with what went wrong
-  ("4 steps · 1 failed"), one rule for both apps in `frontends.common.group_title`. Reply text,
+  ("4 steps · 1 failed"), one rule in `frontends.common.group_title`. Reply text,
   notices and user messages end a group; thinking after a run's last step stays outside
   until a step follows it, so a reply's thinking is never folded away. The desktop app
-  derives groups from its items (`viewmodel.step_segments`); the TUI files each step into
-  the group before it as it mounts.
+  derives groups from its items (`viewmodel.step_segments`).
 - The automatic permission review leaves the description out of what it judges: the model
   could describe `rm -rf ~/photos` as "tidy up a few files".
 

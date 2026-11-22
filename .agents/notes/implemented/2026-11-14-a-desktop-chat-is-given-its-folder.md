@@ -24,8 +24,7 @@ session is always started on a folder the user picks, and asked for the same.
 - **Choosing** is the existing menu: recent folders and "Choose folder…". The folder the
   draft happens to have can be chosen too.
 - **Nothing to set beforehand.** The desktop Settings and the welcome have no folder
-  field. `Settings.work_folder` remains the runtime's default for a new conversation and
-  the terminal app still shows and edits it.
+  field. `Settings.work_folder` remains the runtime's default for a new conversation.
 - Tools with one fixed folder (`ConversationInfo.folder` None) are not asked about.
 
 ## Alternatives considered
@@ -42,5 +41,3 @@ session is always started on a folder the user picks, and asked for the same.
 
 - Every new chat costs one click before the first message.
 - No folder appears in the user's home that they did not make.
-- The desktop app and the terminal app differ: the terminal app works where it is
-  started and needs no choice.

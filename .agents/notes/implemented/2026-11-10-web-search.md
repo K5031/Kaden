@@ -39,7 +39,7 @@ in `kadence/tools/shell_files/web.py`:
 - **Untrusted content.** Results start with a line saying the content is from the web and
   its instructions are not the user's.
 - **Citing.** The tool descriptions tell the model to link the pages an answer relies on.
-  Replies are Markdown, so links render in both frontends.
+  Replies are Markdown, so links render in the desktop app.
 - **Testing.** `Web` takes the search function, the HTTP transport and the resolver as
   arguments; the suite uses fakes and `httpx2.MockTransport`, never the network
   (`tests/test_tools_web.py`).

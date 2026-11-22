@@ -532,28 +532,6 @@ async def test_the_task_stays_in_view_after_the_goal_is_finished(make):
     assert any("Launch the campaign" in text for text in notices(after))  # still in view
 
 
-async def test_the_terminal_app_shows_the_plan_as_a_checklist(make):
-    from kadence.frontends.tui import KadenceApp, PlanPanel
-    from tests.test_tui import type_text, until
-
-    h = await duty_harness(make, [
-        Step(calls=[call("update_plan", {"items": [
-            {"text": "Read the code", "status": "done"},
-            {"text": "Fix the bug", "status": "doing"},
-            {"text": "Run the tests"}]})]),
-        Step(text="Working on it.", hang=True)])  # still working: the checklist shows
-    app = KadenceApp(h.runtime)
-    async with app.run_test(size=(100, 40)) as pilot:
-        await until(pilot, lambda: app.conversation is not None)
-        await type_text(pilot, "fix the bug")
-        await pilot.press("enter")
-        await until(pilot, lambda: app.query(PlanPanel), timeout=10)
-        assert app.query_one(PlanPanel).lines() == [
-            "✓ Read the code", "◐ Fix the bug", "○ Run the tests"]
-        await h.runtime.stop()  # no longer working: it goes, though a step is open
-        await until(pilot, lambda: not app.query(PlanPanel), timeout=10)
-
-
 def test_the_agent_is_told_to_plan_first_whenever_a_task_is_more_than_one_action():
     """The rule is in the tool's description, which reaches the model whatever system
     prompt the user has written."""

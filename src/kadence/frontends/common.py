@@ -287,7 +287,7 @@ def loosening(current: Settings, update: SettingsUpdate) -> list[str]:
 # The modules settings offer. Memory is chosen in config.toml only: another Memory module
 # is another archive, so a choice in the app would hide every conversation.
 # The modules a settings screen lets the user choose. The interface is not among them:
-# each launcher starts its own (`kadence` the terminal app, the app menu the desktop app).
+# every launcher opens the desktop app, unless a frontend the user installed is chosen.
 MODULE_LABELS = {"core": "AI provider", "tools": "Tools"}
 COMPACTING = "Compacting conversation…"
 COMPACTED = "Conversation compacted"

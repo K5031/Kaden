@@ -76,7 +76,7 @@ def test_installed_modules_are_the_entry_points_that_load():
     assert (cores["first"].name, cores["first"].key_name) == ("First AI", "FIRST_API_KEY")
     assert (cores["keyless"].name, cores["keyless"].key_name) == ("keyless", None)
     frontends = {m.id: m.kind for m in installed("frontend")}
-    assert frontends == {"tui": TERMINAL, "desktop": WINDOW, "scripted": TERMINAL,
+    assert frontends == {"desktop": WINDOW, "scripted": TERMINAL,
                          "scripted-window": WINDOW, "scripted-window-2": WINDOW}
 
 
@@ -96,8 +96,8 @@ def test_saved_module_ids_pick_their_factories(tmp_path):
     assert config.core.factory == "tests.fakes.core:first_factory"
     assert config.memory.factory == "tests.fakes.memory:factory"
     assert config.tools == ModuleSpec("tests.fakes.tools:factory")  # no root option
-    assert config.frontend.factory == "kadence.frontends.tui:factory"
-    assert dict(config.runtime.modules.running) == {**RUNNING, "frontend": "tui"}
+    assert config.frontend.factory == "kadence.frontends.desktop:factory"
+    assert dict(config.runtime.modules.running) == {**RUNNING, "frontend": "desktop"}
     assert config.startup_error is None
 
 
@@ -132,11 +132,10 @@ def test_an_uninstalled_saved_module_is_a_startup_error(tmp_path):
 
 
 @pytest.mark.parametrize(("saved", "kind", "frontend"), [
-    ("scripted-window", TERMINAL, "kadence.frontends.tui:factory"),
     ("scripted-window", WINDOW, "tests.fakes.frontend:window_factory"),
     ("scripted", TERMINAL, "tests.fakes.frontend:factory"),
     ("scripted", WINDOW, "kadence.frontends.desktop:factory"),
-    ("gone", TERMINAL, "kadence.frontends.tui:factory"),
+    ("gone", WINDOW, "kadence.frontends.desktop:factory"),
 ])
 def test_each_launcher_runs_the_saved_frontend_of_its_kind(tmp_path, saved, kind, frontend):
     settings_file(tmp_path, f'[modules]\nfrontend = "{saved}"\n')
@@ -201,7 +200,6 @@ async def test_a_memory_change_restarts_without_the_conversation(make):
     (TERMINAL, "scripted-window", True, "scripted-window", WINDOW),
     (TERMINAL, "scripted-window", False, "scripted", TERMINAL),
     (WINDOW, "scripted", True, "scripted-window", WINDOW),
-    (TERMINAL, "tui", False, "tui", TERMINAL),
 ])
 async def test_restart_brings_up_the_chosen_frontend_where_it_can(
         make, monkeypatch, running_kind, chosen, display, expected, kind):
@@ -338,8 +336,8 @@ async def test_restart_reopens_the_conversation_with_the_new_modules(tmp_path, m
 
 
 def test_the_desktop_app_starts_after_the_terminal_let_go_of_the_data(tmp_path, monkeypatch):
-    """The TUI exits on ShuttingDown, while Restart now is still shutting down; the hand
-    over waits until the data directory is free."""
+    """A terminal frontend exits on ShuttingDown, while Restart now is still shutting
+    down; the hand over waits until the data directory is free."""
     with_display(monkeypatch, True)
     monkeypatch.setenv("FIRST_API_KEY", "k")
     settings_file(tmp_path, FAKE_MODULES + 'frontend = "scripted"\n')
@@ -369,8 +367,8 @@ def test_the_desktop_app_starts_after_the_terminal_let_go_of_the_data(tmp_path, 
 
 
 async def test_a_restart_in_the_same_frontend_waits_for_the_data(tmp_path, monkeypatch):
-    """Any module change: the TUI exits on ShuttingDown, and the next instance in the same
-    process still gets the data directory."""
+    """Any module change: the frontend exits on ShuttingDown, and the next instance in
+    the same process still gets the data directory."""
     monkeypatch.setenv("FIRST_API_KEY", "k")
     settings_file(tmp_path, FAKE_MODULES + 'frontend = "scripted"\n')
 
@@ -463,7 +461,7 @@ async def test_a_data_folder_in_use_opens_the_frontend_with_the_error(tmp_path, 
 
 
 def test_kadence_opens_the_saved_window_frontend(tmp_path, monkeypatch, capsys):
-    """Choosing the desktop app means `kadence` opens it, without starting the TUI."""
+    """`kadence` opens the desktop app as a process of its own, and runs nothing here."""
     with_display(monkeypatch, True)
     settings_file(tmp_path, FAKE_MODULES + 'frontend = "desktop"\n')
     spawned = []
@@ -477,37 +475,38 @@ def test_kadence_opens_the_saved_window_frontend(tmp_path, monkeypatch, capsys):
         ran.append(True)
 
     scripted(monkeypatch, script)
-    launcher.main(["--data-dir", str(tmp_path), "--conversation", "c1"])
+    launcher.main(["--data-dir", str(tmp_path), "--conversation", "c1",
+                   "--model", "f-2", "--permissions", "ask"])
     assert not ran
-    assert spawned == [[sys.executable, "-m", "kadence.window",
-                        "--data-dir", str(tmp_path), "--conversation", "c1"]]
+    command = [sys.executable, "-m", "kadence.window", "--data-dir", str(tmp_path),
+               "--conversation", "c1", "--model", "f-2", "--permissions", "ask"]
+    assert spawned == [command]  # what this launch named goes with it
+    from kadence import window
+    opened = window.parse_args(command[3:])
+    assert (opened.model, opened.permissions, opened.conversation) == ("f-2", "ask", "c1")
     assert capsys.readouterr().out == "Kadence opens in the desktop app.\n"
 
 
-@pytest.mark.parametrize(("saved", "display", "notice"), [
-    ("desktop", False, ("No display here, so Kadence opens in the terminal. Desktop app "
-                       "opens when you start Kadence on a computer with a display.")),
-    ("gone", True, ("The interface 'gone' is not installed, so Kadence opens in the "
-                   "terminal.")),
-])
-def test_kadence_says_why_it_opens_in_the_terminal(tmp_path, monkeypatch, capsys, saved,
-                                                  display, notice):
-    with_display(monkeypatch, display)
+def test_kadence_without_a_display_says_so_and_opens_nothing(tmp_path, monkeypatch, capsys):
+    with_display(monkeypatch, False)
     monkeypatch.setenv("FIRST_API_KEY", "k")
-    settings_file(tmp_path, FAKE_MODULES + f'frontend = "{saved}"\n')
+    settings_file(tmp_path, FAKE_MODULES + 'frontend = "desktop"\n')
     spawned = []
     monkeypatch.setattr(subprocess, "Popen", lambda command, **kw: spawned.append(command))
-    ran = []
+    with pytest.raises(SystemExit):
+        launcher.main(["--data-dir", str(tmp_path)])
+    assert not spawned and "no display" in capsys.readouterr().err
 
-    async def script(runtime: Any, frontend: ScriptedFrontend) -> None:
-        ran.append(True)
 
-    monkeypatch.setattr(launcher, "LAUNCHER_FRONTENDS", {**launcher.LAUNCHER_FRONTENDS,
-                                                         TERMINAL: "scripted"})
-    scripted(monkeypatch, script)
+def test_a_saved_interface_that_is_not_installed_opens_the_desktop_app(tmp_path, monkeypatch,
+                                                                        capsys):
+    with_display(monkeypatch, True)
+    monkeypatch.setenv("FIRST_API_KEY", "k")
+    settings_file(tmp_path, FAKE_MODULES + 'frontend = "gone"\n')
+    spawned = []
+    monkeypatch.setattr(subprocess, "Popen", lambda command, **kw: spawned.append(command))
     launcher.main(["--data-dir", str(tmp_path)])
-    assert not spawned and ran
-    assert capsys.readouterr().out == notice + "\n"
+    assert spawned == [[sys.executable, "-m", "kadence.window", "--data-dir", str(tmp_path)]]
 
 
 async def test_saved_mcp_servers_offer_their_tools_after_a_start(tmp_path, monkeypatch, keychain):

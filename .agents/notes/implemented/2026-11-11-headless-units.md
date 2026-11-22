@@ -15,8 +15,8 @@ units.
 instruction, a plan, wake-ups, and `ask_for_help` when it is blocked. Running one from
 another program was not possible:
 
-- **No way to drive it from outside.** The only frontends were the desktop window and the
-  TUI, both for a person at a screen. Spawning `kd` as a subprocess gave the spawner no
+- **No way to drive it from outside.** The only frontend was the desktop window, for a
+  person at a screen. Spawning `kd` as a subprocess gave the spawner no
   structured way to send a message, give a duty, answer a prompt or stop it.
 - **No way to watch it from outside.** A supervisor must verify work, which means reading
   the subordinate's plan, state and, when needed, its transcript, while it runs. The

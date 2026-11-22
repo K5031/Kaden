@@ -1,4 +1,4 @@
-"""Settings texts and the loosening check shared by the TUI and the desktop app."""
+"""The desktop app's settings texts and the loosening check."""
 
 import pytest
 
@@ -83,10 +83,10 @@ def test_restart_notices_say_where_the_chosen_frontend_will_be_used():
         "Desktop app will be used the next time you start Kadence on a computer with a display. "
         "Your changes take effect after a restart.")
     window = {**base.modules, "frontend": ModuleChoice(
-        "desktop", "tui", base.modules["frontend"].installed)}
+        "desktop", "term", base.modules["frontend"].installed)}
     assert restart_notice(settings(modules=window, restart_needed=True,
                                    restart_frontend="desktop")).startswith(
-        "Terminal (TUI) will be used the next time you run kadence in a terminal.")
+        "Terminal app will be used the next time you run kadence in a terminal.")
     assert restart_notice(settings(startup_error="no key")) == (
         "Fix the settings above, then press Restart now.")
     assert restart_notice(settings(startup_error="open elsewhere", already_open=True)) == (

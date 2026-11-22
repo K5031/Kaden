@@ -13,8 +13,8 @@ MODULES = {
     "memory": ModuleChoice("sqlite", "sqlite", [
         ModuleInfo("sqlite", "Built-in memory"), ModuleInfo("notes", "Notes memory")]),
     "tools": ModuleChoice("shell", "shell", [ModuleInfo("shell", "Shell and files")]),
-    "frontend": ModuleChoice("tui", "tui", [
-        ModuleInfo("tui", "Terminal (TUI)", kind="terminal"),
+    "frontend": ModuleChoice("term", "term", [  # a terminal frontend someone installed
+        ModuleInfo("term", "Terminal app", kind="terminal"),
         ModuleInfo("desktop", "Desktop app", kind="window")]),
 }
 
@@ -24,7 +24,7 @@ def settings(**changes: Any) -> Settings:
         "modules": MODULES, "model": "m1", "maintenance_model": None,
         "budget": Budget(max_cost_usd=10.0), "permissions": PermissionPolicy.ALLOW_READ_ONLY,
         "system_prompt": "Be helpful.", "work_folder": "/work", "restart_needed": False,
-        "restart_frontend": "tui"}
+        "restart_frontend": "term"}
     return Settings(**{**values, **changes})
 
 

@@ -7,8 +7,8 @@ Claude, DeepSeek or OpenAI models, using your own API key.
 | Page | Read it to |
 |---|---|
 | [Getting started](getting-started.md) | Install Kadence and have a first conversation |
-| [Using Kadence](using-kadence.md) | Send messages, approve actions, use keys and commands |
-| [Desktop app](desktop-app.md) | Use Kadence in a window instead of a terminal |
+| [Using Kadence](using-kadence.md) | Send messages, approve actions, attach files, add tools |
+| [Desktop app](desktop-app.md) | Install the app and find your way around its window |
 | [Settings](settings.md) | Change the AI provider, model, spending limit, permissions or instructions |
 | [Driving Kadence from a program](headless.md) | Run Kadence without a screen and control it over stdin and stdout |
 | [Concepts](concepts.md) | Understand conversations, background tasks, duties, sub-sessions, memory, skills, deleting and budgets |

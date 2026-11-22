@@ -61,9 +61,8 @@ A Frontend offers whole Tools modules with `Frontend.tools()`, after every other
 - Servers are settings (`api.McpServer`, `Settings.mcp_servers`): saved in settings.toml,
   their variable values in the keychain, applied at the next start like modules. The
   launcher builds the saved servers into one extra Tools module
-  (`InstanceConfig.extra_tools`). The desktop app (**Kadence → Tool servers (MCP)…**) and
-  the TUI (`/mcp`) add, edit and remove them, and warn that a server is someone else's
-  program.
+  (`InstanceConfig.extra_tools`). The desktop app (**Kadence → Tool servers (MCP)…**)
+  adds, edits and removes them, and warns that a server is someone else's program.
 
 Choices and limits are listed in `.agents/decisions.md` (MCP servers).
 

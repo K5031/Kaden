@@ -58,7 +58,7 @@ next answer. Compaction writes only the rolling summary.
 
 ### The user's side
 
-`RuntimeAPI.notes`, `save_note` and `delete_note`. The Memory window in both apps lists
+`RuntimeAPI.notes`, `save_note` and `delete_note`. The desktop app's Memory window lists
 notes by title and description and opens one in an editor.
 
 ### No migration

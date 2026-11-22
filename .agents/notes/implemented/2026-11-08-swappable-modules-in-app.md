@@ -1,6 +1,6 @@
 # Agent Note: Swappable modules from within the app
 
-Status: implemented — the Core, Tools and Frontend are chosen from the installed ones in the app, applied at the next start; Memory only in config.toml
+Status: implemented — installed Core, Tools and Frontend modules are chosen by id (the Core and Tools in the app), applied at the next start; Memory only in config.toml
 
 ## Problem
 
@@ -9,8 +9,7 @@ able to write their own modules, frontends included. A different module meant ed
 `[core]`, `[memory]`, `[tools]` or `[frontend]` in `config.toml` with a Python import path,
 which a non-technical user cannot do, and Kadence could not list what is installed. The
 settings screen offered only a fixed list of providers, and a frontend could not be chosen
-at all, since a frontend cannot replace itself while it runs. The user's main need is to
-change the frontend from inside the app: from the TUI to the desktop app and back.
+at all, since a frontend cannot replace itself while it runs.
 
 ## Decision
 
@@ -40,7 +39,7 @@ register the same way in `pyproject.toml`:
 | `kadence.cores` | `anthropic`, `deepseek`, `openai` |
 | `kadence.memories` | `sqlite` |
 | `kadence.tools` | `shell-files` |
-| `kadence.frontends` | `tui`, `desktop` |
+| `kadence.frontends` | `desktop` |
 
 A provider is a Core entry: the DeepSeek and OpenAI profiles have their own factories
 (`kadence.core.openai_compat:deepseek_factory`, `openai_factory`). A factory may carry
@@ -81,9 +80,8 @@ frontend's package imports PySide6 and qasync at the top, so it is listed only w
   (budget, permissions, system prompt) are saved, `restart()` tries again, and every other
   command raises `RuntimeStateError`. A frontend that cannot be built is replaced by the
   launcher's own one, which shows the error.
-- First run is that case. The TUI opens its settings with the error and the key field; the
-  desktop app shows its welcome. The key is stored before the Core is constructed, and
-  Restart now builds it.
+- First run is that case: the desktop app shows its welcome. The key is stored before the
+  Core is constructed, and Restart now builds it.
 
 ### Restart
 
@@ -92,25 +90,27 @@ frontend's package imports PySide6 and qasync at the top, so it is listed only w
   a `Restart` (frontend id and kind, the open conversation unless the Memory changes), and
   `launch()` in `__main__.py` builds the next instance in the same process, with the
   frontend starting in that conversation.
-- `FrontendInfo.kind` says which launcher runs a frontend: `kadence` (also `kd`) runs
-  terminal frontends, the window launcher (`kadence.window`) window frontends. Neither knows
+- `FrontendInfo.kind` says where a frontend runs: a terminal frontend in the terminal
+  `kadence` (also `kd`) is started in, a window frontend in the window launcher
+  (`kadence.window`). Kadence's own frontend, the desktop app, is a window frontend; a
+  terminal frontend is one the user installed. Neither launcher knows
   a toolkit: each runs a frontend on the event loop its factory names (`event_loop`,
   default `asyncio.run`; the desktop app names Qt's through qasync,
   `frontends/desktop/loop.py`), and a Restart to a frontend on another loop leaves the
-  current one and starts that one (`__main__.run_frontends`). With a saved window frontend
-  `kadence` hands over to the window launcher at launch (as for Restart now, below) when a
-  display is available, without starting the TUI; it runs the TUI, saying why in one line,
-  only without a display or when the window frontend is not installed. The window
+  current one and starts that one (`__main__.run_frontends`). Unless the chosen frontend
+  is a terminal one, `kadence` hands over to the window launcher at launch (as for Restart
+  now, below) and returns; without a display it prints that there is none and that
+  `kadence --headless` runs it for another program, and exits with an error. The window
   launcher, run directly or by a bundle, opens the desktop app even with a saved terminal
   frontend, since a window cannot open a terminal.
 - From a terminal frontend to a window frontend, when a display is available, Restart now
-  ends the TUI and `kadence` starts the window launcher (`python -m kadence.window`) as a
-  detached process on the same data directory,
+  ends the terminal frontend and `kadence` starts the window launcher
+  (`python -m kadence.window`) as a detached process on the same data directory,
   config file and conversation. Without a display, `restart_frontend` stays the running
-  one and the TUI says the desktop app will be used the next time Kadence is started from
-  the app menu. From a window frontend to a terminal one, the desktop app says the TUI will
-  be used the next time `kadence` is run; Restart now restarts the desktop app for any
-  other pending change.
+  one, and the notice says the desktop app will be used the next time Kadence is started
+  on a computer with a display. From a window frontend to a terminal one, the desktop app says that
+  frontend will be used the next time `kadence` is run in a terminal; Restart now restarts
+  the desktop app for any other pending change.
 - Frontends offer Restart now in their settings and after saving a module setting;
   `kadence.frontends.common.restart_notice` words what waits for it.
 
@@ -118,8 +118,8 @@ frontend's package imports PySide6 and qasync at the top, so it is listed only w
 
 A different Memory module is a different archive: conversations and long-term memory of the
 old one are not shown after the restart, and come back when the user switches back. That
-is a choice of storage, not of how Kadence works, so the settings screens of both frontends
-offer the Core, Tools and Frontend only (`kadence.frontends.common.MODULE_LABELS`). Memory
+is a choice of storage, not of how Kadence works, so the desktop app's settings offer the
+Core and Tools only (`kadence.frontends.common.MODULE_LABELS`). Memory
 stays a module: it is chosen with `[memory]` in `config.toml`, or by id through
 `SettingsUpdate.modules` from any frontend that wants to offer it.
 
@@ -127,8 +127,7 @@ Code: `api.py` (`ModuleInfo`, `ModuleChoice`, `Settings`, `SettingsUpdate`,
 `RuntimeAPI.restart`, `FrontendInfo.kind`), `runtime/modules.py`, `runtime/setup.py`,
 `runtime/instance.py` (`run_instance`), `__main__.py` (`load_config`, `launch`,
 `hand_over`, `run_frontends`), `window.py`, `frontends/desktop/loop.py`, `frontends/common.py`. Tests:
-`tests/test_modules.py`, `tests/test_settings.py`, `tests/test_tui_settings.py`,
-`tests/test_desktop_window.py`. User docs: `docs/settings.md`, `docs/desktop-app.md`,
+`tests/test_modules.py`, `tests/test_settings.py`, `tests/test_desktop_window.py`. User docs: `docs/settings.md`, `docs/desktop-app.md`,
 `docs/development.md`.
 
 ## Alternatives considered
@@ -178,7 +177,7 @@ Code: `api.py` (`ModuleInfo`, `ModuleChoice`, `Settings`, `SettingsUpdate`,
   changed on disk needs Kadence to be started again.
 - Choosing Memory takes editing `config.toml`; nobody hides their conversations by
   picking from a list.
-- Choosing the desktop app means it opens however Kadence is started where a display is,
-  and a saved frontend never blocks a launch: each launcher falls back to its own.
+- The desktop app opens however Kadence is started where a display is, and a saved
+  frontend never blocks a launch: the launchers fall back to the desktop app.
 - The [settings note](2026-11-07-settings-for-non-technical-users.md) describes the
   settings in these terms.

@@ -27,7 +27,7 @@ listing and peeking are trivial. In Kadence the user-facing host is the frontend
 ### The sub-session manager
 
 `kadence.frontends.sessions.SubSessions`, a Tools module with no UI code, which the
-desktop app and the TUI create and offer. It offers:
+desktop app creates and offers. It offers:
 
 - `start_session(task, budget_usd)`: starts a child, a separate Kadence agent with its own
   context, in the conversation's work folder, on the task as a goal. The agent calls it
@@ -80,11 +80,7 @@ therefore shows a child with the same code as its own conversation.
   permission cards, Stop, and a message box that talks to it. Clicking a conversation goes
   back; the child keeps working. Memory, tool servers and settings stay the window's own.
 - **Row actions:** open, resume, stop, rename, archive and delete.
-- **TUI:** `/sessions` lists the children with the same actions; opening one shows it in
-  place of the conversation, the app's runtime swapped for the child's, until `/back` or
-  until the child ends. Conversations, memory, tool servers and settings stay the app's own.
-- Both status lines count the children working; the parent conversation shows each child
-  as a step, with its report as the result.
+- The parent conversation shows each child as a step, with its report as the result.
 
 Choices are in `.agents/decisions.md` (Sub-sessions).
 

@@ -1,6 +1,6 @@
 """End-to-end wiring: `python -m kadence` builds the modules named in the config file, by
 default SqliteMemory, the Anthropic Core, ShellFilesTools rooted at the current directory and
-the TUI. Without an API key the Core is replaced by the scripted fake; everything else is the
+the desktop app. Without an API key the Core is replaced by the scripted fake; everything else is the
 real module."""
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from textual.widgets import Input
 
 from kadence.__main__ import load_config, main, parse_args
 from kadence.api import (
@@ -39,13 +38,12 @@ from kadence.api import (
 )
 from kadence.core.anthropic import AnthropicCore
 from kadence.core.openai_compat import OpenAICompatCore
-from kadence.frontends.tui import AssistantEntry, KadenceApp, PermissionPrompt, TuiFrontend
+from kadence.frontends.desktop import DesktopFrontend
 from kadence.memory.sqlite import SqliteMemory
-from kadence.runtime import InstanceConfig, ModuleSpec, Runtime, load_module, run_instance
+from kadence.runtime import InstanceConfig, ModuleSpec, load_module, run_instance
 from kadence.runtime.config import DEFAULT_SYSTEM_PROMPT
-from kadence.runtime.instance import InstanceLock
 from kadence.tools.shell_files import ShellFilesTools
-from tests.fakes.core import ScriptedCore, Step, call
+from tests.fakes.core import Step, call
 
 COMMAND = "echo wired > out.txt && cat out.txt"
 
@@ -94,13 +92,13 @@ def test_build_config_wires_the_real_modules(workspace, tmp_path, monkeypatch):
     assert config.runtime.permissions == "allow_read_only"
     paths = InstancePaths(config.runtime.data_dir)
     expected = [(config.core, Core, AnthropicCore), (config.memory, Memory, SqliteMemory),
-                (config.tools, Tools, ShellFilesTools), (config.frontend, Frontend, TuiFrontend)]
+                (config.tools, Tools, ShellFilesTools), (config.frontend, Frontend, DesktopFrontend)]
     for spec, kind, cls in expected:
         assert isinstance(load_module(spec, kind, paths), cls)
     tools = load_module(config.tools, Tools, paths)
     assert tools.root == workspace.resolve()
     frontend = load_module(config.frontend, Frontend, paths)
-    assert frontend.start_options == StartOptions("c1")
+    assert frontend.conversation_id == "c1"
 
 
 DEEPSEEK_CORE = """
@@ -122,7 +120,7 @@ def test_config_file_in_the_data_dir_selects_the_core(workspace, tmp_path, monke
     assert default.memory == ModuleSpec("kadence.memory.sqlite:factory")
     assert default.tools == ModuleSpec("kadence.tools.shell_files:factory",
                                        {"root": str(workspace)})
-    assert default.frontend == ModuleSpec("kadence.frontends.tui:factory")
+    assert default.frontend == ModuleSpec("kadence.frontends.desktop:factory")
 
 
 def test_explicit_config_file_wins_over_the_data_dir(workspace, tmp_path):
@@ -197,7 +195,7 @@ def test_module_ids_of_the_configured_modules(workspace, tmp_path):
     config = build_config(["--data-dir", str(tmp_path)])
     state = config.runtime.modules
     assert dict(state.running) == {"core": "anthropic", "memory": "sqlite",
-                                   "tools": "shell-files", "frontend": "tui"}
+                                   "tools": "shell-files", "frontend": "desktop"}
     assert state.chosen == state.running
     assert state.work_folder == str(workspace) == config.tools.options["root"]
 
@@ -378,31 +376,3 @@ async def test_instance_runs_on_the_scripted_core(workspace, tmp_path):
         assert conversation.title == "Make a file"  # written by maintenance, light model
     finally:
         await memory.aclose()
-
-
-async def test_tui_drives_the_real_runtime(workspace, tmp_path):
-    data_dir = tmp_path / "data"
-    config = build_config(["--data-dir", str(data_dir), "--permissions", "ask"])
-    paths = InstancePaths(data_dir)
-    runtime = Runtime(core=ScriptedCore(steps(), maintenance=Step(text="Make a file")),
-                      memory=load_module(config.memory, Memory, paths),
-                      tools=[load_module(config.tools, Tools, paths)],
-                      frontend=TuiFrontend().info, config=config.runtime,
-                      lock=InstanceLock.acquire(data_dir))
-    app = KadenceApp(runtime, StartOptions())
-    try:
-        async with app.run_test(size=(120, 40)) as pilot:
-            async def until(predicate) -> None:
-                while not predicate():
-                    await pilot.pause(0.02)
-
-            await asyncio.wait_for(until(lambda: app.conversation is not None), 5)
-            app.query_one("#prompt", Input).value = "make the file"
-            await pilot.press("enter")
-            await asyncio.wait_for(until(lambda: bool(app.query(PermissionPrompt))), 5)
-            await pilot.click(f"#{Decision.ALLOW_ONCE.value}")
-            await asyncio.wait_for(until(lambda: any(
-                e.final and e.body == "Done." for e in app.query(AssistantEntry))), 10)
-    finally:
-        await runtime.aclose()
-    assert_wired(await transcript(data_dir), workspace)

@@ -31,7 +31,7 @@ max_cost_usd = 5.0
 
 - **Modules.** Each section takes `factory` and `options`, which map onto `ModuleSpec`. A
   section left out gets its default factory (`DEFAULT_FACTORIES`: Anthropic Core, SQLite
-  Memory, shell/file Tools, TUI). A module chosen in the app by id replaces the one named
+  Memory, shell/file Tools, the desktop app). A module chosen in the app by id replaces the one named
   here (see [swappable modules](2026-11-08-swappable-modules-in-app.md)).
 - **Runtime.** Only per-instance settings: `model`, `maintenance_model`, `permissions`,
   `budget`, and the system prompt. Tuning fields (retries, timeouts) stay at their code

@@ -140,9 +140,6 @@ command-line flags of the per-mode versions.
 
 ### Frontends
 
-- **TUI.** The start screen has Continue from instead of the mode and activation pickers.
-  A conversation list offers open, rename, archive and delete with confirmation; a memory
-  screen lists, adds, edits and forgets entries.
 - **Desktop app.** The sidebar shows titles and offers rename, continue from, archive and
   delete; the spending is shown above the conversation; a Memory window lists, adds, edits and forgets entries. See
   [Desktop app](../proposed/2026-11-07-desktop-app.md).
@@ -216,7 +213,7 @@ command-line flags of the per-mode versions.
 
 ## Consequences
 
-- **One coordinated break.** Every module, the TUI, the desktop app, the launcher and most
+- **One coordinated break.** Every module, the desktop app, the launcher and most
   tests changed together, under contract Draft 3. Nothing outside this repository
   implemented the contracts, so nothing else broke.
 - **The user curates the context.** New, Continue from, archive, forget and delete

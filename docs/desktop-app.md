@@ -1,8 +1,7 @@
 # Desktop app
 
-The desktop app is a window for Kadence: a conversation list on the left, the conversation
-in the middle, and a message box at the bottom. It does what the terminal app does, without
-a terminal.
+The desktop app is Kadence's window: a conversation list on the left, the conversation
+in the middle, and a message box at the bottom.
 
 ![The desktop app, light](images/main-light.png)
 
@@ -25,15 +24,15 @@ uv tool install --python 3.13 --editable "Kadence[desktop]"
 Then start it:
 
 ```bash
-kadence-desktop
+kadence
 ```
 
-`kadence` still starts the terminal app; both show the same conversations. To run the
-desktop app without installing:
+The window opens on its own and the terminal is free again. `kd` and `kadence-desktop` do
+the same. To run the app without installing:
 
 ```bash
 cd Kadence
-uv run --python 3.13 --extra desktop kadence-desktop
+uv run --python 3.13 --extra desktop kadence
 ```
 
 On Linux, choose your name at the bottom left → **Add to App Menu** once the app is open. Kadence then appears in
@@ -41,7 +40,9 @@ your app menu with its own icon and starts without a terminal. The menu item is 
 while the app menu has no entry for this install.
 
 The app is tested on Python 3.13. The Qt libraries it uses are not fully compatible with
-Python 3.15 yet. Without the `desktop` extra, `kadence-desktop` cannot start.
+Python 3.15 yet. Without the `desktop` extra the app cannot start. On a computer without a
+display, `kadence` says so and exits; see
+[Driving Kadence from a program](headless.md) for running it without a screen.
 
 ## First start
 
@@ -110,25 +111,19 @@ Hover the conversation's title to see its folder. What Kadence has spent, across
 conversations, is at the top of the menu under your name; when you pass 80% of your
 spending limit, a notice in the conversation says so. Under the message box are the permission mode and the model. A conversation with a duty shows when it checks in next, next to its title.
 
-At start the app opens maximized and reopens your most recent conversation, or the one you were in when you
-switched from the terminal app.
+At start the app opens maximized and reopens your most recent conversation, or the one
+named with `kadence --conversation ID`.
 
 ## Settings
 
-The Settings window has the same settings as the terminal app; see [Settings](settings.md).
-Raising or removing the spending limit, or letting Kadence do more without asking, asks you
-to confirm first. The provider, key and modules apply when Kadence restarts: **Restart now**
-in the Settings window does that. **Folder for new chats** applies to the next new chat.
-
-## Switching to the terminal app
-
-Run `kadence` in a terminal. It opens the same conversations with the same settings; close
-this app first, since one Kadence uses a data folder at a time.
+See [Settings](settings.md) for what each setting does. Raising or removing the spending
+limit, or letting Kadence do more without asking, asks you to confirm first. The provider,
+key and modules apply when Kadence restarts: **Restart now** in the Settings window does
+that.
 
 ## Good to know
 
-- The app and the terminal app share the same data folder (`~/.kadence`). Only one of them
-  can be open at a time. Opening the app again brings the open window forward; when the
-  terminal app has it, the app says so once and closes, and `kadence` in a terminal says so
-  and exits.
-- Closing the window stops running tasks, as quitting the terminal app does.
+- One Kadence uses a data folder (`~/.kadence`) at a time. Opening the app again brings the
+  open window forward; when another Kadence has the folder, such as one
+  [driven by a program](headless.md), the app says so once and closes.
+- Closing the window stops running tasks; your conversations are saved.

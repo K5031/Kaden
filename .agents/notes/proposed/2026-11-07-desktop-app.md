@@ -6,9 +6,8 @@ Status: proposed — a PySide6 (Qt Widgets) frontend on a qasync event loop, pac
 
 Kadence is meant for people who never open a terminal, and the user chose a desktop app as
 the first graphical frontend, before any web frontend
-([settings note](../implemented/2026-11-07-settings-for-non-technical-users.md)). Today
-the only frontend is the Textual TUI. Using Kadence means installing Python and uv, running
-`kadence` from a shell in the folder to work in, and reading a terminal transcript. Settings
+([settings note](../implemented/2026-11-07-settings-for-non-technical-users.md)). Without
+one, using Kadence means installing Python and uv and working from a shell. Settings
 already live in the runtime (`RuntimeAPI.settings()` / `update_settings()`), so a frontend
 can offer them; what is missing is an app a person can download, open by double-clicking,
 set up by pasting an API key, and chat with.
@@ -28,7 +27,7 @@ main thread.
 - **One loop, no threads.** `run_instance` is a coroutine, and `Frontend.run` is awaited
   inside it. qasync runs a full asyncio loop on Qt's event loop: `asyncio.run(coro,
   loop_factory=qasync.QEventLoop)`. Runtime tasks, Core streams, `asyncio.to_thread`
-  module loading and the shell tool's subprocesses all run as they do under the TUI. Qt
+  module loading and the shell tool's subprocesses all run as they do under `asyncio.run`. Qt
   signals call into coroutines with `asyncio.create_task`.
 - **Why qasync and not QtAsyncio.** QtAsyncio, Qt's own integration, is still a technical
   preview. It has no transports, sockets, servers or subprocesses, so the Core's HTTP
@@ -80,7 +79,7 @@ It is split into two layers:
   `ScriptedCore` and `FakeTools`, and it is the part a web frontend could reuse.
 - **Qt widgets.** They render that state.
 
-Event plumbing works as in the TUI. A pump task copies `runtime.events()` into an inbox, and
+Event plumbing: a pump task copies `runtime.events()` into an inbox, and
 one consumer task applies envelopes in `seq` order. Runtime commands run as separate tasks,
 so a slow `stop()` or `update_settings()` never freezes the window. Their
 `RuntimeStateError` and `ValueError` messages appear as inline notices, never as a modal
@@ -127,7 +126,7 @@ The conversation controls of the autonomy note (rename, archive,
 Continue from, the memory window) are added to the sidebar and Settings as each
 lands in the runtime. v1 does not wait for them, and none of them needs a mode.
 
-**Settings window.** The window offers the same fields as the TUI's `SettingsScreen`:
+**Settings window.** The window offers these fields:
 
 - provider, showing whether a key is saved
 - API key, as a password field, empty to keep the current key
@@ -139,7 +138,7 @@ lands in the runtime. v1 does not wait for them, and none of them needs a mode.
   None
 
 Saving sends a `SettingsUpdate` with only the changed fields. Switching provider disables
-the model fields until saved, as in the TUI. Before sending, the app checks whether the
+the model fields until saved. Before sending, the app checks whether the
 change loosens anything:
 
 - a permission later in `PermissionPolicy` order than the current one
@@ -149,9 +148,8 @@ change loosens anything:
 If it does, a confirmation dialog names each loosening ("This lets the agent do more without
 asking: read-only freely. Continue?"). Nothing is sent unless the user confirms.
 
-That check is pure, and the TUI already implements it as `SettingsScreen._loosening`. It
-moves to a toolkit-free function used by both frontends, so the safety rule has one
-implementation. A provider, key or work-folder change while Kadence is busy shows the
+That check is pure: a toolkit-free function (`kadence.frontends.common.loosening`) that any
+frontend can use, so the safety rule has one implementation. A provider, key or work-folder change while Kadence is busy shows the
 runtime's `RuntimeStateError` as "Finish or stop the current task first". `SettingsChanged`
 refreshes the open window and the status line.
 
@@ -218,7 +216,6 @@ know about the look.
   target Windows.
 - Archive search, memory inspection, a tool list, editing the other budget dimensions.
 - Automatic updates.
-- Moving the TUI onto the shared view model beyond the loosening check.
 - A web frontend.
 
 ## Alternatives considered
@@ -251,7 +248,7 @@ know about the look.
   lacks subprocesses, sockets and transports.
 - **PySide6 with QtWebEngine for the transcript.** HTML rendering would be reusable on the
   web, but QtWebEngine bundles Chromium, which multiplies the bundle size.
-  `QTextBrowser` Markdown covers what the TUI shows.
+  `QTextBrowser` Markdown covers what a reply needs.
 - **The platform's own widget style.** Plain Qt widgets need no styling code and match the
   system, but the user found them gray and dated for a chat app aimed at non-technical
   users, and they look different on every platform.
@@ -292,8 +289,7 @@ know about the look.
     prompts and background operations
   - the settings diff
 - A test shows that loosening permissions, raising the limit and removing the limit each
-  require confirmation, and that nothing is sent on No. The TUI and the desktop app use the
-  same check.
+  require confirmation, and that nothing is sent on No.
 - The window stays responsive while a tool runs, during Stop with a call that ignores
   cancellation, and while `update_settings` rebuilds the Core.
 - The existing runtime and shell-tool tests pass on a `qasync.QEventLoop`, which shows that
@@ -326,7 +322,7 @@ know about the look.
 - **Web reuse is limited to the view model.** A web frontend will need its own rendering
   layer.
 - **Ignoring the configured frontend.** The desktop launcher ignores `[frontend]` in
-  `config.toml`, so the same data directory can be opened by either the TUI or the app. The
+  `config.toml`, so a data directory configured for another frontend opens in the app too. The
   instance lock refuses a second agent in the same mode. The app must show that refusal as
   "Kadence is already open" rather than a traceback.
 

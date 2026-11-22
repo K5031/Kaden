@@ -1,6 +1,6 @@
 # Kadence
 
-An AI agent for your computer, in a terminal or a desktop app. It runs commands, works with
+An AI agent for your computer, in a desktop app. It runs commands, works with
 files and searches the web, decides on its own only what is safe and asks you about the
 rest, and stops at hard spending limits. Works with Anthropic, DeepSeek and
 OpenAI-compatible models.
@@ -21,14 +21,13 @@ Requires Linux, Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 git clone https://github.com/K5031/Kadence.git
-uv tool install --editable Kadence
-export ANTHROPIC_API_KEY=sk-ant-...   # or enter a key in the settings screen (F2)
-mkdir ~/kadence-work && cd ~/kadence-work
+uv tool install --python 3.13 --editable "Kadence[desktop]"
+export ANTHROPIC_API_KEY=sk-ant-...   # or enter a key when the app asks for one
 kadence
 ```
 
-Kadence works freely in the folder you start it from; anything outside it gets a quick
-automatic check, and Kadence asks you when it is unsure. Start it in a folder made for it;
+Kadence works freely in the folder you choose for a chat; anything outside it gets a quick
+automatic check, and Kadence asks you when it is unsure. Choose a folder made for it;
 your home folder is too broad to count.
 
 ## Documentation

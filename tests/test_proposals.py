@@ -153,22 +153,3 @@ async def test_the_desktop_shows_a_card_that_approves(make):
     approve.click()
     await eventually(lambda: outcomes(h).get("p"))
     await eventually(lambda: all(c.isHidden() for c in window.findChildren(ProposalCard)))
-
-
-async def test_the_terminal_app_approves_with_a_command(make):
-    from kadence.frontends.tui import KadenceApp, ProposalPrompt
-    from tests.test_tui import type_text, until
-
-    h = await harness(make, [
-        Step(calls=[call("propose", {"call": WRITE, "reason": "They are messy"}, id="p")]),
-        Step(text="Proposed."), Step(text="Tidied.")])
-    app = KadenceApp(h.runtime)
-    async with app.run_test(size=(100, 40)) as pilot:
-        await until(pilot, lambda: app.conversation is not None)
-        await type_text(pilot, "hi")
-        await pilot.press("enter")
-        await until(pilot, lambda: app.query(ProposalPrompt), timeout=10)
-        await type_text(pilot, "/approve")
-        await pilot.press("enter")
-        await until(pilot, lambda: outcomes(h).get("p") is not None, timeout=10)
-        await until(pilot, lambda: not app.query(ProposalPrompt), timeout=10)

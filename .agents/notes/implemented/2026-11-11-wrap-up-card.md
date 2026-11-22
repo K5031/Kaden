@@ -39,8 +39,7 @@ answers to pick.
   with a call and that proposal is pending: then it approves the proposal. After a restart
   the proposal is gone and the option just sends its label. ✕ puts the card away in that
   window only. Desktop: `WrapUpCard` above the message box with the permission and proposal
-  cards, the first option drawn as the main button. Terminal app: `WrapUpPrompt` in the same
-  place.
+  cards, the first option drawn as the main button.
 - **Headless clients** see the call and the card proposal like any other;
   `docs/headless.md` says what they mean.
 

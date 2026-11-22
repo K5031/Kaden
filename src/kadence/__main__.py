@@ -1,17 +1,16 @@
-"""Run Kadence in a terminal: kadence [options] (or python -m kadence).
+"""Start Kadence: kadence [options] (or python -m kadence).
 
 Builds one instance from an InstanceConfig. A TOML config file (--config, else
 <data dir>/config.toml) names the modules and the per-instance runtime settings (model,
 maintenance model, permissions, budget, system prompt); the settings saved from the app
 (<data dir>/settings.toml) and then command-line flags override it. Anything they leave out
 is a default: SQLite Memory, the Anthropic Core, shell/file Tools rooted at the current
-directory, the Textual TUI and no budget. --show-config prints the result.
+directory, the desktop app and no budget. --show-config prints the result.
 
-The saved frontend runs here when it is a terminal frontend. A saved window frontend opens
-instead: kadence hands over to the window launcher as a detached process when a display is
-available, and runs the TUI (saying why) when there is none or the frontend is not
-installed. Restart now in a frontend starts the instance again in this process, or hands
-over the same way to a window frontend.
+kadence opens the desktop app (or the saved window frontend) as a process of its own and
+returns; it needs a display. A saved frontend that is a terminal's runs here, and
+--headless runs Kadence with no interface, for another program to drive
+(docs/headless.md).
 """
 
 from __future__ import annotations
@@ -64,13 +63,13 @@ DEFAULT_FACTORIES = {
     "core": "kadence.core.anthropic:factory",
     "memory": "kadence.memory.sqlite:factory",
     "tools": "kadence.tools.shell_files:factory",
-    "frontend": "kadence.frontends.tui:factory",
+    "frontend": "kadence.frontends.desktop:factory",
 }
 RUNTIME_KEYS = ("model", "maintenance_model", "permissions", "budget", "system_prompt",
                 "system_prompt_file")
 SECRET_WORDS = ("key", "token", "secret", "password")
 # The frontend each launcher falls back to: its own kind's built-in one.
-LAUNCHER_FRONTENDS = {TERMINAL: "tui", WINDOW: "desktop"}
+LAUNCHER_FRONTENDS = {WINDOW: "desktop"}
 # Not an installed frontend: a person never chooses it in Settings; --headless runs it.
 HEADLESS_FACTORY = "kadence.frontends.headless:factory"
 SAVED_KEYS = ("modules", "model", "maintenance_model", "permissions",
@@ -301,13 +300,15 @@ def choose_frontend(chosen: str | None, configured: ModuleSpec, launcher: str
         return None, configured  # an import path from config.toml
     info = find("frontend", chosen)
     if info is None or info.kind != launcher:
-        own = LAUNCHER_FRONTENDS[launcher]
+        if (own := LAUNCHER_FRONTENDS.get(launcher)) is None:
+            raise SystemExit(f"kadence: no {launcher} interface is installed to run "
+                             f"{chosen or 'Kadence'} in; --headless runs it for a program")
         return own, ModuleSpec(targets("frontend")[own])
     return info.id, (configured if info.factory == configured.factory
                      else ModuleSpec(info.factory))
 
 
-def load_config(args: Launch, *, launcher: str = TERMINAL,
+def load_config(args: Launch, *, launcher: str = WINDOW,
                 restart: Restart | None = None) -> InstanceConfig:
     """config.toml, then the saved settings, then command-line flags, each overriding.
     The Tools root defaults to the current directory. After a
@@ -401,7 +402,7 @@ async def launch(args: Launch, launcher: str, *, restart: Restart | None = None,
         config = load_config(args, launcher=launcher, restart=restart)
         if not runs_here(config):
             return restart
-        restart = await run_instance(config, fallback=LAUNCHER_FRONTENDS[launcher])
+        restart = await run_instance(config, fallback=LAUNCHER_FRONTENDS.get(launcher))
         if restart is None or restart.frontend_kind != launcher:
             return restart
 
@@ -420,8 +421,8 @@ def run_frontends(args: Launch, launcher: str) -> Restart | None:
         except SystemExit as e:
             # A bad config file, before any frontend is chosen: the launcher's own
             # frontend says so on its loop (a window's stderr is unseen).
-            own = ModuleSpec(targets("frontend")[LAUNCHER_FRONTENDS[launcher]])
-            frontend_loop(own)(_fail(e))
+            if (built_in := LAUNCHER_FRONTENDS.get(launcher)) is not None:
+                frontend_loop(ModuleSpec(targets("frontend")[built_in]))(_fail(e))
             raise
         run = frontend_loop(config.frontend)
         restart = run(launch(args, launcher, restart=restart,
@@ -431,13 +432,18 @@ def run_frontends(args: Launch, launcher: str) -> Restart | None:
 
 
 def window_command(args: Launch, restart: Restart) -> list[str]:
-    """The window launcher on the same data directory, config file and conversation."""
+    """The window launcher on the same data directory, config file and conversation, with
+    the models and permissions this launch named."""
     command = [sys.executable, "-m", "kadence.window",
                "--data-dir", str(args.data_dir.expanduser())]
     if args.config:
         command += ["--config", str(args.config.expanduser())]
     if restart.conversation_id is not None:
         command += ["--conversation", restart.conversation_id]
+    for flag, value in (("--model", args.model), ("--maintenance-model", args.maintenance_model),
+                        ("--permissions", args.permissions)):
+        if value is not None:
+            command += [flag, value]
     return command
 
 
@@ -450,36 +456,30 @@ def hand_over(args: Launch, restart: Restart, *,
     print(message)
 
 
-def saved_window(config: InstanceConfig) -> tuple[str | None, str | None]:
-    """The saved frontend `kadence` hands over to at launch (a window frontend, with a
-    display), or the line saying why it runs in the terminal instead; (None, None) when the
-    saved frontend runs here."""
-    state = config.runtime.modules
-    chosen = state.chosen.get("frontend")
-    if chosen is None or chosen == state.running.get("frontend"):
-        return None, None
-    info = find("frontend", chosen)
-    if info is None:
-        return None, f"The interface {chosen!r} is not installed, so Kadence opens in the terminal."
-    if not has_display():
-        return None, (f"No display here, so Kadence opens in the terminal. {info.name} opens "
-                      "when you start Kadence on a computer with a display.")
-    return info.id, None
+def runs_in_terminal(config: InstanceConfig) -> bool:
+    """Whether the frontend chosen is one that runs in this terminal: an installed
+    frontend of that kind, which Kadence itself has none of."""
+    info = find("frontend", config.runtime.modules.chosen.get("frontend"))
+    return info is not None and info.kind == TERMINAL
 
 
 def main(argv: Sequence[str] | None = None) -> None:
+    """Open Kadence: the desktop app, started apart from this terminal. --headless, and a
+    chosen frontend that is a terminal's, run here."""
     args = parse_args(argv)
-    config = load_config(args)
+    config = load_config(args, launcher=TERMINAL if args.headless else WINDOW)
     if args.show_config:
         print(show_config(config, config_path(args)), end="")
         return
-    window, notice = (None, None) if args.headless else saved_window(config)
-    if window is not None:
-        hand_over(args, Restart(window, WINDOW, args.conversation),
+    if not args.headless and not runs_in_terminal(config):
+        if not has_display():
+            print("kadence: there is no display here to open Kadence on. kadence --headless "
+                  "runs it for another program.", file=sys.stderr)
+            raise SystemExit(1)
+        hand_over(args, Restart(config.runtime.modules.running["frontend"], WINDOW,
+                                args.conversation),
                   message="Kadence opens in the desktop app.")
         return
-    if notice is not None:
-        print(notice)
     try:
         restart = run_frontends(args, TERMINAL)
     except ModuleLoadError as e:

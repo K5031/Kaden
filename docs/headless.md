@@ -13,7 +13,7 @@ kadence --headless --data-dir ~/units/writer --goal "Draft the launch post"
 | `--headless` | Use stdin and stdout for the program, as below |
 | `--duty "…"` | Start a new conversation with this [duty](concepts.md#duties) right away |
 | `--goal "…"` | The same, as a goal: it ends when the agent says it is reached |
-| `--data-dir`, `--conversation`, `--model`, `--permissions` | As usual |
+| `--data-dir`, `--config`, `--conversation`, `--model`, `--maintenance-model`, `--permissions` | See [Starting](using-kadence.md#starting) |
 
 Give each unit its own data folder. Its `config.toml` sets the model, permissions and
 spending limit, if it should have one; see [config.toml](settings.md#configtoml).
@@ -27,7 +27,7 @@ the way closing the window does.
 
 **Requests** have the names and parameters of the runtime's commands, every one but
 `restart`. Objects may be sent with their `"type"`, as Kadence sends them; the desktop app
-and the terminal app drive their sub-sessions this way:
+drives its sub-sessions this way:
 
 | Method | Params |
 |---|---|

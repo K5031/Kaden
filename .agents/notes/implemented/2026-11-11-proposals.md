@@ -49,7 +49,7 @@ waits on it.
 ### Frontends
 
 - A card where permission cards are: "Kadence proposes: <the call's step sentence>", the
-  reason, **Approve** and **Dismiss**. The TUI: a prompt line, `/approve` and `/dismiss`.
+  reason, **Approve** and **Dismiss**.
 
 ### The wrap-up card
 

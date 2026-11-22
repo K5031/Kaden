@@ -60,8 +60,6 @@ apps (2026-11-12), with a small preview above the message box for images.
   folder first. They wait in a strip above the text (`AttachmentStrip`): a 56 px preview
   for what Qt can load as a picture, the name otherwise, each with a ✕. A sent message
   shows its pictures (at most 260 px) and its files' names.
-- **The terminal app** names what was attached (`common.with_attachments`); it cannot
-  attach.
 
 ## Alternatives considered
 
@@ -123,5 +121,4 @@ apps (2026-11-12), with a small preview above the message box for images.
 - An Office file reaches the model as text only: its formatting, pictures and charts do
   not, and a formula comes as its last saved value.
 - Not built: the old binary formats (.doc, .xls, .ppt), resizing a picture that is too
-  large, attaching from the
-  terminal app, and a file picker button.
+  large, and a file picker button.

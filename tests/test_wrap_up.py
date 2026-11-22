@@ -208,29 +208,6 @@ async def test_closing_the_card_puts_it_away(make):
     assert controller.model.card is None and len(h.core.requests) == 1
 
 
-async def test_the_terminal_app_shows_the_card(make):
-    from textual.widgets import Button
-
-    from kadence.frontends.tui import KadenceApp, WrapUpPrompt
-    from tests.test_tui import type_text, until
-
-    h = await harness(make, [
-        Step(text="Committed.", calls=[call("wrap_up", WRAP, id="w")]),
-        Step(text="Fine."), Step(text="ok")])
-    app = KadenceApp(h.runtime)
-    async with app.run_test(size=(100, 40)) as pilot:
-        await until(pilot, lambda: app.conversation is not None)
-        await type_text(pilot, "commit it")
-        await pilot.press("enter")
-        await until(pilot, lambda: app.query(WrapUpPrompt), timeout=10)
-        labels = [str(b.label) for b in app.query_one(WrapUpPrompt).query(Button)]
-        assert labels == ["Yes, push", "Not now", "✕"]
-        app.query_one(WrapUpPrompt).query(Button)[1].press()
-        await until(pilot, lambda: len(h.core.requests) == 2, timeout=10)
-        assert "Not now" in repr(h.core.requests[-1].messages[-1])
-        await until(pilot, lambda: not app.query(WrapUpPrompt), timeout=10)
-
-
 def test_cards_come_from_wrap_up_and_ask_for_help():
     assert card_of(ToolCall("a", "wrap_up", ACTION)) == Card(
         "a", RECAP, "Push it?", ("Yes, push", "Not now"), 0)

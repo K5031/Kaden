@@ -24,7 +24,7 @@ The user settings, in the terms a settings screen shows (`api.Settings`):
 | Spending limit | "$10 in total", with spending so far (`snapshot().usage`) | `Budget` |
 | Permissions | "Decide automatically, ask me only when unsure" and the stricter levels | `PermissionPolicy` |
 | Instructions | A text box, prefilled with the built-in prompt | `system_prompt` |
-| Folder for new chats (terminal app) | A text field | `work_folder`, handed to the Tools per conversation ([folders per conversation](2026-11-10-folder-per-conversation.md)); the desktop app asks per chat instead |
+| Folder for new chats | Not a field: the desktop app asks per chat | `work_folder`, handed to the Tools per conversation ([folders per conversation](2026-11-10-folder-per-conversation.md)) |
 | Memory, Tools, Interface | A list of the installed modules | The Memory, Tools and Frontend modules |
 
 Model, maintenance model, spending limit, permissions, instructions and the folder for new
@@ -102,12 +102,10 @@ Code: `api.py` (`Settings`, `SettingsUpdate`, `ModuleChoice`, `ModuleInfo`,
 
 ## Consequences
 
-- Every frontend gets settings through the contract it already uses. The TUI has a
-  settings screen (F2 or `/settings`, `SettingsScreen` in `frontends/tui/`): it sends only
-  the fields that changed, and a `ConfirmScreen` asks before loosening permissions,
-  raising or removing the spending limit, or switching Memory. It edits only the cost
-  limit; other budget dimensions stay as configured. The desktop app's Settings window
-  does the same.
+- Every frontend gets settings through the contract it already uses. The desktop app's
+  Settings window sends only the fields that changed, and asks before loosening
+  permissions, raising or removing the spending limit, or switching Memory. It edits only
+  the cost limit; other budget dimensions stay as configured.
 - The runtime is larger: settings persistence and module discovery.
 - Any frontend, and whatever drives it, can loosen permissions or raise the budget; the
   confirmation rule binds well-behaved frontends only, and the event log records it.

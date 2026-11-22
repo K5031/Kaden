@@ -161,8 +161,8 @@ timing flake, not a violation).
 
 Module streams were imported with `rsync -a --ignore-existing`, so this repository's
 `api.py`, `__init__.py` files and runtime were kept. Dependencies were merged into
-`pyproject.toml`: `anthropic`, `openai`, `httpx2` (the HTTP client both SDKs depend on),
-`textual`; `psutil` for tests.
+`pyproject.toml`: `anthropic`, `openai`, `httpx2` (the HTTP client both SDKs depend on);
+`psutil` for tests.
 
 ### Memory (`kadence.memory.sqlite`)
 
@@ -314,26 +314,6 @@ Design: [Agent Note](notes/implemented/2026-10-30-deepseek-openai-compatible-pro
 - The conformance suite's `RecordingContext` is thread-safe like the runtime's context and
   counts heartbeats separately from visible progress.
 
-### TUI (`kadence.frontends.tui`)
-
-- Factory: `kadence.frontends.tui:factory`. Options `start`, `conversation_id`,
-  `model`: with `start` true the agent starts at once, otherwise the start
-  screen asks. `run()` returns when the user quits or `events()` ends.
-- History is loaded `HISTORY_PAGE` (100) messages at a time; a "Load earlier messages"
-  button at the top of the transcript prepends the previous page (`history(before=...)`).
-  Late-attach recovery follows `RuntimeSnapshot`'s order and also restores queued messages.
-- Per-operation cancel: Ctrl+K lists `snapshot().operations` and cancels the chosen call;
-  `/cancel <call id>` does the same directly.
-- Permission choices are Allow once, Allow for conversation, Deny (`/allow once|conversation`,
-  `/deny`). Runtime-side decisions (policy, Stop) are noted on the call via
-  `PermissionResolved.call_id`.
-- Activate (Ctrl+R, `/activate`) is offered once started; the runtime remains the
-  authority and its errors are shown as notifications.
-- Queued messages are matched to their commit by `message_id`. A BACKGROUNDED placeholder
-  keeps the call shown as running in the background until its final ToolFinished or
-  OperationResult. Refusals get a red "declined" line. The model shown follows
-  `ModelSelected`.
-
 ## Running Kadence
 
 Design of the config file: [Agent Note](notes/implemented/2026-11-02-instance-config-file.md).
@@ -342,20 +322,24 @@ applied over the config file: [Agent Note](notes/implemented/2026-11-07-settings
 
 ```
 export ANTHROPIC_API_KEY=...
-cd <project to work in>          # shell/file tools are rooted here
-kadence [--config FILE] [--conversation ID]
+kadence [--config FILE] [--conversation ID] [--data-dir DIR]      # opens the desktop app
+kadence --headless [--duty TEXT | --goal TEXT]
     [--model MODEL_ID] [--maintenance-model MODEL_ID]
-    [--permissions allow_workspace|allow_read_only|ask|deny] [--data-dir DIR]
+    [--permissions allow_workspace|allow_read_only|ask|deny]      # for a program
 ```
 
 The `kadence` command (`[project.scripts]`, installed with `uv tool install --editable`) and
-`python -m kadence` both run `kadence.__main__:main`. `kadence/__main__.py` builds an `InstanceConfig`. The modules come from a TOML file:
+`python -m kadence` both run `kadence.__main__:main`. It opens the desktop app as a process of
+its own (`python -m kadence.window` with the data directory, config file and conversation)
+and returns; without a display it prints that there is none and that `kadence --headless`
+runs it for another program, and exits 1. `--headless`, and a chosen frontend of the
+terminal kind, run in the process itself. `kadence/__main__.py` builds an `InstanceConfig`. The modules come from a TOML file:
 `--config FILE` (must exist), else `<data dir>/config.toml` (optional). Sections `[core]`,
 `[memory]`, `[tools]`, `[frontend]`, each with `factory` and `options`; anything else is
 refused at startup. A module left out gets its default: `kadence.core.anthropic:factory`,
 `kadence.memory.sqlite:factory` (`<data dir>/memory.db`), `kadence.tools.shell_files:factory`
 rooted at the current directory (only when no tools options are given), and
-`kadence.frontends.tui:factory`. The file is read with stdlib `tomllib`. `[runtime]` holds the
+`kadence.frontends.desktop:factory`. The file is read with stdlib `tomllib`. `[runtime]` holds the
 per-instance settings: `model`, `maintenance_model`, `permissions`, `system_prompt` or
 `system_prompt_file`, and `[runtime.budget]` (the `Budget` fields, non-negative). Keeping the budget limit in the data directory, next to
 the usage it limits, is the point: a flag alone would let each launch pick or forget the
@@ -363,9 +347,9 @@ limit. `--model`, `--maintenance-model` and `--permissions` override the file. T
 `RuntimeConfig` fields (retries, timeouts, ...) are tuning and stay at their defaults
 until someone needs them. `--show-config` prints the effective config as TOML (`tomli-w`)
 and exits. `--conversation` starts at once: it becomes the frontend options
-`start = true` and `conversation_id`, merged over the configured ones.
-The data directory defaults to `$KADENCE_DATA_DIR` or `~/.kadence`. Without those flags the
-TUI's start screen asks. The launcher checks no API keys: each Core refuses a
+`start = true` and `conversation_id`, merged over the configured ones; the desktop app is
+handed it as the conversation to open first.
+The data directory defaults to `$KADENCE_DATA_DIR` or `~/.kadence`. The launcher checks no API keys: each Core refuses a
 missing key at construction (the Anthropic Core accepts `ANTHROPIC_API_KEY` or
 `ANTHROPIC_AUTH_TOKEN`).
 
@@ -380,9 +364,8 @@ their traceback, since they are bugs rather than configuration mistakes.
 
 `tests/test_e2e.py` is the end-to-end check. No API key was available, so it runs the real
 Memory, Tools and runtime against the scripted Core: once through `run_instance` with the
-config `python -m kadence` builds (Core and Frontend swapped for fakes), and once with the
-real TUI driven by Textual's test pilot (send, approve the shell call, see the answer).
-Both check the SQLite transcript and the file the shell call wrote. The live Core suites
+config `python -m kadence` builds (Core and Frontend swapped for fakes). It checks the
+SQLite transcript and the file the shell call wrote. The live Core suites
 run with `KADENCE_LIVE_TESTS=1` and a key.
 
 ## Desktop app
@@ -395,13 +378,13 @@ Design: [Agent Note](notes/proposed/2026-11-07-desktop-app.md).
 | Entry points | No command of its own: `kadence` hands over to `python -m kadence.window`; bundles run `python -m kadence_desktop`, which calls the same `main`, or `kadence.__main__.main` when started as `kadence` or `kd` (links the package adds) |
 | Dependencies | `pyside6-essentials` and `qasync`, in the `desktop` extra (also in the dev group) |
 | Default work folder | The current directory, for both launchers, when neither config file sets a root. The desktop app has the user choose each new chat's folder (`Controller.folder_picked`) |
-| At launch | Opens `--conversation` (given by the TUI's hand-over), else the most recently updated conversation, or starts one when there is none |
+| At launch | Opens `--conversation` (given by `kadence`), else the most recently updated conversation, or starts one when there is none |
 | Welcome | Shown on the setup runtime when the chosen provider needs a key and no provider has one; it saves the provider, key, work folder and limit, then restarts |
 | Markdown re-render | At most every 100 ms while streaming; at once on commit |
 | History page | 100 messages, then "Load earlier messages" |
 | Quit order | `setQuitOnLastWindowClosed(False)`: closing the window ends `Frontend.run`, the runtime shuts down, then `asyncio.run` returns |
 | "Get a key" pages | `platform.claude.com`, `platform.deepseek.com/api_keys`, `platform.openai.com/api-keys` |
-| Shared with the TUI | `kadence.frontends.common`: permission labels, money formatting, `loosening()` |
+| Toolkit-free | `kadence.frontends.common`: permission labels, money formatting, `loosening()` |
 | Look | Fusion style plus a palette and style sheet from `theme.py`; light or dark from `QStyleHints.colorScheme()`, followed live |
 | Accent | Indigo `#5B5BD6` (light), `#8C8CF5` (dark); the rest neutral gray |
 | Text sizes | Relative to the system font: small 0.85×, title 1.15×, heading 1.45× |
@@ -437,8 +420,7 @@ run, on `QtEventLoop`. Bundles carry Python 3.13.
 
 **Briefcase (0.4.7).** The bundle installs Kadence as a package (`requires =
 [".[desktop]"]`), not its sources: Kadence finds its modules through entry points, which
-only package metadata carries (a bundle of sources opened the terminal frontend and listed
-no modules). The Linux system package for Arch builds and starts the desktop app
+only package metadata carries (a bundle of sources lists no modules). The Linux system package for Arch builds and starts the desktop app
 (2026-11-10, system Python 3.14.9): 114 MB as `.pkg.tar.zst`, 398 MB installed, of which
 PySide6 is 244 MB. Not built yet: the Flatpak (needs `flatpak-builder`) and the macOS
 `.dmg` (needs a Mac).
@@ -526,8 +508,8 @@ Design: [Agent Note](notes/implemented/2026-11-08-swappable-modules-in-app.md).
 
 | Choice | Value |
 |---|---|
-| Built-in ids | `anthropic`, `deepseek`, `openai`; `sqlite`; `shell-files`; `tui`, `desktop` |
-| Display names | Claude, DeepSeek, OpenAI; Built-in memory (SQLite); Shell and files; Terminal (TUI), Desktop app |
+| Built-in ids | `anthropic`, `deepseek`, `openai`; `sqlite`; `shell-files`; `desktop` |
+| Display names | Claude, DeepSeek, OpenAI; Built-in memory (SQLite); Shell and files; Desktop app |
 | Discovery | `importlib.metadata.entry_points` per group; ids read from metadata alone at launch, factories imported only for `settings()`. A failing import is logged at INFO and the entry left out |
 | Desktop entry point | `kadence.frontends.desktop` imports `qasync` and `PySide6.QtWidgets` at the top, so it loads only with the `desktop` extra |
 | `kadence.core.openai_compat:factory` | Not registered: the profiles are `deepseek_factory` and `openai_factory`. A config naming the generic factory has no id ("Custom (from config.toml)") |
@@ -535,9 +517,9 @@ Design: [Agent Note](notes/implemented/2026-11-08-swappable-modules-in-app.md).
 | Options on a switch | A chosen module keeps `config.toml`'s options only when it is the module `config.toml` names; otherwise it gets none |
 | Core change | Saves `model = ""` and `maintenance_model = ""` (the new Core's first, the main model), overriding `config.toml`. Models chosen while another Core waits apply live and are not saved |
 | Restart | `RuntimeAPI.restart()` records a `Restart(frontend, frontend_kind, conversation_id)`, logs a `restart` decision and shuts down as on quit. `launch()` reloads the config and runs the next instance in the same process; the frontend gets `start = true` and the conversation unless the Memory changed |
-| Terminal to window | After the instance has shut down (the lock is released), `kadence` runs `python -m kadence.window --data-dir D [--config C] [--conversation ID]` with `start_new_session`, standard streams to `/dev/null`, and prints that Kadence continues in the desktop app |
+| Terminal to window | After a terminal frontend's instance has shut down (the lock is released), `kadence` runs `python -m kadence.window --data-dir D [--config C] [--conversation ID]` with `start_new_session`, standard streams to `/dev/null`, and prints that Kadence continues in the desktop app |
 | Display check | macOS and Windows always; elsewhere `DISPLAY` or `WAYLAND_DISPLAY` set |
-| Frontend per launcher | The saved frontend when installed and of the launcher's kind, else `tui` (`kadence`) or `desktop` (the window launcher). A saved window frontend makes `kadence` hand over at launch ("Kadence opens in the desktop app.") when a display is available; without one, or when it is not installed, `kadence` prints why and runs the TUI. An uninstalled saved frontend is not a startup error: settings show the saved id as not installed |
+| Frontend per launcher | The saved frontend when installed and of the launcher's kind, else `desktop` (the window launcher; Kadence has no terminal frontend of its own). `kadence` runs a saved frontend of the terminal kind in its terminal; otherwise it hands over at launch ("Kadence opens in the desktop app.") when a display is available, and without one prints that there is no display and that `kadence --headless` runs it for another program, and exits 1. An uninstalled saved frontend is not a startup error: settings show the saved id as not installed |
 | Startup errors | An uninstalled Core, Memory or Tools id, or a `ModuleLoadError` from building them, runs the frontend on `SetupRuntime`. A frontend that fails to build is replaced by the launcher's own, which shows the error |
 | Setup runtime | Saves module settings, budget, permissions and system prompt; refuses model choices (`ValueError`) and every other command (`RuntimeStateError` naming the error). It takes no lock and writes no event log: nothing runs, and another instance may hold the directory |
 | Work folder | The Tools `root` option, settable when the configured Tools has one (the built-in shell-files Tools always does) |
@@ -599,7 +581,7 @@ Design: [Agent Note](notes/implemented/2026-11-10-memory-notes.md). Tools offere
 | Tools | `read_note(title)`, `save_note(title, description, text)` (replaces the whole text; an empty description keeps the old one), `forget_note(title)`; a missing title answers ERROR listing the notes |
 | Save pass | In `maintain` when the newest message is an answer calling no tool and comes after the last saved one; reads the messages since (the newest part when long), the profile, notes' texts within 5 % of the light model's window (most recently written first, stopping at the first that does not fit) and the rest as an index; writes `<save>` (whole text) and `<append>` changes; up to 1 024 output tokens; a CoreError is logged and the exchange is read again after the next answer |
 | Runtime | `maintain` is called once more after a cycle's last answer, before IDLE; when it acted, `MemoriesChanged(saved)` names the notes whose latest revision is new (read with `notes()` before and after); the event log keeps their number, not their titles |
-| Notice | Frontends show a non-empty `saved` as a line after the answer: "Memory updated: Trip, About you", with an "Open memory" link in the desktop app and "(F4 to see it)" in the TUI. Saves by the agent's tools show as steps, and the user's own edits are not announced |
+| Notice | Frontends show a non-empty `saved` as a line after the answer: "Memory updated: Trip, About you", with an "Open memory" link in the desktop app. Saves by the agent's tools show as steps, and the user's own edits are not announced |
 | Compaction | Writes the summary only; facts are the save pass's |
 | Checked | Against Claude Haiku 5.5 (2026-11-10): a self-introduction made a profile and a project note, small talk saved nothing, a later plan was appended to the project note; about one cent for three turns |
 
@@ -621,7 +603,7 @@ Design: [Agent Note](notes/implemented/2026-11-10-step-descriptions.md).
 | Choice | Value |
 |---|---|
 | Opened | Closed by default; the desktop app keeps a group open while its first step stays first |
-| Live title | The latest step not yet ended, with its state (desktop: preparing, running, in the background; TUI: starting, running, in the background) |
+| Live title | The latest step not yet ended, with its state (preparing, running, in the background) |
 | Ended title | One step: its sentence and its problem; several: "N steps" and problems counted by label ("1 failed, 1 declined") |
 | Cancel | The desktop group line has Cancel for its live step; each step keeps its own |
 | Step rows | No box; "done" is not shown, its duration is in the tooltip; other states stay visible |
@@ -631,7 +613,6 @@ Design: [Agent Note](notes/implemented/2026-11-10-step-descriptions.md).
 | Choice | Value |
 |---|---|
 | Desktop | A committed call is `Phase.WAITING` ("waiting", no Cancel) until `ToolStarted`: it may wait for a permission prompt, the automatic review, or earlier calls |
-| TUI | The group line shows "waiting" for a requested call, as the desktop app does |
 
 ## MCP servers
 
@@ -670,8 +651,7 @@ Design: [Agent Note](notes/implemented/2026-11-10-provider-web-search.md).
 |---|---|
 | Asking | A desktop app that finds the data folder in use (`Settings.already_open`) connects to the open app's Unix socket and sends `show`; the open app brings its window forward (show normal, raise, activate) and the second exits without a window. Asyncio sockets, so it works on any loop |
 | Socket | `$XDG_RUNTIME_DIR` (else the temp folder) `/kadence-<first 16 hex of SHA-256 of the data folder's path>.sock`, short enough for a socket name; a stale one is replaced when the next app listens, and it is removed on close |
-| No answer | The terminal app has the folder (or a crash left it locked): one message, "Kadence is already open, probably in a terminal…", then the app closes |
-| Terminal app | With `already_open` it exits at once (return code 1) with the error and what to do, instead of opening Settings |
+| No answer | Another Kadence has the folder, such as a headless one (or a crash left it locked): one message, "Kadence is already open, probably in a terminal…", then the app closes |
 | Raising | Desktops may refuse to give a background program's window focus (KDE's focus-stealing prevention); the window then asks for attention in the task bar instead |
 
 ## Duties
@@ -690,8 +670,8 @@ Design: [Agent Note](notes/implemented/2026-11-11-duties.md).
 | Events | `ConversationUpdated` for duty and plan changes; `DutyScheduled(wake_at)` and `RuntimeSnapshot.duty_wake_at` for the next wake; the event log records `duty`, `plan` (item count), `duty_scheduled` (delay, cause), `duty_paused`, `goal_finished` and each `cycle_requested` reason ("duty: <cause>") |
 | Asking for help | `ask_for_help(question)`, offered with a duty: the question is held in memory (`HelpNeeded`, `RuntimeSnapshot.help_needed`), not stored; while it is open the schedule is off (`duty_paused` "waiting for help") and finished operations still wake the agent; `send`, `activate`, `set_duty` and `start` clear it. Frontends show it as a warning line and "Duty waiting for your answer" in the status; the event log keeps its length only |
 | Store | SQLite schema 8: `conversations.duty` (JSON or NULL) and `conversations.plan` (JSON list, default `[]`) |
-| Plan text | The TUI and desktop edit the plan as lines: `[status] step \| due YYYY-MM-DD HH:MM \| note` (`frontends.common.plan_text`, `parse_plan_text`) |
-| Commands | TUI: `/duty <instruction>`, `/goal <instruction>`, `/duty off`, `/duty` or `/plan` or F5 for the screen. Desktop: **Kadence → Duty…** |
+| Plan text | The desktop app edits the plan as lines: `[status] step \| due YYYY-MM-DD HH:MM \| note` (`frontends.common.plan_text`, `parse_plan_text`) |
+| Commands | **Kadence → Duty…** in the desktop app |
 
 ## Message times
 
@@ -734,10 +714,9 @@ Design: [Agent Note](notes/implemented/2026-11-11-sub-sessions.md).
 | Initiation | The agent starts a child when the user asked for the work, and proposes `start_session` (Proposals) when it is its own idea |
 | Notices | When a child's state leaves "working" on a `StateChanged` (a goal between check-ins is still working) and no parent call waits on it: `Sub-session <id> (<name>) ended a turn: <state>.` with its question, report, or last reply (first 400 characters). Kept per parent conversation; the frontend writes them with `notify` to its own runtime when that conversation is open (on each change, and after opening a conversation) |
 | Resume | No automatic resume after a restart (SPEC 11). `resume`: start it again on its conversation, then `activate`; offered when it is stopped, failed or idle with its goal not reached. `message_session` starts a stopped child again too |
-| Limits | Optional. The user's limit per sub-session (none by default) is kept by the manager in `<data>/sessions/limit.json`, not in the runtime's settings; `start_session` gives `budget_usd`, capped by the user's limit when there is one, and its description states that limit. Desktop: a Settings field; TUI: a `/sessions` button. A child's own limit changes with `set_child_limit`: through the child's `update_settings` while it runs, else in its settings.toml; raising or removing either is confirmed (`common.raises_limit`); empty or 0 means none. Rows show "$spent", and "of $limit" with one |
-| Deletion | Deleting a conversation (desktop and TUI) deletes its sub-sessions after it (`SubSessions.delete_of`), archived ones included; the confirmation names them. Archiving the parent hides them, since they are listed only under it |
+| Limits | Optional. The user's limit per sub-session (none by default) is kept by the manager in `<data>/sessions/limit.json`, not in the runtime's settings; `start_session` gives `budget_usd`, capped by the user's limit when there is one, and its description states that limit. The desktop app has a Settings field for it. A child's own limit changes with `set_child_limit`: through the child's `update_settings` while it runs, else in its settings.toml; raising or removing either is confirmed (`common.raises_limit`); empty or 0 means none. Rows show "$spent", and "of $limit" with one |
+| Deletion | Deleting a conversation deletes its sub-sessions after it (`SubSessions.delete_of`), archived ones included; the confirmation names them. Archiving the parent hides them, since they are listed only under it |
 | Row actions | Rename (`title`, empty shows the task), Archive (hidden unless Show archived), Delete (stop, then the folder is erased after confirmation). Recorded in `session.json` with `has_goal` and `budget_usd` |
-| TUI | Opening a child shows it in place: the shown runtime is the child's `RemoteRuntime` (a new event pump, then a resync) until `/back`, until another conversation is opened, or until the child's event stream ends ("Sub-session ended"). Only the end of the app's own stream quits the app. Conversations, memory, tool servers, settings, `/sessions` and `/folder` are always the app's own runtime's and open over the child; messages, Stop, the model, the duty and approvals go to the one shown. The app listens to the manager from mount to unmount and refreshes an open `/sessions` list itself. The status line starts with "Sub-session: <name> (/back returns)". `/sessions`: the list with Open, Start, Dismiss, Resume, Stop, Rename, Archive, Delete and Show archived |
 
 ## Proposals
 
@@ -751,7 +730,7 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Wake-up | Pending proposals are left out of the wake set; a finished proposal operation sets a flag that wakes an idle agent, cleared when the next request is built |
 | Withdrawn | `op_cancel` on its id, Stop, and `start()` (switching conversations) cancel pending proposals: `ProposalResolved(id, None)`. Pending proposals are not in `RuntimeSnapshot.operations` nor counted in `StateChanged.pending_ops` |
 | Results | Approved: the call's own output. Dismissed: "The user dismissed the proposal; it did not run." (OK status) |
-| Cards | Desktop: `ProposalCard` with the permission cards ("Kadence proposes: <step sentence>", the reason, other arguments; a `start_session` shows its task), Approve and Dismiss. TUI: `ProposalPrompt`, `/approve` and `/dismiss` answer the first open one |
+| Cards | Desktop: `ProposalCard` with the permission cards ("Kadence proposes: <step sentence>", the reason, other arguments; a `start_session` shows its task), Approve and Dismiss |
 
 ## Runtime notices
 
@@ -760,7 +739,7 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 | Who wrote it | `Message.author`: `Author.USER`, or `Author.KADENCE` for every USER message Kadence writes for the model: the activation notice, a duty's wake-up, a due step, the voice notices, background outcomes, and a sub-session's report to its parent, which a frontend writes with `RuntimeAPI.notify`. The stored text is what was written, with no marker |
 | One test | `Message.from_user` (USER role and `Author.USER`) is what every reader uses: the permission review's "what the user asked", Memory's title and preview (`_FROM_USER` in SQL), the voice lookup, the frontends (`common.notice_of`) |
 | For the model | In a request the runtime starts a notice with `[Runtime notice] ` after the time stamp (`config.NOTICE_MARK`, added in `orchestrator._stamped`); a hidden one with `[Runtime notice] (The user does not see this notice.) `. Memory's summarizing transcript names its writer "notice from Kadence, not the user"; `recall` lines say `notice` in place of the role |
-| Shown | Frontends show such a message as a notice line (desktop `NoticeItem`, TUI `SystemEntry`), never as the user's bubble; a long one (several lines or over 160 characters, such as a new goal's brief) is folded to its first line, with Show all on the desktop and a collapsed entry in the TUI; a queued one (`MessageQueued.author`) is shown once it is committed. A conversation in which the user wrote nothing yet has no preview and is labelled "New chat" until it gets a title |
+| Shown | Frontends show such a message as a notice line (desktop `NoticeItem`), never as the user's bubble; a long one (several lines or over 160 characters, such as a new goal's brief) is folded to its first line, with Show all; a queued one (`MessageQueued.author`) is shown once it is committed. A conversation in which the user wrote nothing yet has no preview and is labelled "New chat" until it gets a title |
 | Not shown | A notice that only tells the model how to behave (the voice notices) has `Message.hidden`. Frontends show nothing for it; it is in the archive and in every request like any other message |
 | Stored | Columns `author`, `hidden`, `spoken` of `messages` |
 
@@ -800,7 +779,7 @@ Design: [Agent Note](notes/implemented/2026-11-11-proposals.md).
 |---|---|
 | Signal | Memory marks its summarizing Completion call with `compacting=True`; the runtime emits `CompactionStarted` on it and `CompactionFinished` when maintain returns. `MaintenanceStarted` alone could not be used: upkeep runs after every answer. |
 | "Compacted" | maintain succeeded and returned True, and the compacting call's output was not empty. A summary Memory then rejects while saving something else counts as compacted; that needs a reply that parses to nothing, and it only mislabels one line. |
-| Look | A notice line in the transcript, "Compacting conversation…", changed to "Conversation compacted", or removed when nothing was compacted. Desktop and terminal app alike. Lines are not kept across restarts. |
+| Look | A notice line in the transcript, "Compacting conversation…", changed to "Conversation compacted", or removed when nothing was compacted. Lines are not kept across restarts. |
 
 ## Wrap-up card
 
@@ -930,12 +909,13 @@ The design is in [the note](notes/implemented/2026-11-12-voice-conversation.md);
 | Cost | Written tokens count as input at the input price; the premium (25 %, or 100 % for an hour's cache) is added as `Usage.extra_cost_usd`, from the model's input price |
 | Limit | The duty and Memory's addendum are in the system prompt, which comes before the messages: when one changes, the next request writes the conversation again instead of reading it. The plan is kept out of it while the conversation shows it, and the files Memory keeps each conversation's index as it started (measured: after a memory write, the next request read its whole prompt from the cache). What remains: a new rolling summary, and the built-in notes Memory, whose index changes with every save |
 
-## No interface choice in the settings screens
+## One interface, not chosen in Settings
 
 | Choice | Decision |
 |---|---|
-| Offered | AI provider and Tools (`common.MODULE_LABELS`). The interface is not a setting for now (the user, 2026-11-12): `kadence` starts the terminal app, `kadence-desktop` (entry point of `kadence.window:main`) and the app menu the desktop app |
-| Still honoured | A frontend saved under `[modules]` in settings.toml or named in config.toml: the launchers and `restart()` work as before, so `kadence` opens the desktop app where one was chosen earlier |
+| Offered | AI provider and Tools (`common.MODULE_LABELS`). The interface is not a setting (the user, 2026-11-12): `kadence`, `kadence-desktop` (entry point of `kadence.window:main`) and the app menu all open the desktop app |
+| One interface | Kadence ships the desktop app and no terminal app (the user, 2026-11-21: it was not used, and it was a second implementation of the conversation that had drifted from the one the desktop app and KFM share). `kadence` opens the desktop app; headless mode is for programs; a terminal frontend can still be installed as a module. |
+| Still honoured | A frontend saved under `[modules]` in settings.toml or named in config.toml: the launchers and `restart()` run it: a window frontend in place of the desktop app, a terminal frontend in the terminal `kadence` is started in |
 
 ## Seeing the screen
 
@@ -959,7 +939,7 @@ Design: [Agent Note](notes/implemented/2026-11-12-seeing-the-screen.md).
 | `read_file` on a PDF | `[PDF, N pages]`, then `[Page n]` and its text for every page or the `pages` range ("3", "2-5"), up to 100 000 characters, with a note to read on; a note to use `view` when no text could be read. With `view: true`: content `[PDF, N pages]`, with `; pages a-b attached` for a part and `; use pages "c-d" to read on` when more than 20 were asked for, and the pages as a `Document` built with pypdf (a PDF of just those pages) with their text; over 20 MB an error |
 | `read_file` on a picture | Content `[Image path]` and the `Image`; over 5 MB an error |
 | Stored | A `ToolResult`'s attachments are encoded as blocks inside it (`codec._encode_value`); search leaves their data out as for top-level blocks |
-| Shown | Both apps add `[image: name]` / `[file: name]` lines to a step's result (`common.result_text`) |
+| Shown | The desktop app adds `[image: name]` / `[file: name]` lines to a step's result (`common.result_text`) |
 | As text | `[File attached: path (PDF, N pages)]` and its text, or that none could be read; `[Image attached: name]`; `[File attached: path]` and the content; or that the content is not included (`api.attachment_text`) |
 | Desktop | Dropped files and pasted file lists are attached, not typed in as paths (`MessageBox.insertFromMimeData`); a pasted picture is saved as `pasted-N.png` in a temporary folder removed when the window closes; the same path is not attached twice |
 

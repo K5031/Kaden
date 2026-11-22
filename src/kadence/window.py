@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from kadence.__main__ import DEFAULT_DATA_DIR, Launch, run_frontends
+from kadence.api import PermissionPolicy
 from kadence.runtime.modules import WINDOW
 
 
@@ -25,6 +26,10 @@ def parse_args(argv: Sequence[str] | None = None) -> Launch:
                         help="instance data directory (default: $KADENCE_DATA_DIR or ~/.kadence)")
     parser.add_argument("--config", type=Path, help="config file (default: <data dir>/config.toml)")
     parser.add_argument("--conversation", help="open this conversation first")
+    parser.add_argument("--model", help="model id (default: the first the Core lists)")
+    parser.add_argument("--maintenance-model", help="cheaper model for memory maintenance")
+    parser.add_argument("--permissions", choices=[p.value for p in PermissionPolicy],
+                        help="tool permission policy (default: auto)")
     return Launch(**vars(parser.parse_args(argv)))
 
 

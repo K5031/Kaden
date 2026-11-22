@@ -20,7 +20,6 @@ dependencies = [
     "python-docx>=1.2.0",
     "python-pptx>=1.0.2",
     "pyyaml>=6.0.3",
-    "textual>=8.2.8",
     "tomli-w>=1.2.0",
     "trafilatura>=2.3.1",
 ]
@@ -45,7 +44,6 @@ files = "kadence.memory.files:factory"
 shell-files = "kadence.tools.shell_files:factory"
 
 [project.entry-points."kadence.frontends"]
-tui = "kadence.frontends.tui:factory"
 desktop = "kadence.frontends.desktop:factory"
 
 [project.optional-dependencies]

@@ -8,7 +8,7 @@ conversation after its first message; you can rename it.
 
 - **New conversation**: a fresh start. The agent sees nothing of your other chats except
   [long-term memory](#memory).
-- **Continue from**: a new conversation that knows where an earlier one left off. Kadence
+- **Continue in a new conversation**: a new conversation that knows where an earlier one left off. Kadence
   writes a short summary of the earlier one into the new one, then leaves the earlier one
   as it was. Use it when a conversation has grown long or wandered off.
 - **Archive** hides a conversation from the list and from the agent's searches. You can
@@ -23,7 +23,7 @@ long ago you last wrote. The conversation shows your messages as you typed them.
 A tool that runs longer than about 10 seconds moves to the background. The agent gets on
 with other work, or tells you it is waiting. When the tasks it started have all ended, the
 agent is woken with the results and carries on by itself, so you don't have to ask whether
-it is done. It can check on a task or cancel it, and so can you (Ctrl+K). A task that runs
+it is done. It can check on a task or cancel it, and so can you (**Cancel** on its card). A task that runs
 over an hour (unless the tool allows longer) ends as timed out.
 
 Apart from a [duty](#duties), that is the only time the agent acts without a message from
@@ -58,18 +58,19 @@ or turn it off; the conversation keeps everything said so far.
   setting one in Settings caps what it can cost; your provider's own spend limit is the
   other guard.
 - **It pauses** when you press Stop, when the limit is reached, after an error, and after
-  Kadence restarts, so a crash never quietly repeats an action. Send a message or activate
-  the conversation (Ctrl+R) to resume it.
+  Kadence restarts, so a crash never quietly repeats an action. Send a message to resume
+  it.
 - **It asks when it is stuck.** When only you can unblock it (a decision, an approval,
   access it lacks), the agent asks you a question and stops checking in until you
-  answer. The question appears in the conversation and the status line says the duty is
-  waiting for you. Your reply resumes it; finished background tasks still wake it
+  answer. The question appears in the conversation, and the line next to its title says
+  the duty is waiting for you. Your reply resumes it; finished background tasks still wake it
   meanwhile.
 - **Permissions still apply.** An action that would ask you waits for you, so a duty that
   runs unattended needs permissions that cover what it does.
-- **Continue from** does not copy a duty.
+- **Continue in a new conversation** does not copy a duty.
 
-The status line says when the duty checks in next, or that it is paused.
+Next to the conversation's title, a line says when the duty checks in next, or that it is
+paused.
 
 ## Sub-sessions
 
@@ -96,7 +97,7 @@ step. Several can run at once.
 - **You can open it.** The desktop app lists each conversation's sub-sessions under it in
   the sidebar. Click one to open it in place of the conversation: its messages and steps,
   its approvals, Stop, and a message box that talks to it. Click the conversation to go
-  back; the sub-session keeps working. In the terminal app, `/sessions` does the same.
+  back; the sub-session keeps working.
 - **It is kept.** Quitting Kadence stops sub-sessions that are working, but they stay listed,
   and **Resume** lets one carry on with its task. Kadence never resumes one by itself after a
   restart, so a crash cannot quietly repeat an action. Opening one that is not running
@@ -127,7 +128,7 @@ Kadence keeps every message of every conversation until you delete the conversat
   of recent work and anything Kadence can read again in your files, and rewrites a note that
   has gone out of date, so you do not have to tidy memory yourself.
   When it saves something, a line under the answer says so ("Memory updated: Trip"), with
-  a link to Memory in the app (F4 in the terminal).
+  a link to Memory.
   The agent also saves when you ask it to remember something, and deletes a note when you
   say it is no longer true. It never keeps passwords or keys on purpose. You can read, add,
   edit and **delete** notes in Memory. Notes stay when the conversation that wrote them is

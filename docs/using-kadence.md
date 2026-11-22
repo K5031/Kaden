@@ -2,23 +2,21 @@
 
 ## Starting
 
-`kadence` opens the start screen: pick an existing conversation or a new one, and the model,
-then press Enter. A new conversation can **Continue from** an earlier one, starting from
-where that one left off, and can work in another **Folder** (empty: the default folder).
-
-To skip the screen:
-
-```bash
-kadence --conversation ID       # continue a conversation
-```
+`kadence` (or `kd`, or Kadence in your app menu) opens the [desktop app](desktop-app.md) on
+your most recent conversation. The command returns at once; the app runs on its own. It
+needs a display: without one, `kadence` says so and exits.
 
 | Option | Does |
 |---|---|
-| `--conversation ID` | Start right away in this conversation |
-| `--model ID`, `--maintenance-model ID` | Override the models for this run |
-| `--permissions auto\|allow_workspace\|allow_read_only\|ask\|deny` | Override the [permission level](settings.md#permissions) for this run |
+| `--conversation ID` | Open this conversation first |
 | `--data-dir DIR`, `--config FILE` | Use another data folder or config file |
 | `--show-config` | Print the settings Kadence would use, then exit |
+| `--headless` | Run without a screen, for [another program to drive](headless.md) |
+| `--model ID`, `--maintenance-model ID` | Override the models for this run |
+| `--permissions auto\|allow_workspace\|allow_read_only\|ask\|deny` | Override the [permission level](settings.md#permissions) for this run |
+
+This page says what Kadence does; [Desktop app](desktop-app.md#using-it) lists where each
+thing is in the window.
 
 ## Talking to the agent
 
@@ -27,13 +25,11 @@ are queued and delivered when it is ready. Its reasoning, replies and tool calls
 the conversation as they happen. Each step reads as a short sentence the agent writes
 ("Read your notes"), with the exact input below it. The steps between two replies, and the
 agent's thinking between them, fold into one line that shows the step under way, then how
-many there were and any that failed ("4 steps · 1 failed"); open it to see them all. In the
-terminal app, select the line and press Enter.
+many there were and any that failed ("4 steps · 1 failed"); click it to see them all.
 
 ### Talking with Kadence
 
-In the desktop app you can talk instead of typing. Click the sound-wave button in the
-message box:
+You can talk instead of typing. Click the sound-wave button in the message box:
 
 - **You talk, Kadence answers aloud.** It sends what you said once you have been silent for
   about a second, and reads the reply while it is still being written. The conversation
@@ -50,9 +46,8 @@ message box:
 
 ### Attaching files
 
-In the desktop app, click **+** in the message box, drop files on the window or paste
-them, then send. A message can be
-attachments only.
+Click **+** in the message box, drop files on the window or paste them, then send. A
+message can be attachments only.
 
 - **A picture** (PNG, JPEG, GIF or WebP, up to 5 MB) is shown to the model, so you can ask
   about a screenshot or a photo. With a model that cannot see pictures (DeepSeek), the
@@ -81,8 +76,7 @@ The agent can also open these by itself when it comes across them, with its file
   providers get the text again.
 - **A Word, Excel or PowerPoint file** is read as its text.
 
-In the list of steps, such a result names what it returned (`[image: chart.png]`). The terminal app shows what
-was attached but cannot attach.
+In the list of steps, such a result names what it returned (`[image: chart.png]`).
 
 ## Approving actions
 
@@ -103,8 +97,7 @@ The permission level is set in [Settings](settings.md#permissions).
 
 When the agent has an idea of its own (tidying a folder, handing a side task to a
 sub-session), it proposes it instead of doing it. A card shows what it would do and why,
-with **Approve** and **Dismiss** (`/approve` and `/dismiss` in the terminal app). The agent
-carries on meanwhile. Approve runs exactly that step, without asking again, and the agent is
+with **Approve** and **Dismiss**. The agent carries on meanwhile. Approve runs exactly that step, without asking again, and the agent is
 told the result; Dismiss tells it you said no. Proposals still open when you quit, stop the
 agent or switch conversations are withdrawn.
 
@@ -114,9 +107,8 @@ For a task with several steps, the agent writes a plan first and ticks the steps
 works: ✓ done, ◐ under way, ○ still to do, and struck through for steps it dropped. A quick
 question gets no plan.
 
-- **In the desktop app** the checklist is part of the conversation. It sits under the
-  newest message while the agent works and is gone when the agent stops.
-- **In the terminal app** it shows above the message box while the agent works.
+- **The checklist is part of the conversation.** It sits under the newest message while
+  the agent works and is gone when the agent stops.
 - **The agent finishes its plan before it stops.** If it ends a turn with steps open, Kadence
   sends it back once to do them or close them. When the turn ends, Kadence ticks off any
   step still open. A step stays open only when it waits for a reminder's time, for
@@ -126,8 +118,8 @@ question gets no plan.
 
 Ask Kadence to remind you of something, or to do something later ("remind me at 9 to call
 Sam", "check the build again in ten minutes"). It gives a step of its plan a due time, and
-is woken when the time comes, without a message from you. The status line shows
-**Reminder at 09:00** while one is waiting.
+is woken when the time comes, without a message from you. Next to the conversation's title,
+**Reminder at 09:00** shows while one is waiting.
 
 - **The conversation has to be open in Kadence** at that time. A reminder that came due
   while it was closed, or while Kadence was not running, is not sent late by itself: the
@@ -150,60 +142,46 @@ recap of what is done and what is not. Other answers have no card.
 - The card comes back if you reopen the conversation before answering. After a restart a
   button that would have done something just sends its text.
 
-## Keys and commands
+## Keys
 
-| Key | Command | Does |
-|---|---|---|
-| Enter | | Send the message |
-| Esc | `/stop` | Stop the agent; running tools are cancelled |
-| Ctrl+R | `/activate` | Let the agent continue without a new message |
-| Ctrl+O | `/model [id]` | Switch the model |
-| F2 | `/settings` | Open the settings screen |
-| Ctrl+K | `/cancel [id]` | Cancel one running tool |
-| F3 | `/conversations` | Open, start, rename, archive or delete conversations |
-| F4 | `/memory` | See, add, edit or forget long-term memory |
-| | `/mcp` | Add, edit or remove tool servers (MCP) |
-| F5 | `/duty`, `/plan` | Open the duty and plan of this conversation ([Duties](concepts.md#duties)) |
-| | `/duty <what to do>`, `/goal <what to do>` | Give this conversation a duty that keeps going, or one that ends when done |
-| | `/duty off` | End the duty; the plan stays |
-| | `/sessions` | This conversation's [sub-sessions](concepts.md#sub-sessions): open one in place, resume, stop, change its spending limit (or the limit per sub-session), rename, archive or delete |
-| | `/back` | Leave the sub-session you opened, back to your conversation. One that ends takes you back by itself |
-| | `/approve`, `/dismiss` | Answer the agent's open [proposal](#proposals) |
-| | `/folder [path]` | Show the work folder, or start a chat in another one |
-| | `/allow [once\|conversation]`, `/deny` | Answer the open approval |
-| Ctrl+Q | `/quit` | Quit |
-| | `/skills` | List the [skills](concepts.md#skills) |
-| | `/<skill name>` | Run a skill, for example `/consolidate-memory` |
-| | `/help` | List the commands |
+| Key | Does |
+|---|---|
+| Enter | Send the message; Shift+Enter starts a new line |
+| Esc | Stop the agent; running tools are cancelled. While Kadence reads a reply aloud, stop the reading |
+| Ctrl+N | New chat |
+| Ctrl+, | Open Settings |
+| Ctrl + and Ctrl −, Ctrl+0 | Make everything larger or smaller; back to normal |
+| F2, Delete | Rename or delete the conversation selected in the list |
+| F1 | Open this documentation |
+| Ctrl+Q | Quit |
+
+A message that is only a [skill](concepts.md#skills)'s name after a slash, such as
+`/consolidate-memory`, runs that skill.
 
 ## Conversations and memory
 
-F3 lists your conversations, newest first; "Show archived" includes archived ones. A new
-chat is listed once you send its first message, and is not kept if you leave it before.
-Open one, start a new one, rename it (leave the name empty for an automatic one), archive it to
-hide it, or delete it for good. Deleting asks first and cannot be undone; deleting the
-open conversation opens a new chat in its place. You can only switch
-conversations while the agent is not working. See [Deleting](concepts.md#deleting) for what
-deletion does and does not reach.
+The sidebar lists your conversations, grouped by folder; **☰ → View → Show archived
+conversations** includes archived ones. A new chat is listed once you send its first
+message, and is not kept if you leave it before. Click one to open it. Right-click one to
+rename it, archive it to hide it, delete it for good, or **Continue in a new
+conversation**, which starts a new one from where that one left off. Deleting asks first
+and cannot be undone; deleting the open conversation opens a new chat in its place. You
+can only switch conversations while the agent is not working. See
+[Deleting](concepts.md#deleting) for what deletion does and does not reach.
 
-F4 shows long-term memory: About you and the notes Kadence keeps across conversations (see
-[Memory](concepts.md)). Kadence writes them after each answer, and the agent saves, reads or
-deletes one when it needs to, which shows as a step. In F4 you can add, edit or delete
-notes yourself; About you can be emptied but not deleted. Deleting a note does not delete
-the messages it came from.
+**Settings → Memory** shows long-term memory: About you and the notes Kadence keeps across
+conversations (see [Memory](concepts.md#memory)). Kadence writes them after each answer, and
+the agent saves, reads or deletes one when it needs to, which shows as a step. You can add,
+edit or delete notes yourself; About you can be emptied but not deleted. Deleting a note
+does not delete the messages it came from.
 
 ## Folders
 
 Each conversation works in one folder: its commands run there and its files are read and
-written there. A new conversation gets the folder from Settings (**Folder for new chats**),
-or the one you type in the start screen; it keeps that folder when you come back to it,
-even after you change the setting. The status line shows it.
-
-The desktop app has no such default: a new chat there asks you for its folder (see
-[Using it](desktop-app.md#using-it)).
-
-`/folder PATH` starts a chat in another folder. **Continue from** keeps the earlier
-conversation's folder.
+written there. A new chat asks for its folder before its first message: pick a recent one
+or choose another (see [Using it](desktop-app.md#using-it)). The conversation keeps that
+folder when you come back to it; hover its title to see it. **Continue in a new
+conversation** keeps the earlier conversation's folder.
 
 ## The web
 
@@ -224,8 +202,7 @@ sometimes turn searches away for a while; Kadence tries a search again before it
 ## Looking at your screen
 
 Ask the agent to look at your screen ("what does this error on my screen mean?") and it
-takes a screenshot of your whole desktop and sees it, in the terminal app, the desktop
-app and when you talk to it.
+takes a screenshot of your whole desktop and sees it, also when you talk to it.
 
 - **It asks first**, like any action outside the work folder. At the permission level
   Auto it looks without asking when your message asks for it.
@@ -243,8 +220,7 @@ Tool servers give Kadence more tools: GitHub, a database, your calendar, and man
 They use MCP, the Model Context Protocol, which most AI apps support; servers are listed on
 their makers' sites and at github.com/modelcontextprotocol/servers.
 
-To add one, open **Settings → Tool servers** in the desktop app, or `/mcp` in the
-terminal, and give it:
+To add one, open **Settings → Tool servers** and give it:
 
 - a **name**, such as `github`; its tools appear as `mcp__github__…`;
 - a **command** to start it (`npx -y @modelcontextprotocol/server-github`) or its **URL**;
@@ -261,10 +237,10 @@ or asks before it runs (see [Permissions](settings.md#permissions)).
 ## Long-running tools
 
 A tool that takes longer than about 10 seconds moves to the background: the agent can keep
-working, and the result arrives in the conversation when it finishes. Ctrl+K lists running
-tools so you can cancel one.
+working, and the result arrives in the conversation when it finishes. Each running tool
+has a card with **Cancel**.
 
 ## Quitting
 
-Ctrl+Q quits. Tools still running are cancelled; your conversations are saved and can be
-continued later.
+Ctrl+Q, or closing the window, quits. Tools still running are cancelled; your
+conversations are saved and can be continued later.

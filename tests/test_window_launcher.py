@@ -50,7 +50,7 @@ def window_frontends(monkeypatch: pytest.MonkeyPatch, *scripts: Any, event_loop:
 
 
 def test_a_frontend_without_a_loop_of_its_own_runs_on_asyncio():
-    assert launcher.frontend_loop(ModuleSpec("kadence.frontends.tui:factory")) is asyncio.run
+    assert launcher.frontend_loop(ModuleSpec("kadence.frontends.headless:factory")) is asyncio.run
 
 
 def test_the_desktop_app_names_the_qt_loop():
@@ -113,19 +113,20 @@ def test_a_bad_config_is_shown_by_the_launchers_own_frontend(tmp_path, monkeypat
     assert shown and "invalid TOML" in shown[0]
 
 
-def test_the_window_launcher_has_only_its_own_flags(tmp_path):
-    """What the terminal launcher's flags set is left at its default, not copied here."""
+def test_the_window_launcher_has_the_flags_of_an_app_and_no_others(tmp_path):
+    """What `kadence` was told of models and permissions goes on to it; what is for a
+    program (headless, a duty, printing the configuration) does not exist here."""
     assert window.parse_args(["--data-dir", str(tmp_path), "--conversation", "c1"]) == (
         launcher.Launch(tmp_path, conversation="c1"))
-    assert launcher.parse_args(["--data-dir", str(tmp_path), "--model", "m"]) == (
-        launcher.Launch(tmp_path, model="m"))
-    with pytest.raises(SystemExit):
-        window.parse_args(["--model", "m"])
+    assert window.parse_args(["--data-dir", str(tmp_path), "--model", "m"]) == (
+        launcher.parse_args(["--data-dir", str(tmp_path), "--model", "m"]))
+    for flag in (["--headless"], ["--show-config"], ["--duty", "watch"]):
+        with pytest.raises(SystemExit):
+            window.parse_args(flag)
 
 
 def test_the_window_makes_no_folder_of_its_own(tmp_path, monkeypatch):
-    """Its tools start where it is started, as the terminal app's do; each chat is then
-    given a folder."""
+    """Its tools start where it is started; each chat is then given a folder."""
     monkeypatch.chdir(tmp_path)
     assert not hasattr(window, "DEFAULT_WORK_FOLDER")
     settings_file(tmp_path, '[modules]\ncore = "first"\nmemory = "fake-memory"\n'
