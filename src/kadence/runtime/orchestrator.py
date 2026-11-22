@@ -149,6 +149,17 @@ logger = logging.getLogger(__name__)
 _RUNNING = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION,
             AgentState.FINISHING)
 _OP_STATUS_MAX_WAIT_S = 60
+FOREGROUND_TIMEOUT_S = 120.0  # a foreground call's limit unless its `timeout` says
+FOREGROUND_MAX_TIMEOUT_S = 600.0
+
+
+def foreground_timeout(arguments: Mapping[str, Any]) -> float:
+    """Seconds a ToolSpec.foreground call may run: its `timeout` in milliseconds, held to
+    FOREGROUND_MAX_TIMEOUT_S; FOREGROUND_TIMEOUT_S when it gives none that is valid."""
+    ms = arguments.get("timeout")
+    if isinstance(ms, bool) or not isinstance(ms, int | float) or ms <= 0:
+        return FOREGROUND_TIMEOUT_S
+    return min(ms / 1000, FOREGROUND_MAX_TIMEOUT_S)
 # The description every offered tool takes (api.DESCRIPTION_ARG).
 _DESCRIPTION_SCHEMA = {
     "type": "string",
@@ -1820,9 +1831,20 @@ class Runtime:
         if reason:
             return ToolResult(call.id, ToolStatus.REFUSED, f"Refused: budget {reason}."), 0.0
         self._emit(UsageUpdated(self._budget.snapshot()))
+        wait: float | None = self._config.initial_wait_s
+        asked_background = False
+        if spec.foreground:
+            arguments = self._bare(call).arguments
+            asked_background = arguments.get("run_in_background") is True
+            if asked_background:
+                wait = 0
+            else:
+                wait = None
+                limit = spec.timeout or self._config.default_tool_timeout_s
+                spec = replace(spec, timeout=min(limit, foreground_timeout(arguments)))
         op = self._launch(call, spec, confined=confined)
         assert op.supervisor is not None
-        await asyncio.wait({op.supervisor}, timeout=self._config.initial_wait_s)
+        await asyncio.wait({op.supervisor}, timeout=wait)
         if not op.supervisor.done() and (self._stopping or op.cancel_requested):
             await asyncio.wait({op.supervisor})
         if op.supervisor.done():
@@ -1834,11 +1856,12 @@ class Runtime:
         self._log.decision("backgrounded", call_id=call.id)
         self._emit(ToolBackgrounded(call.id))
         progress = f" Last progress: {op.last_progress}." if op.last_progress else ""
+        where = ("started in the background" if asked_background else
+                 f"is still running in the background ({op.duration:.1f}s so far)")
         return ToolResult(
             call.id,
             ToolStatus.BACKGROUNDED,
-            f"Operation {call.id} is still running in the background "
-            f"({op.duration:.1f}s so far).{progress} Use op_status to check on it or wait, "
+            f"Operation {call.id} {where}.{progress} Use op_status to check on it or wait, "
             "op_cancel to cancel it; its outcome is delivered when it finishes.",
         ), op.duration
 

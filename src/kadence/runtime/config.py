@@ -12,7 +12,8 @@ from kadence.runtime.hooks import Hook
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are Kadence, an AI agent. Use the available tools to accomplish the user's goals.\n"
-    "Tool calls that take long are moved to the background: you get an operation id, can "
+    "Tool calls that take long, and Bash commands you run in the background, are moved to "
+    "the background: you get an operation id, can "
     "check them with op_status or cancel them with op_cancel, and their outcome arrives later "
     "as an operation result. You can end your turn while they run: when they have finished "
     "you are woken to continue. Use recall to search earlier parts of this conversation that are "

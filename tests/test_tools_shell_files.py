@@ -449,6 +449,7 @@ async def test_read_only_flags(tools):
         "WebSearch": True,
         "WebFetch": True,
     }
+    assert [spec.name for spec in await tools.list_tools() if spec.foreground] == ["Bash"]
     stall = {spec.name: spec.stall_timeout for spec in await tools.list_tools()}
     assert stall["Bash"] and all(v is None for k, v in stall.items() if k != "Bash")
 
@@ -457,7 +458,7 @@ async def test_the_tools_take_claude_codes_parameters(tools):
     params = {spec.name: set(spec.parameters["properties"]) for spec in await tools.list_tools()}
     params.pop("screenshot", None)
     assert params == {
-        "Bash": {"command", "dangerouslyDisableSandbox"},
+        "Bash": {"command", "timeout", "run_in_background", "dangerouslyDisableSandbox"},
         "Read": {"file_path", "offset", "limit", "pages", "view"},
         "Write": {"file_path", "content"},
         "Edit": {"file_path", "old_string", "new_string", "replace_all"},

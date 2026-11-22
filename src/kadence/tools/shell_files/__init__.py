@@ -93,11 +93,19 @@ SHELL = ToolSpec(
         "stderr plus the exit code. Output is truncated to the first and last part when "
         "long. Non-zero exit codes are reported as errors. The folder a command ends in is "
         "where the next one starts, in this conversation, while it is inside the "
-        "workspace; elsewhere, the next starts in the workspace."
+        "workspace; elsewhere, the next starts in the workspace. A command runs until it "
+        "ends or its `timeout` (milliseconds; 120000 unless set, at most 600000). Set "
+        "`run_in_background` for one that runs long, such as a server or a long build: "
+        "you get on with other work and are told its outcome when it ends."
     ),
-    parameters=_object({"command": _STRING, "dangerouslyDisableSandbox": {"type": "boolean"}},
-                       ["command"]),
+    parameters=_object({
+        "command": _STRING,
+        "timeout": {"type": "integer", "minimum": 1, "maximum": 600_000},
+        "run_in_background": {"type": "boolean"},
+        "dangerouslyDisableSandbox": {"type": "boolean"},
+    }, ["command"]),
     stall_timeout=SHELL_STALL_TIMEOUT,
+    foreground=True,
 )
 SANDBOX_NOTE = (
     " Commands run in a sandbox: they can read and write the workspace, read the system "

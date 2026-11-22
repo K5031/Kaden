@@ -237,7 +237,8 @@ or asks before it runs (see [Permissions](settings.md#permissions)).
 ## Long-running tools
 
 A tool that takes longer than about 10 seconds moves to the background: the agent can keep
-working, and the result arrives in the conversation when it finishes. Each running tool
+working, and the result arrives in the conversation when it finishes. A shell command runs
+until it ends (at most 10 minutes) unless the agent starts it in the background. Each running tool
 has a card with **Cancel**.
 
 ## Quitting

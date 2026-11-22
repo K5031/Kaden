@@ -425,7 +425,7 @@ search backs recall and search_archive, limited to a set of conversations or non
 
 16.4 Tools
 One coroutine per call. The runtime owns backgrounding, polling and cancellation; tools only handle cancellation promptly. The call id is the operation id.
-A backgrounded call gets a placeholder result with status backgrounded; its outcome is recorded later as an operation result.
+A backgrounded call gets a placeholder result with status backgrounded; its outcome is recorded later as an operation result. A call is backgrounded once it outlives the initial wait, except a call of a tool whose spec is foreground (the shell, as Claude Code's Bash): it runs until it ends or its timeout argument (2 minutes unless set, at most 10), or is backgrounded at once when its run_in_background argument is true.
 Consecutive read-only calls in a turn run concurrently. A non-read-only call is a barrier: it starts once every earlier call has finished or been backgrounded, and later calls wait for it likewise.
 Tools never block the event loop. Blocking work goes through threads or subprocesses.
 stall_timeout (silence) and timeout (wall clock) are optional per tool. Operations also end as timed out at the runtime-wide default timeout (suggested 1 hour; a tool may declare a longer one or none), so a hung operation cannot block a wake-up forever. A deliberate long-runner keeps the agent waiting until it ends or the user writes.

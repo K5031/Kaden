@@ -316,6 +316,10 @@ class ToolSpec:
     #                                     treated as hung; None = no stall detection
     timeout: float | None = None  # hard wall-clock limit; None = runtime default
     #                               (suggested 1 h); math.inf = no limit
+    foreground: bool = False  # True: a call is not backgrounded by the initial wait. It
+    #   runs until it ends, at most its `timeout` argument (ms; 2 min unless set, at most
+    #   10), or, with `run_in_background` true, is backgrounded at once (Claude Code's
+    #   Bash). The tool's schema offers both arguments; the runtime reads them.
 
 
 # ── Core ──────────────────────────────────────────────────────────────────
@@ -1003,8 +1007,8 @@ class Tools(abc.ABC):
     """Tool provider. One coroutine per call; the runtime owns everything else.
 
     The runtime runs execute() as a task, backgrounds it (the model gets the call id
-    as the operation id) if it outlives the initial wait, and polls or cancels via task
-    state. Consecutive read-only calls in a turn run concurrently; a non-read-only call
+    as the operation id) if it outlives the initial wait, or as ToolSpec.foreground says,
+    and polls or cancels via task state. Consecutive read-only calls in a turn run concurrently; a non-read-only call
     is a barrier: it starts once every earlier call has finished or been backgrounded,
     and later calls wait for it likewise. Tools only need to handle
     asyncio.CancelledError by cleaning up promptly.

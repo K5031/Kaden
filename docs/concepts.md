@@ -20,8 +20,11 @@ long ago you last wrote. The conversation shows your messages as you typed them.
 
 ## Background tasks
 
-A tool that runs longer than about 10 seconds moves to the background. The agent gets on
-with other work, or tells you it is waiting. When the tasks it started have all ended, the
+A tool that runs longer than about 10 seconds moves to the background. A shell command is
+the exception: it runs until it ends, for up to 2 minutes unless the agent allows it longer
+(at most 10), unless the agent starts it in the background, as it does for a server or a
+long build. In the background, the agent gets on with other work, or tells you it is
+waiting. When the tasks it started have all ended, the
 agent is woken with the results and carries on by itself, so you don't have to ask whether
 it is done. It can check on a task or cancel it, and so can you (**Cancel** on its card). A task that runs
 over an hour (unless the tool allows longer) ends as timed out.

@@ -21,6 +21,7 @@ Choices the spec leaves to the implementer. Contract gaps are in `contract-issue
 |---------|---------|------|
 | `permissions` | `auto` | clamped to any inherited ceiling |
 | `initial_wait_s` | 10 s | foreground wait before a call is backgrounded |
+| Foreground timeout | 120 s unless the call's `timeout` (ms) says, at most 600 s, and never past the tool's own hard limit | a `ToolSpec.foreground` call (`Bash`); a `timeout` that is not a positive number counts as unset |
 | `default_tool_timeout_s` | 3600 s | SPEC 16.4 suggestion; `math.inf` in a ToolSpec disables |
 | `cancel_grace_s` | 5 s | api.py default; also used for inference and Memory calls |
 | `max_retries` | 3 | 4 attempts; `ModelRetry.max_attempts = max_retries + 1` |

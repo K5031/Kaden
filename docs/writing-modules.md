@@ -58,7 +58,10 @@ schema, asks for permission where the user's settings require it, then calls `ex
 - **`read_only=True`** on a spec lets several calls run at once and lets stricter
   permission levels run it without asking.
 - **Long calls** should call `ctx.progress("…")` now and then. A call that takes long is
-  moved to the background by the runtime; you do nothing for that.
+  moved to the background by the runtime; you do nothing for that. With
+  `foreground=True` the call runs until it ends instead, as Claude Code's `Bash` does:
+  offer `timeout` (milliseconds) and `run_in_background` in its schema and the runtime
+  reads them.
 - **Pictures and PDFs**: `ToolOutput(text, attachments=(Image(...),))` shows them to the
   model with the text.
 

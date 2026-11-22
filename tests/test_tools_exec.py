@@ -305,3 +305,67 @@ async def test_foreground_cancel_operation(make: Any) -> None:
     await h.rec.wait_state(AgentState.IDLE, count=2)
     assert (await h.results())["fg"].status == ToolStatus.CANCELLED
     assert len(h.core.requests) == 2  # the cycle continues
+
+
+# ── A tool that chooses its background (Bash, as in Claude Code) ──
+
+
+async def test_a_foreground_tool_is_waited_for_past_the_initial_wait(make: Any) -> None:
+    tools = FakeTools()
+    tools.slow("cmd", 0.5, foreground=True)
+    core = ScriptedCore([Step(calls=[call("cmd", id="c")]), Step(text="ok")])
+    h: Harness = await make(core=core, tools=tools, initial_wait_s=0.1)
+    await h.start()
+    await h.turn("go")
+    result = (await h.results())["c"]
+    assert result.status == ToolStatus.OK and result.content == "cmd finished"
+    assert h.rec.of(ToolBackgrounded) == []
+
+
+async def test_a_foreground_tool_times_out_at_its_timeout(make: Any) -> None:
+    tools = FakeTools()
+    tools.hanging("cmd", progress="started", foreground=True)
+    core = ScriptedCore([Step(calls=[call("cmd", {"timeout": 200}, id="c")]), Step(text="ok")])
+    h: Harness = await make(core=core, tools=tools, initial_wait_s=0.05)
+    await h.start()
+    await asyncio.wait_for(h.turn("go"), 5)
+    result = (await h.results())["c"]
+    assert result.status == ToolStatus.TIMED_OUT and "started" in result.content
+
+
+async def test_a_foreground_call_asked_into_the_background_goes_at_once(make: Any) -> None:
+    tools = FakeTools()
+    tools.slow("cmd", 0.5, foreground=True)
+    core = ScriptedCore([Step(calls=[call("cmd", {"run_in_background": True}, id="c")]),
+                         Step(text="meanwhile")])
+    h: Harness = await make(core=core, tools=tools, initial_wait_s=5)
+    await h.start()
+    await asyncio.wait_for(h.turn("go"), 2)  # does not wait out the initial 5 s
+    placeholder = (await h.results())["c"]
+    assert placeholder.status == ToolStatus.BACKGROUNDED
+    assert "started in the background" in placeholder.content
+    await h.rec.wait_for(lambda r: finished(h, "c"))
+    assert finished(h, "c")[0].result.status == ToolStatus.OK
+
+
+async def test_stop_ends_a_foreground_call(make: Any) -> None:
+    tools = FakeTools()
+    tools.hanging("cmd", foreground=True)
+    core = ScriptedCore([Step(calls=[call("cmd", id="c")])])
+    h: Harness = await make(core=core, tools=tools, initial_wait_s=0.05)
+    await h.start()
+    await h.runtime.send("go")
+    await eventually(lambda: tools.started)
+    await asyncio.sleep(0.2)  # past the initial wait
+    await h.runtime.stop()
+    await h.rec.wait_state(AgentState.STOPPED, timeout=2)
+    assert (await h.results())["c"].status == ToolStatus.CANCELLED
+
+
+def test_a_foreground_timeout_is_two_minutes_unless_set_and_at_most_ten() -> None:
+    from kadence.runtime.orchestrator import foreground_timeout
+
+    assert foreground_timeout({}) == 120
+    assert foreground_timeout({"timeout": 5000}) == 5
+    assert foreground_timeout({"timeout": 10**9}) == 600
+    assert foreground_timeout({"timeout": "soon"}) == 120

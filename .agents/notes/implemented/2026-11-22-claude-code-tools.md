@@ -18,7 +18,7 @@ The shell, files and web module offers:
 
 | Tool | Parameters |
 |---|---|
-| `Bash` | `command`, `dangerouslyDisableSandbox` |
+| `Bash` | `command`, `timeout`, `run_in_background`, `dangerouslyDisableSandbox` |
 | `Read` | `file_path`, `offset`, `limit`, `pages`, `view` |
 | `Write` | `file_path`, `content` |
 | `Edit` | `file_path`, `old_string`, `new_string`, `replace_all` |
@@ -37,11 +37,12 @@ The shell, files and web module offers:
 - The Anthropic Core offers its own search as `WebSearch` too, sent to the API under
   Anthropic's name `web_search`, so it still takes the module's place.
 - Only what Kadence does is matched. Claude Code parameters for behaviour Kadence does not
-  have are left out rather than accepted and ignored: `Bash`'s `timeout` and
-  `run_in_background` (a call moves to the background by itself after about 10 seconds),
-  `WebFetch`'s `prompt` (a Tools module cannot ask a model), `WebSearch`'s domain lists,
-  `Grep`'s `type` and `multiline`. Claude Code's per-call `description` is Kadence's
+  have are left out rather than accepted and ignored: `WebFetch`'s `prompt` (a Tools
+  module cannot ask a model), `WebSearch`'s domain lists, `Grep`'s `type` and
+  `multiline`. Claude Code's per-call `description` is Kadence's
   `step_summary`, which the runtime adds to every tool.
+- `Bash` runs a command until it ends or its `timeout`, or in the background when asked:
+  see [Bash chooses its background](2026-11-22-bash-chooses-its-background.md).
 - Kept as they are, having no Claude Code tool of the same meaning: `screenshot`, the
   Memory tools (`memory` already has the shape of Anthropic's memory tool), and the
   runtime's built-ins (`update_plan`, `propose`, `wrap_up`, background tasks, skills,
