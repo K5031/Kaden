@@ -186,7 +186,7 @@ from kaden.frontends.desktop.viewmodel import (
     step_segments,
     user_message,
 )
-from kaden.frontends.desktop.voice.mode import VoiceMode
+from kaden.frontends.desktop.voice.mode import DEFAULT_VOICE, VOICES, VoiceMode
 from kaden.frontends.remote import RemoteRuntime
 from kaden.frontends.sessions import SubSession, SubSessions
 
@@ -243,10 +243,21 @@ async def load_look(path: Path) -> tuple[float, str]:
     return await asyncio.to_thread(read)
 
 
-async def save_look(path: Path) -> None:
-    """Remember the zoom and the theme in use."""
-    look = json.dumps({"zoom": theme.zoom(), "theme": theme.choice()})
+async def save_look(path: Path, voice: str = DEFAULT_VOICE) -> None:
+    """Remember the zoom and the theme in use, and the voice chosen."""
+    look = json.dumps({"zoom": theme.zoom(), "theme": theme.choice(), "voice": voice})
     await asyncio.to_thread(path.write_text, look, encoding="utf-8")
+
+
+async def load_voice(path: Path) -> str:
+    """The voice saved in `path` (voice.mode.VOICES); DEFAULT_VOICE where there is none."""
+    def read() -> str:
+        try:
+            name = json.loads(path.read_text(encoding="utf-8")).get("voice")
+        except (OSError, ValueError, AttributeError):
+            return DEFAULT_VOICE
+        return name if name in VOICES else DEFAULT_VOICE
+    return await asyncio.to_thread(read)
 
 
 def _right(*widgets: QWidget) -> QHBoxLayout:
@@ -3103,7 +3114,7 @@ class MainWindow(QMainWindow):
                 models = []
             spent = self.runtime.snapshot().usage.usage.cost_usd or 0.0
             dialog = SettingsDialog(self, self.runtime, self.home, settings, models, spent,
-                                    self.sessions)
+                                    self.sessions, voice=self.voice)
             self._dialog = dialog
             self.memory_dialog, self.mcp_dialog = dialog.memory, dialog.servers
             if page is not None:
@@ -3514,7 +3525,8 @@ class SettingsDialog(QDialog):
 
     def __init__(self, parent: QWidget, runtime: RuntimeAPI, controller: Controller,
                  settings: Settings, models: Sequence[ModelInfo], spent: float,
-                 sessions: SubSessions | None = None) -> None:
+                 sessions: SubSessions | None = None, *, voice: VoiceMode | None = None
+                 ) -> None:
         super().__init__(parent)
         self.runtime, self.controller, self.settings = runtime, controller, settings
         self.sessions = sessions
@@ -3579,6 +3591,19 @@ class SettingsDialog(QDialog):
 
         self.memory = MemoryDialog(self, controller, embedded=True)
         self.servers = McpDialog(self, runtime, controller, embedded=True)
+        # How Kaden sounds when you talk with it: chosen at once, as Claude's voice is.
+        self.voice = QComboBox()
+        self.voice.addItems(list(VOICES))
+        self.play_voice = QPushButton("Play")
+        self.play_voice.setEnabled(voice is not None)
+        if voice is not None:
+            self.voice.setCurrentText(voice.voice)
+            self.voice.currentTextChanged.connect(voice.set_voice)
+            self.play_voice.clicked.connect(
+                lambda: self.controller.command(voice.preview()))
+        voice_row = QHBoxLayout()
+        voice_row.addWidget(self.voice)
+        voice_row.addWidget(self.play_voice)
         self.pages: dict[str, QWidget] = {
             "General": _page(
                 "General", self.startup_error,
@@ -3591,6 +3616,7 @@ class SettingsDialog(QDialog):
                          "one is fine.", self.light),
                 self.model_note,
                 _setting(MODULE_LABELS["tools"], MODULE_HINTS["tools"], self.modules["tools"]),
+                _setting("Voice", "When you talk with Kaden.", voice_row),
                 _label(AT_RESTART, selectable=False, role="small")),
             "Spending": _page(
                 "Spending", _setting("Spending limit (US$)", f"Kaden stops when it reaches it. "

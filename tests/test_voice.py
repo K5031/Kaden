@@ -408,3 +408,28 @@ def test_speech_is_played_on_both_channels():
     assert (sound.sampleRate(), sound.channelCount()) == (22050, 2)
     assert sound.sampleFormat() == QAudioFormat.SampleFormat.Int16
     assert np.frombuffer(pcm, np.int16).tolist() == [16383, 16383, -8191, -8191]
+
+
+async def test_the_voice_is_chosen_heard_and_used(tmp_path):
+    """As in Claude's voice mode: a few named voices; Play speaks a sample in one; voice
+    mode speaks in the one chosen."""
+    from kaden.frontends.desktop.voice.mode import DEFAULT_VOICE, SAMPLE, VOICES, VoiceMode
+
+    engine, speaker = ScriptedEngine(), Speaker()
+
+    class Controller:
+        def __init__(self) -> None:
+            self.listeners: list = []
+
+    async def ask(text: str, details: str) -> bool:
+        return True
+
+    mode = VoiceMode(Controller(), tmp_path, ask, engine=lambda _folder: engine,
+                     microphone=lambda heard: None, speaker=lambda: speaker, models=())
+    assert mode.voice == DEFAULT_VOICE == "Heart" and VOICES["Heart"] == 3
+    mode.set_voice("Michael")
+    await mode.preview()
+    assert engine.voice == VOICES["Michael"] and engine.spoke == [SAMPLE]
+    assert speaker.played == 1
+    mode.set_voice("Nobody")  # not a voice: the choice stays
+    assert mode.voice == "Michael"

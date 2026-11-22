@@ -843,7 +843,7 @@ The design is in [the note](notes/implemented/2026-11-12-voice-conversation.md);
 | Choice | Decision |
 |---|---|
 | End of a turn | 0.9 s of silence (`engine.END_OF_TURN_S`); sounds under 0.25 s are not speech |
-| Voice | Kokoro speaker 3, `af_heart`, at normal speed; not a setting |
+| Voice | Chosen in Settings → General, as Claude's voice mode offers a few by name: Heart (Kokoro speaker 3, `af_heart`, the default), Bella (2), Nicole (6), Michael (16), Fenrir (14), Kokoro's best American English speakers; at normal speed. Kept in the window's look file (`desktop.json`, `voice`) and used at once; Play says `mode.SAMPLE` in it, fetching the models first if need be |
 | Playback | 16-bit stereo, each sample in both channels (`audio.as_played`): a one-channel stream reaches only the left ear on PipeWire through Qt's output |
 | Threads | Half the CPU's cores, at most 8, for recognition and for speech |
 | Models folder | `<data dir>/voice/`, beside `desktop.json`; a window without a data folder has no voice mode |

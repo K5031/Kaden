@@ -15,14 +15,14 @@ LISTEN_DIR = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8"
 SPEAK_DIR = "kokoro-multi-lang-v1_0"
 END_OF_TURN_S = 0.9  # silence that ends what the user is saying
 MIN_SPEECH_S = 0.25  # shorter sounds are not speech
-VOICE = 3  # Kokoro's "af_heart": an American woman's voice
 
 
 class SherpaEngine:
     """turns.Engine over the models in `models` (see download.MODELS). Loading takes a
     few seconds and blocks: build it on a thread."""
 
-    def __init__(self, models: Path) -> None:
+    def __init__(self, models: Path, voice: int = 3) -> None:
+        self.voice = voice  # the Kokoro speaker it speaks as (mode.VOICES)
         threads = max(1, min(8, (os.cpu_count() or 2) // 2))
         vad = sherpa_onnx.VadModelConfig()
         vad.silero_vad.model = str(models / VAD_FILE)
@@ -69,5 +69,5 @@ class SherpaEngine:
         return stream.result.text.strip()
 
     def speak(self, text: str) -> tuple[np.ndarray, int]:
-        audio = self._tts.generate(text, sid=VOICE, speed=1.0)
+        audio = self._tts.generate(text, sid=self.voice, speed=1.0)
         return np.asarray(audio.samples, dtype=np.float32), audio.sample_rate

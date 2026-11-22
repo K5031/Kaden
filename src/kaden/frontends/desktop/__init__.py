@@ -62,7 +62,7 @@ class DesktopFrontend(Frontend):
 
         from kaden.frontends.desktop import theme
         from kaden.frontends.desktop.viewmodel import Controller, ConversationModel
-        from kaden.frontends.desktop.window import MainWindow, load_look, save_look
+        from kaden.frontends.desktop.window import MainWindow, load_look, load_voice, save_look
 
         app = QApplication.instance()
         if app is None:
@@ -76,6 +76,8 @@ class DesktopFrontend(Frontend):
             theme.set_zoom(app, zoom)
         controller = Controller(runtime, ConversationModel())
         window = MainWindow(runtime, controller, self.zoom_file, self.sessions)
+        if self.zoom_file is not None:
+            window.voice.set_voice(await load_voice(self.zoom_file))
         server = (await single.listen(self.data_dir, window.bring_forward)
                   if self.data_dir is not None else None)
         closed = asyncio.Event()
@@ -94,7 +96,7 @@ class DesktopFrontend(Frontend):
                 single.socket_path(self.data_dir).unlink(missing_ok=True)
             window.close()
             if self.zoom_file is not None:
-                await save_look(self.zoom_file)
+                await save_look(self.zoom_file, window.voice.voice)
 
     async def _hand_over(self, data_dir: Path) -> None:
         """Another Kaden has the data folder: bring its window forward, or, when none

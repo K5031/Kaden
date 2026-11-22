@@ -2164,3 +2164,28 @@ def test_a_prompt_of_a_kind_the_app_does_not_know_is_answered_in_words(qapp):
     [send] = buttons(card, "Send")
     send.click()
     assert replies == [("p1", "Well")] and not card.isEnabled()
+
+
+async def test_the_chosen_voice_is_kept_with_the_look(tmp_path):
+    saved = tmp_path / "desktop.json"
+    assert await window_module.load_voice(saved) == "Heart"
+    await window_module.save_look(saved, voice="Bella")
+    assert await window_module.load_voice(saved) == "Bella"
+    assert await window_module.load_look(saved) == (theme.zoom(), theme.choice())
+    saved.write_text('{"voice": "Nobody"}')
+    assert await window_module.load_voice(saved) == "Heart"
+
+
+async def test_the_voice_is_chosen_in_settings(make, qapp):
+    from kaden.frontends.desktop.voice.mode import VOICES
+
+    h: Harness = await make()
+    await h.start()
+    window, controller, _ = await open_window(h)
+    dialog = SettingsDialog(window, h.runtime, controller, await h.runtime.settings(), [],
+                            0.0, voice=window.voice)
+    names = [dialog.voice.itemText(i) for i in range(dialog.voice.count())]
+    assert names == list(VOICES) and dialog.voice.currentText() == "Heart"
+    dialog.voice.setCurrentText("Fenrir")
+    assert window.voice.voice == "Fenrir"
+    assert dialog.play_voice.isEnabled()

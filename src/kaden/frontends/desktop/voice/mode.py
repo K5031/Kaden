@@ -16,6 +16,11 @@ from kaden.frontends.desktop.viewmodel import Controller
 from kaden.frontends.desktop.voice import download
 from kaden.frontends.desktop.voice.turns import Engine, Player, State, Voice
 
+# The voices to choose from, as Claude's voice mode offers a few by name: Kokoro's best
+# American English speakers, by their number in kokoro-multi-lang-v1_0.
+VOICES = {"Heart": 3, "Bella": 2, "Nicole": 6, "Michael": 16, "Fenrir": 14}
+DEFAULT_VOICE = "Heart"
+SAMPLE = "Hi, I'm Kaden. This is how I sound when we talk."
 STATUS = {State.LISTENING: "Listening…", State.THINKING: "Thinking…",
           State.SPEAKING: "Speaking… Esc to interrupt"}
 
@@ -54,6 +59,7 @@ class VoiceMode(QObject):
         self._make_engine, self._make_microphone, self._make_speaker = engine, microphone, speaker
         self._models, self._transport = models, transport
         self.on = False
+        self.voice = DEFAULT_VOICE
         self.status = ""
         self.progress: float | None = None  # of the model download, while it runs
         self._engine: Engine | None = None
@@ -81,6 +87,39 @@ class VoiceMode(QObject):
         self.on, self.progress = False, None
         self._say("")
 
+    def set_voice(self, name: str) -> None:
+        """Speak as `name` (VOICES) from now on; any other name changes nothing."""
+        if name in VOICES:
+            self.voice = name
+            if self._engine is not None:
+                self._engine.voice = VOICES[name]  # type: ignore[attr-defined]
+
+    async def preview(self) -> None:
+        """Say SAMPLE in the chosen voice, getting the speech models first if need be."""
+        if not await self._ready():
+            return
+        assert self._engine is not None
+        samples, rate = await asyncio.to_thread(self._engine.speak, SAMPLE)
+        await self._make_speaker().play(samples, rate)
+
+    async def _ready(self) -> bool:
+        """The engine is loaded, its models fetched first with the user's yes; False when
+        they said no."""
+        if self._engine is not None:
+            return True
+        if self.folder is None:
+            raise RuntimeError("Voice needs Kaden's data folder, and there is none.")
+        self._say("Getting voice ready…")
+        needed = await asyncio.to_thread(download.missing, self.folder, self._models)
+        if needed and not await self._get(needed):
+            self._say("")
+            return False
+        self._say("Getting voice ready…")
+        self._engine = await asyncio.to_thread(self._make_engine, self.folder)
+        self._engine.voice = VOICES[self.voice]  # type: ignore[attr-defined]
+        self._say("")
+        return True
+
     def interrupt(self) -> bool:
         """Stop reading the reply and listen; False when nothing was being read."""
         if self._voice is None or self._voice.state is not State.SPEAKING:
@@ -95,16 +134,10 @@ class VoiceMode(QObject):
 
     async def _start(self) -> None:
         try:
-            if self.folder is None:
-                raise RuntimeError("Voice needs Kaden's data folder, and there is none.")
-            if self._engine is None:
-                self._say("Getting voice ready…")
-                needed = await asyncio.to_thread(download.missing, self.folder, self._models)
-                if needed and not await self._get(needed):
-                    self.stop()
-                    return
-                self._say("Getting voice ready…")
-                self._engine = await asyncio.to_thread(self._make_engine, self.folder)
+            if not await self._ready():
+                self.stop()
+                return
+            assert self._engine is not None
             voice = Voice(self._engine, self._make_speaker(), self._said, self._moved)
             microphone = self._make_microphone(voice.heard)
             microphone.start()  # type: ignore[attr-defined]

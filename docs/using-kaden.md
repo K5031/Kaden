@@ -42,6 +42,8 @@ You can talk instead of typing. Click the sound-wave button in the message box:
 - **Speech runs on your computer.** What you say is not sent to a speech service; only
   the text goes to the model, as when you type. The first time, Kaden asks to download
   the speech models (about 830 MB) into its data folder.
+- **Pick its voice** in **Settings → General → Voice**: Heart (the default), Bella,
+  Nicole, Michael or Fenrir. **Play** lets you hear one first.
 - **English only** for now.
 
 ### Attaching files
