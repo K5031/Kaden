@@ -24,8 +24,8 @@ Type a message and press Enter. While the agent works you can keep typing; your 
 are queued and delivered when it is ready. Its reasoning, replies and tool calls appear in
 the conversation as they happen. Each step reads as a short sentence the agent writes
 ("Read your notes"), with the exact input below it. The steps between two replies, and the
-agent's thinking between them, fold into one line that shows the step under way, then how
-many there were and any that failed ("4 steps · 1 failed"); click it to see them all.
+agent's thinking between them, fold into one line that shows the step under way, then the
+last step and any that failed ("Read main.py · 1 failed"); click it to see them all.
 
 ### Talking with Kaden
 
