@@ -10,4 +10,5 @@ Agent Note (`notes/proposed/`) and leaves this list.
   with a black ribbon, a white capelet dress) living on the desktop. Art drawn in code was
   not good enough; it needs frames from an image model, which the user would make. Not the
   old mascot.
-- **An upgraded tool system** (2026-11-21). What should be better is not said yet.
+- **An upgraded tool system** (2026-11-21). What should be better is not said yet; a switch
+  per tool was built and [rejected](notes/rejected/2026-11-22-tools-turned-on-and-off.md).
