@@ -86,23 +86,6 @@ def card_of(call: ToolCall) -> Card | None:
         if not options:
             return None
         return Card(call.id, text("recap"), text("question"), options, action)
-    if call.name == "AskUserQuestion":
-        questions = [q for q in args.get("questions") or ()
-                     if isinstance(q, dict) and isinstance(q.get("question"), str)]
-        if not questions:
-            return None
-
-        def labels(q: dict[str, Any]) -> list[str]:
-            return [o["label"] for o in q.get("options") or ()
-                    if isinstance(o, dict) and isinstance(o.get("label"), str) and o["label"]]
-
-        if len(questions) == 1 and not questions[0].get("multiSelect"):
-            return Card(call.id, "", questions[0]["question"], tuple(labels(questions[0])),
-                        None)
-        lines = [f"{n}. {q['question']} ("
-                 + ("any of: " if q.get("multiSelect") else "") + ", ".join(labels(q)) + ")"
-                 for n, q in enumerate(questions, 1)]
-        return Card(call.id, "", "\n".join(lines), (), None)
     if call.name in SUGGESTION_TOOLS:
         replies = args.get("replies")
         options = tuple(r for r in replies if isinstance(r, str) and r) if isinstance(
@@ -461,7 +444,7 @@ def _when(t: float) -> str:
 MEMORY_HINT = "What Kadence remembers across conversations. You can edit it."
 
 # Calls not shown as steps: the wrap-up card and the plan's checklist show them instead.
-CARD_TOOLS = frozenset({"wrap_up", "AskUserQuestion", "TodoWrite"})
+CARD_TOOLS = frozenset({"wrap_up", "TodoWrite"})
 
 
 def checklist(plan: Sequence[PlanItem], working: bool) -> tuple[PlanItem, ...]:

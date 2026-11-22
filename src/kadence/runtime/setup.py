@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import fields, replace
 from typing import NoReturn
 
@@ -186,4 +186,7 @@ class SetupRuntime:
         self._refuse()
 
     async def resolve_permission(self, request_id: str, decision: Decision) -> None:
+        self._refuse()
+
+    async def answer_question(self, call_id: str, answers: Mapping[str, str]) -> None:
         self._refuse()

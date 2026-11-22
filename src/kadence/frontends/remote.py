@@ -27,6 +27,8 @@ from kadence.api import (
     PermissionResolved,
     ProposalMade,
     ProposalResolved,
+    QuestionAnswered,
+    QuestionAsked,
     Refusal,
     RuntimeAPI,
     RuntimeSnapshot,
@@ -257,6 +259,10 @@ def _applied(snap: RuntimeSnapshot, envelope: EventEnvelope) -> RuntimeSnapshot:
             return replace(snap, duty_wake_at=wake_at)
         case HelpNeeded(question=question):
             return replace(snap, help_needed=question)
+        case QuestionAsked():
+            return replace(snap, pending_question=envelope.event)
+        case QuestionAnswered():
+            return replace(snap, pending_question=None)
         case ToolStarted(call=call):
             return replace(snap, operations=(*snap.operations, OperationInfo(call, 0.0)))
         case ToolProgress(call_id=call_id, text=text):

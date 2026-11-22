@@ -26,6 +26,8 @@ from kadence.api import (
     MessageQueued,
     OpaqueBlock,
     PermissionRequested,
+    QuestionAnswered,
+    QuestionAsked,
     ReasoningDelta,
     RuntimeEvent,
     SettingsChanged,
@@ -57,6 +59,10 @@ def _logged(event: RuntimeEvent) -> dict[str, Any]:
         case ToolFinished(result=result, duration_s=duration_s):
             return {"call_id": result.call_id, "status": result.status,
                     "duration_s": duration_s}
+        case QuestionAsked(call_id=call_id, questions=questions):
+            return {"call_id": call_id, "questions": len(questions)}
+        case QuestionAnswered(call_id=call_id, answers=answers):
+            return {"call_id": call_id, "answered": answers is not None}
         case PermissionRequested(request=request):
             return {"request_id": request.id, "call_id": request.call.id,
                     "name": request.call.name, "read_only": request.read_only,

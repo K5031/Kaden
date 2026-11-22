@@ -113,6 +113,7 @@ from kadence.api import (
     PermissionRequest,
     PermissionRule,
     Proposal,
+    QuestionAsked,
     RuntimeAPI,
     Settings,
     SettingsUpdate,
@@ -1366,6 +1367,64 @@ class PermissionCard(QFrame):
         self.resolve(request_id, decision)
 
 
+class QuestionCard(QFrame):
+    """The agent's questions, which it waits on: each with its options, one to pick or, for
+    a multiple choice, any; Send once each has an answer. A reply typed instead answers
+    them in words."""
+
+    def __init__(self, asked: QuestionAsked,
+                 answer: Callable[[str, dict[str, str]], None]) -> None:
+        super().__init__()
+        self.setObjectName("prompt")
+        self.asked, self.answer = asked, answer
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 10, 12, 10)
+        self.choices: list[tuple[str, list[QPushButton]]] = []
+        for question in asked.questions:
+            header = str(question.get("header") or "")
+            text = str(question.get("question") or "")
+            layout.addWidget(_label(f"{header}: {text}" if header else text, role="strong"))
+            row = QHBoxLayout()
+            buttons = []
+            many = bool(question.get("multiSelect"))
+            for option in question.get("options") or ():
+                button = QPushButton(str(option.get("label", "")))
+                button.setCheckable(True)
+                if option.get("description"):
+                    button.setToolTip(str(option["description"]))
+                button.toggled.connect(lambda on, b=button, many=many: self._toggled(b, on, many))
+                buttons.append(button)
+                row.addWidget(button)
+            row.addStretch()
+            layout.addLayout(row)
+            self.choices.append((text, buttons))
+        bottom = QHBoxLayout()
+        self.send = _primary(QPushButton("Send"))
+        self.send.setEnabled(False)
+        self.send.clicked.connect(self._send)
+        bottom.addWidget(self.send)
+        bottom.addWidget(_label("or type your answer", tone="muted"))
+        bottom.addStretch()
+        layout.addLayout(bottom)
+        self.setAccessibleName("The agent's questions")
+
+    def _toggled(self, button: QPushButton, on: bool, many: bool) -> None:
+        if on and not many:
+            for _, buttons in self.choices:
+                if button in buttons:
+                    for other in buttons:
+                        if other is not button and other.isChecked():
+                            other.setChecked(False)
+        self.send.setEnabled(all(any(b.isChecked() for b in buttons)
+                                 for _, buttons in self.choices))
+
+    def _send(self) -> None:
+        self.setEnabled(False)  # the card goes when QuestionAnswered arrives
+        self.answer(self.asked.call_id, {
+            text: ", ".join(b.text() for b in buttons if b.isChecked())
+            for text, buttons in self.choices})
+
+
 class ProposalCard(QFrame):
     """A call the agent proposed: it runs only if the user approves it."""
 
@@ -1883,6 +1942,8 @@ class ConversationView(QScrollArea):
         while (child := self.prompts.takeAt(0)) is not None:
             if child.widget() is not None:
                 _discard(child.widget())
+        if (asked := self.model.question) is not None:
+            self.prompts.addWidget(QuestionCard(asked, self.controller.answer_question))
         for request in self.model.prompts.values():
             self.prompts.addWidget(PermissionCard(request, self.controller.resolve))
         for proposal in self.model.proposals.values():

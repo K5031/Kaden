@@ -23,7 +23,6 @@ from kadence.api import (
     BUILTIN_TOOLS,
     DESCRIPTION_ARG,
     DUTY_TOOLS,
-    ENDS_TURN,
     PERMISSION_CEILING_ENV,
     SKILL_TOOL,
     TOOL_SEARCH,
@@ -81,6 +80,8 @@ from kadence.api import (
     Proposal,
     ProposalMade,
     ProposalResolved,
+    QuestionAnswered,
+    QuestionAsked,
     Reasoning,
     ReasoningDelta,
     Refusal,
@@ -418,6 +419,9 @@ class Runtime:
         self._uncounted: set[CallId] = set()  # operations not counted as activity yet
         self._specs: dict[str, ToolSpec] = {}  # offered in the latest request
         self._deferred: dict[str, ToolSpec] = {}  # offered by name only (ToolSearch)
+        # The open AskUserQuestion and what its answers settle.
+        self._question: tuple[QuestionAsked, asyncio.Future[Mapping[str, str] | str]] | None = (
+            None)
         self._loaded: dict[str, set[str]] = {}  # per conversation: deferred tools loaded
         self._flush_tasks: set[asyncio.Task[None]] = set()
         self._duration_task: asyncio.Task[None] | None = None
@@ -445,6 +449,7 @@ class Runtime:
             queued_messages=list(self._inbox),
             duty_wake_at=self._duty_wake_at,
             help_needed=self._help,
+            pending_question=self._question[0] if self._question else None,
             proposals=tuple(p for p, _ in self._proposals.values()),
         )
 
@@ -577,6 +582,9 @@ class Runtime:
     async def send(self, text: str, files: Sequence[str] = (), *,
                    spoken: bool = False) -> None:
         self._sendable()
+        if self._question is not None and not files and text.strip():
+            self._settle_question(text.strip())  # an answer in the user's own words
+            return
         attached = tuple([await self._attach(path) for path in files])
         self._answered()
         self._queue(MessageQueued(_new_id(), text, attached, spoken), "user message")
@@ -856,7 +864,8 @@ class Runtime:
         if self._stopping:
             return AgentState.STOPPING
         if self._cycle_active or self._cycle_requested:
-            return AgentState.AWAITING_PERMISSION if self._prompts else self._phase
+            return (AgentState.AWAITING_PERMISSION if self._prompts or self._question
+                    else self._phase)
         return self._base
 
     def _update_state(self) -> None:
@@ -1393,7 +1402,7 @@ class Runtime:
                 return
             await self._flush_results()
             delivered = await self._deliver_inbox()
-            ended = (len(calls) == 1 and calls[0].name in ENDS_TURN
+            ended = (len(calls) == 1 and calls[0].name == "wrap_up"
                      and results[0].status in (ToolStatus.OK, ToolStatus.BACKGROUNDED))
             if (calls and not ended) or delivered:  # a queued message authorizes the next turn
                 continue
@@ -1787,7 +1796,7 @@ class Runtime:
         tasks: dict[CallId, asyncio.Task[tuple[ToolResult, float]]] = {}
         barrier: asyncio.Task[Any] | None = None
         for call in calls:
-            if call.name in ENDS_TURN and len(calls) > 1:
+            if call.name == "wrap_up" and len(calls) > 1:
                 results[call.id] = (ToolResult(call.id, ToolStatus.ERROR, (
                     f"Not shown: call {call.name} alone, in a message of its own after your "
                     "other work.")), 0.0)
@@ -1822,11 +1831,6 @@ class Runtime:
                 return self._propose(call), 0.0
             if call.name == "wrap_up":
                 return self._wrap_up(call), 0.0
-            if call.name == "AskUserQuestion":
-                self._log.decision("asked_user", questions=len(call.arguments["questions"]))
-                return ToolResult(call.id, ToolStatus.OK, (
-                    "Asked the user; your turn has ended. Their answers come as their next "
-                    "message.")), 0.0
             if call.name in _RUNTIME_TOOLS or call.name in self._memory_tools:
                 return await self._run_builtin(call, spec)
             return await self._run_module_call(call, spec)
@@ -2289,6 +2293,8 @@ class Runtime:
                 await self._save_duty(None, plan)
                 self._log.decision("goal_finished")
                 return ToolStatus.OK, "Goal reached; the duty has ended."
+            case "AskUserQuestion":
+                return ToolStatus.OK, await self._ask(call)
             case "ToolSearch":
                 found = self._search_tools(args["query"].strip(), args.get("max_results", 5))
                 if not found:
@@ -2309,6 +2315,50 @@ class Runtime:
                 self._log.decision("skill", name=name)
                 return ToolStatus.OK, skill_files.render(loaded, args.get("args", ""))
         return ToolStatus.ERROR, f"Unknown built-in {call.name!r}."
+
+    async def _ask(self, call: ToolCall) -> str:
+        """Wait for the user's answers to the call's questions (answer_question, or a
+        message in their own words) and say them as Claude Code's AskUserQuestion does."""
+        questions = tuple(call.arguments["questions"])
+        asked = QuestionAsked(call.id, questions)
+        answered: asyncio.Future[Mapping[str, str] | str] = (
+            asyncio.get_running_loop().create_future())
+        self._question = (asked, answered)
+        self._log.decision("question", call_id=call.id, questions=len(questions))
+        self._emit(asked)
+        self._update_state()
+        try:
+            answers = await answered
+        finally:
+            if self._question is not None and self._question[0] is asked:
+                self._question = None
+                self._emit(QuestionAnswered(call.id, None))
+            self._update_state()
+        if isinstance(answers, str):
+            return (f"The user answered in their own words: \"{answers}\". You can now "
+                    "continue with the user's answers in mind.")
+        said = ", ".join(f'"{q["question"]}"="{answers.get(q["question"], "(no answer)")}"'
+                         for q in questions)
+        return (f"User has answered your questions: {said}. You can now continue with the "
+                "user's answers in mind.")
+
+    async def answer_question(self, call_id: CallId, answers: Mapping[str, str]) -> None:
+        if self._question is None or self._question[0].call_id != call_id:
+            raise RuntimeStateError(f"no question {call_id} is open", Refusal.NOT_PENDING)
+        self._settle_question(dict(answers))
+
+    def _settle_question(self, answers: Mapping[str, str] | str) -> None:
+        assert self._question is not None
+        asked, answered = self._question
+        self._question = None
+        self._log.decision("question_answered", call_id=asked.call_id,
+                           in_words=isinstance(answers, str))
+        self._emit(QuestionAnswered(asked.call_id, {q["question"]: answers
+                                                    for q in asked.questions}
+                                    if isinstance(answers, str) else answers))
+        if not answered.done():
+            answered.set_result(answers)
+        self._update_state()
 
     def _describe(self, op: Operation) -> str:
         name = f"Operation {op.call.id} ({op.call.name})"

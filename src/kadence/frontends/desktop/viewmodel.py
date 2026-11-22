@@ -55,6 +55,8 @@ from kadence.api import (
     Proposal,
     ProposalMade,
     ProposalResolved,
+    QuestionAnswered,
+    QuestionAsked,
     Reasoning,
     ReasoningDelta,
     Refusal,
@@ -338,6 +340,7 @@ class ConversationModel:
         self.items: list[Item] = []
         self.prompts: dict[str, PermissionRequest] = {}
         self.proposals: dict[str, Proposal] = {}  # shown with the prompts
+        self.question: QuestionAsked | None = None  # the agent waits for its answers
         self.card: Card | None = None  # the agent's wrap-up card under its answer
         self.last_seq = -1
         self.state = AgentState.NOT_STARTED
@@ -405,6 +408,7 @@ class ConversationModel:
         self._plan = None
         self.prompts.clear()
         self.proposals.clear()
+        self.question = snapshot.pending_question
         self.card = None
         self._tools.clear()
         self._cards.clear()
@@ -511,6 +515,13 @@ class ConversationModel:
                 self.on_change(PromptsChanged())
             case PermissionResolved(request_id=request_id):
                 if self.prompts.pop(request_id, None) is not None:
+                    self.on_change(PromptsChanged())
+            case QuestionAsked():
+                self.question = event
+                self.on_change(PromptsChanged())
+            case QuestionAnswered(call_id=call_id):
+                if self.question is not None and self.question.call_id == call_id:
+                    self.question = None
                     self.on_change(PromptsChanged())
             case ProposalMade(proposal=proposal):
                 self.proposals[proposal.id] = proposal
@@ -1088,6 +1099,9 @@ class Controller:
 
     def resolve(self, request_id: str, decision: Decision) -> None:
         self.command(self.runtime.resolve_permission(request_id, decision))
+
+    def answer_question(self, call_id: str, answers: dict[str, str]) -> None:
+        self.command(self.runtime.answer_question(call_id, answers))
 
     def resolve_proposal(self, proposal_id: str, accept: bool) -> None:
         self.command(self.runtime.resolve_proposal(proposal_id, accept))

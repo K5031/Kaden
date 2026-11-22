@@ -40,6 +40,7 @@ drives its sub-sessions this way:
 | `set_plan` | `plan`: a list of `{text, status, due, note}` |
 | `resolve_permission` | `request_id`, `decision` (`allow_once`, `allow_conversation`, `deny`) |
 | `resolve_proposal` | `proposal_id`, `accept` (true or false) |
+| `answer_question` | `call_id`, `answers`: for each question (by its text), the labels chosen (several joined with ", ") or your own words |
 | `snapshot` | none |
 | `history` | `conversation_id`, optional `before`, `limit` |
 | `list_conversations` | optional `include_archived` |
@@ -74,7 +75,9 @@ that is not the user's words, use `notify` with a `text` instead of `send`.
 **Prompts reach the program.** A tool call that needs approval comes as
 `PermissionRequested`: answer it with `resolve_permission`. A call the agent proposes
 comes as `ProposalMade`: answer it with `resolve_proposal`. A question the agent asks
-with its work paused comes as `HelpNeeded`: answer it with `send`.
+with its work paused comes as `HelpNeeded`: answer it with `send`. Questions with choices
+that the agent waits on come as `QuestionAsked`: answer them with `answer_question`, or
+with `send`, which answers them all in your words.
 
 **The wrap-up card is a tool call.** A turn that leaves a decision may end with a `wrap_up` call:
 `question`, up to three `options` with the agent's pick first, and an optional `recap` (an `ask_for_help` call

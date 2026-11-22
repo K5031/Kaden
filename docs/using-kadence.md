@@ -128,6 +128,13 @@ is woken when the time comes, without a message from you. Next to the conversati
 - For work that keeps going on its own, have the conversation
   [run continuously](concepts.md#running-continuously) instead.
 
+### Questions
+
+When the agent needs your choice to go on (which database, which approach), it asks and
+waits. A card above the message box shows each question with its choices: pick one, or
+several where it says you may, and press **Send**. Or type your answer instead. The agent
+carries on with your answers in the same turn.
+
 ### The wrap-up card
 
 When the agent needs you to decide something, it ends its turn with a card above the message
@@ -141,9 +148,6 @@ recap of what is done and what is not. Other answers have no card.
   goes away, and a button that would have done something is withdrawn.
 - The card comes back if you reopen the conversation before answering. After a restart a
   button that would have done something just sends its text.
-- When the agent has questions for you (which database, which approach), the card shows
-  them with their choices. For one question, click a choice; for several, answer them in
-  your reply.
 
 ## Keys
 

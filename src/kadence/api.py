@@ -903,15 +903,13 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
             "required": ["call", "reason"],
         },
     ),
-    # Ends the turn when it is the only call in its message, as wrap_up does; frontends show
-    # it as a card (see SUGGESTION_TOOLS) and the answers come as the user's next message.
+    # Waits for the user's answers (QuestionAsked, answer_question) and returns them.
     "AskUserQuestion": ToolSpec(
         "AskUserQuestion",
         "Ask the user one to four questions when you need their decision or preference to "
         "go on, each with two to four options; they may also answer in their own words. "
-        "Your turn ends with it: call it alone, after your other work. Their answers come "
-        "as their next message. Put a recommended option first and add \"(Recommended)\" "
-        "to its label.",
+        "The call waits for their answers and returns them. Put a recommended option "
+        "first and add \"(Recommended)\" to its label.",
         {"type": "object",
          "properties": {"questions": {"type": "array", "minItems": 1, "maxItems": 4,
                                       "items": _QUESTION}},
@@ -1053,8 +1051,7 @@ TOOL_SEARCH = ToolSpec(
 # Calls frontends show as a card under the answer (wrap_up: recap, question, options;
 # ask_for_help: question, replies), while no user message follows it. A click on an option
 # sends its label as the user's message, or approves its call's Proposal.
-SUGGESTION_TOOLS = frozenset({"wrap_up", "ask_for_help", "AskUserQuestion"})
-ENDS_TURN = frozenset({"wrap_up", "AskUserQuestion"})  # alone in a message, the turn ends
+SUGGESTION_TOOLS = frozenset({"wrap_up", "ask_for_help"})
 
 # No module may declare these names.
 RESERVED_TOOL_NAMES = (frozenset(BUILTIN_TOOLS) | frozenset(DUTY_TOOLS)
@@ -1160,7 +1157,8 @@ class AgentState(StrEnum):
     IDLE = "idle"  # background ops may still run; see StateChanged.pending_ops
     THINKING = "thinking"  # the model is asked for its next step, or is about to be
     RUNNING_TOOLS = "running_tools"
-    AWAITING_PERMISSION = "awaiting_permission"  # any prompt open; other ops keep running
+    AWAITING_PERMISSION = "awaiting_permission"  # a permission prompt or a question open;
+    #                                              other ops keep running
     # The cycle's last answer is appended and the model is asked nothing more: Memory's
     # upkeep runs (see the module docstring), then the agent is IDLE. Commands as in THINKING.
     FINISHING = "finishing"
@@ -1500,6 +1498,7 @@ class RuntimeSnapshot:
     duty_wake_at: float | None = None  # see DutyScheduled
     proposals: Sequence[Proposal] = ()  # waiting for the user
     help_needed: str | None = None  # see HelpNeeded
+    pending_question: QuestionAsked | None = None  # see QuestionAsked
 
 
 # Runtime events. TextDelta / ReasoningDelta / ToolCallDelta are reused from Core's stream.
@@ -1675,6 +1674,26 @@ class HelpNeeded:
 
 
 @dataclass(frozen=True, slots=True)
+class QuestionAsked:
+    """The agent's AskUserQuestion call waits for the user's answers (answer_question, or
+    a message, which answers in their own words). `questions` are the call's, each with
+    question, header, options (label, description) and multiSelect. The state is
+    AWAITING_PERMISSION while one is open."""
+
+    call_id: CallId
+    questions: Sequence[Mapping[str, Any]]
+
+
+@dataclass(frozen=True, slots=True)
+class QuestionAnswered:
+    """The open question is answered: the answers by question, or None when it ended
+    unanswered (Stop)."""
+
+    call_id: CallId
+    answers: Mapping[str, str] | None
+
+
+@dataclass(frozen=True, slots=True)
 class MaintenanceStarted:
     """Emitted when Memory first uses inference during maintain()."""
 
@@ -1752,6 +1771,8 @@ type RuntimeEvent = (
     | MemoriesChanged
     | DutyScheduled
     | HelpNeeded
+    | QuestionAsked
+    | QuestionAnswered
     | ProposalMade
     | ProposalResolved
     | MaintenanceStarted
@@ -1797,7 +1818,8 @@ class RuntimeAPI(Protocol):
     notify follows send's column.
 
     resolve_permission is first-wins; an unknown or already-resolved id raises
-    RuntimeStateError. cancel_operation is valid in any state while the call is running
+    RuntimeStateError. answer_question follows resolve_permission's column; while a
+    question is open, send answers it instead of queueing. cancel_operation is valid in any state while the call is running
     and raises RuntimeStateError otherwise.
     stop is a no-op in IDLE, STOPPED and FAILED unless operations are outstanding, in
     which case it performs a full Stop.
@@ -1972,6 +1994,10 @@ class RuntimeAPI(Protocol):
         """Replace the open conversation's plan as the user. Emits ConversationUpdated."""
 
     async def resolve_permission(self, request_id: str, decision: Decision) -> None: ...
+
+    async def answer_question(self, call_id: CallId, answers: Mapping[str, str]) -> None:
+        """Answer the open AskUserQuestion: for each question (by its text), the labels
+        chosen, joined with ", ", or the user's own words. Emits QuestionAnswered."""
 
 
 @dataclass(frozen=True, slots=True)

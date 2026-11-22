@@ -2025,3 +2025,34 @@ async def test_add_files_picks_files_to_go_with_the_message(make, qapp, tmp_path
     dialog.filesSelected.emit([str(note)])
     dialog.close()
     assert window.attachments.paths() == [str(note)]
+
+
+async def test_the_agents_questions_are_answered_from_a_card(make, qapp):
+    from kadence.frontends.desktop.window import QuestionCard
+
+    questions = [
+        {"question": "Which database?", "header": "Database", "multiSelect": False,
+         "options": [{"label": "SQLite", "description": "One file"},
+                     {"label": "Postgres", "description": "A server"}]},
+        {"question": "Which parts?", "header": "Parts", "multiSelect": True,
+         "options": [{"label": "API", "description": ""}, {"label": "UI", "description": ""}]}]
+    h: Harness = await make()
+    h.core.add(Step(calls=[call("AskUserQuestion", {"questions": questions}, id="q")]),
+               Step(text="On it."))
+    await h.start()
+    window, controller, _ = await open_window(h)
+    controller.send("set it up")
+    await eventually(lambda: window.prompts.count() == 1)
+    card = window.prompts.itemAt(0).widget()
+    assert isinstance(card, QuestionCard) and not card.send.isEnabled()
+    buttons = {b.text(): b for b in card.findChildren(QPushButton)}
+    buttons["SQLite"].click()
+    buttons["Postgres"].click()  # one of the two
+    buttons["API"].click()
+    buttons["UI"].click()  # any of them
+    assert not buttons["SQLite"].isChecked() and card.send.isEnabled()
+    card.send.click()
+    await eventually(lambda: window.prompts.count() == 0 and not controller.model.busy)
+    result = (await h.results())["q"]
+    assert '"Which database?"="Postgres"' in result.content
+    assert '"Which parts?"="API, UI"' in result.content

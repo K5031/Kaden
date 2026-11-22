@@ -30,7 +30,7 @@ optional parameter: a plan step's due time and note, a subagent's budget.
 | `TodoWrite` | `todos`: `content`, `status` (pending, in_progress, completed), `activeForm`, `due`, `due_in_minutes`, `note` | the plan; a step no longer needed is left out (the user can still drop one); the checklist shows a step in progress by its `activeForm` |
 | `Agent` | `description`, `prompt`, `run_in_background`, `budget_usd` | a sub-session titled `description`; waited for until it ends unless `run_in_background` |
 | `SendMessage` | `to`, `message` | answers or tells a subagent more, then waits for it |
-| `AskUserQuestion` | `questions`: `question`, `header`, `options` (`label`, `description`), `multiSelect` | ends the turn as `wrap_up` does; shown as a card, answered in the user's next message |
+| `AskUserQuestion` | `questions`: `question`, `header`, `options` (`label`, `description`), `multiSelect` | waits for the user's answers and returns them: [asking the user mid-turn](2026-11-22-asking-the-user-mid-turn.md) |
 | `ToolSearch` | `query`, `max_results` | loads deferred tools (below) |
 | `NotebookEdit` | `notebook_path`, `cell_id`, `new_source`, `cell_type`, `edit_mode` | edits a cell of a notebook read in the conversation; `Read` shows a notebook as its cells with their ids |
 
@@ -38,7 +38,7 @@ And on the tools already matched: `Grep` takes `multiline` and `type`, `WebSearc
 `allowed_domains` and `blocked_domains`, `WebFetch` takes `prompt`, and `Bash` past its
 timeout returns the output it wrote.
 
-Three mechanisms in the runtime carry this:
+Two mechanisms in the runtime carry this:
 
 - **`ToolSpec.answers_prompt`** (`WebFetch`): a call with a `prompt` gets the maintenance
   model's answer to it from the tool's output, in place of the output. A Tools module
@@ -47,10 +47,6 @@ Three mechanisms in the runtime carry this:
   together take about 10k tokens, they are listed by name in the system prompt and
   `ToolSearch` is offered; a tool it loads, or one called directly, is offered from then
   on in the conversation.
-- **`api.ENDS_TURN`**: `AskUserQuestion` ends the turn when alone in its message, as
-  `wrap_up` does, and is among the calls frontends show as a card.
-
-KFM shows a unit's `AskUserQuestion` as what it said, as it does a `wrap_up` card.
 
 ## Alternatives considered
 
@@ -61,10 +57,6 @@ KFM shows a unit's `AskUserQuestion` as what it said, as it does a `wrap_up` car
   replaces the whole list in one call, as Kadence's plan always has.
 - **Drop the extras** (due times, notes, budgets) for an exact schema. Reminders, duties'
   schedules and sub-session limits depend on them.
-- **AskUserQuestion that holds the turn until answered,** as in Claude Code. It needs a
-  new kind of wait in the runtime, in every frontend and in KFM, and an unattended agent
-  would sit in it; ending the turn reuses the card and the wake on the user's message,
-  and the model gets the answers one message later.
 - **A stop_session of its own.** `TaskStop` on the call that waits for a subagent stops
   it, as in Claude Code; a subagent that is done is closed by itself.
 
@@ -73,6 +65,5 @@ KFM shows a unit's `AskUserQuestion` as what it said, as it does a `wrap_up` car
 - The model meets the tools it knows from Claude Code, for nearly everything it does.
 - `Agent` in the foreground holds the turn until the subagent ends, with no limit; a
   model that wants to carry on asks for the background.
-- `AskUserQuestion`'s answers arrive as the user's message, not as its result.
 - Deferred tools are loaded again after a restart, by a search or a direct call.
 - Saved permission answers and hooks that name an old runtime tool no longer match it.
