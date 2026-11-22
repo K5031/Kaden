@@ -50,6 +50,7 @@ from kadence.api import (
     PermissionRequest,
     PermissionRequested,
     PermissionResolved,
+    PermissionRule,
     PlanItem,
     Proposal,
     ProposalMade,
@@ -900,6 +901,7 @@ class SettingsForm:
     spending_limit: str  # dollars as typed; empty = no limit
     permissions: PermissionPolicy
     instructions: str
+    permission_rules: tuple[PermissionRule, ...] = ()  # the saved answers kept
 
 
 def form_from(settings: Settings) -> SettingsForm:
@@ -907,7 +909,7 @@ def form_from(settings: Settings) -> SettingsForm:
     modules = {kind: choice.chosen for kind, choice in settings.modules.items()}
     return SettingsForm(modules, "", settings.model, settings.maintenance_model,
                         "" if limit is None else f"{limit:g}", settings.permissions,
-                        settings.system_prompt)
+                        settings.system_prompt, tuple(settings.permission_rules))
 
 
 def settings_update(current: Settings, form: SettingsForm) -> SettingsUpdate:
@@ -941,6 +943,8 @@ def settings_update(current: Settings, form: SettingsForm) -> SettingsUpdate:
         if not form.instructions.strip():
             raise ValueError("The instructions can't be empty.")
         changes["system_prompt"] = form.instructions
+    if form.permission_rules != tuple(current.permission_rules):
+        changes["permission_rules"] = list(form.permission_rules)
     return SettingsUpdate(**changes)
 
 

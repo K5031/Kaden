@@ -34,6 +34,16 @@ def test_tightening_and_unrelated_changes_need_no_confirmation():
     assert loosening(_settings(limit=None), SettingsUpdate(budget=Budget(max_cost_usd=3.0))) == []
 
 
+def test_taking_back_a_never_is_loosening():
+    from kadence.api import PermissionRule
+
+    never, always = PermissionRule("shell", "rm", allow=False), PermissionRule("web_fetch")
+    current = settings(permission_rules=(never, always))
+    assert loosening(current, SettingsUpdate(permission_rules=[never])) == []
+    assert loosening(current, SettingsUpdate(permission_rules=[always])) == [
+        "asks again about what you said never to: shell: rm"]
+
+
 def test_raising_removing_and_loosening_are_each_named():
     current = _settings()
     assert loosening(current, SettingsUpdate(budget=Budget(max_cost_usd=50.0))) == [

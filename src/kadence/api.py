@@ -81,6 +81,7 @@ from __future__ import annotations
 
 import abc
 import os
+import re
 from collections.abc import AsyncIterator, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -1082,7 +1083,70 @@ class AgentState(StrEnum):
 class Decision(StrEnum):
     ALLOW_ONCE = "allow_once"
     ALLOW_CONVERSATION = "allow_conversation"  # in memory only; keyed by tool name
+    ALLOW_ALWAYS = "allow_always"  # saved: PermissionRule.for_call, in every conversation
     DENY = "deny"
+    DENY_ALWAYS = "deny_always"  # saved: calls like it are refused without asking
+
+
+# Programs that run code of any kind: a rule for one is the whole command, since "python"
+# alone would allow everything.
+_RUNS_CODE = frozenset({"bash", "bun", "deno", "env", "eval", "exec", "node", "npx", "perl",
+                        "php", "python", "python3", "ruby", "sh", "sudo", "uv", "xargs",
+                        "zsh"})
+_CHAINED = re.compile(r"[;&|`\n<>]|\$\(")  # what joins or feeds commands
+
+
+@dataclass(frozen=True, slots=True)
+class PermissionRule:
+    """A saved answer: calls of `tool` (a shell command: one that is `prefix`, or starts
+    with it and a space) run without asking (`allow`) or are refused without asking."""
+
+    tool: str
+    prefix: str | None = None
+    allow: bool = True
+
+    @classmethod
+    def for_call(cls, call: ToolCall, *, allow: bool = True) -> PermissionRule:
+        """The rule an "always" or "never" answer to `call` saves: a shell command's
+        program and its subcommand (`git status`), the whole command where the program
+        runs code of any kind or commands are chained, else the tool."""
+        command = call.arguments.get("command")
+        if call.name != "shell" or not isinstance(command, str) or not command.split():
+            return cls(call.name, allow=allow)
+        words = command.split()
+        if words[0] in _RUNS_CODE or _CHAINED.search(command):
+            return cls(call.name, command.strip(), allow)
+        if len(words) > 1 and re.fullmatch(r"[a-z][\w-]*", words[1]):
+            return cls(call.name, f"{words[0]} {words[1]}", allow)
+        return cls(call.name, words[0], allow)
+
+    def matches(self, call: ToolCall) -> bool:
+        """Whether the rule covers `call`. A rule that allows covers a command only when
+        nothing is chained to it; one that refuses covers any part of a chain."""
+        if call.name != self.tool:
+            return False
+        if self.prefix is None:
+            return True
+        command = call.arguments.get("command")
+        if not isinstance(command, str):
+            return False
+        command = command.strip()
+        if command == self.prefix:
+            return True
+        parts = [command] if self.allow else _CHAINED.split(command)
+        if self.allow and _CHAINED.search(command):
+            return False
+        return any(part.strip() == self.prefix or part.strip().startswith(self.prefix + " ")
+                   for part in parts)
+
+    def __str__(self) -> str:
+        return f"{self.tool}: {self.prefix}" if self.prefix is not None else self.tool
+
+    @classmethod
+    def parse(cls, text: str, *, allow: bool) -> PermissionRule:
+        """The rule `str` wrote: "tool" or "tool: prefix"."""
+        tool, sep, prefix = text.partition(": ")
+        return cls(tool.strip(), prefix.strip() if sep else None, allow)
 
 
 class PermissionPolicy(StrEnum):
@@ -1306,6 +1370,8 @@ class Settings:
     already_open: bool = False
     # Module settings: saved at once, started at the next start (one more Tools module).
     mcp_servers: Sequence[McpServer] = ()
+    # What the user answered "always" or "never" to (a runtime setting, applied at once)
+    permission_rules: Sequence[PermissionRule] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1324,6 +1390,7 @@ class SettingsUpdate:
     system_prompt: str | None = None
     work_folder: str | None = None
     mcp_servers: Sequence[McpServer] | None = None  # replaces the whole list
+    permission_rules: Sequence[PermissionRule] | None = None  # replaces the whole list
 
 
 @dataclass(frozen=True, slots=True)

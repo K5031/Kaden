@@ -111,6 +111,7 @@ from kadence.api import (
     ModelInfo,
     PermissionPolicy,
     PermissionRequest,
+    PermissionRule,
     Proposal,
     RuntimeAPI,
     Settings,
@@ -1344,6 +1345,17 @@ class PermissionCard(QFrame):
                 _primary(button)
             button.clicked.connect(lambda _=False, d=decision: self._answer(request.id, d))
             buttons.addWidget(button)
+        # Kept for every conversation, as the rule the runtime will save.
+        rule = PermissionRule.for_call(call)
+        what = f"“{rule.prefix}”" if rule.prefix is not None else rule.tool
+        always = QPushButton("Always…")
+        menu = QMenu(always)
+        menu.addAction(f"Always allow {what}").triggered.connect(
+            lambda: self._answer(request.id, Decision.ALLOW_ALWAYS))
+        menu.addAction(f"Never allow {what}").triggered.connect(
+            lambda: self._answer(request.id, Decision.DENY_ALWAYS))
+        always.setMenu(menu)
+        buttons.insertWidget(2, always)
         buttons.addStretch()
         layout.addLayout(buttons)
         self.resolve = resolve
@@ -3422,7 +3434,9 @@ class SettingsDialog(QDialog):
                             self.child_limit),) if sessions is not None else ())),
             "Permissions": _page(
                 "Permissions", _setting("What the agent may do", "When it asks you before acting.",
-                         self.permissions)),
+                         self.permissions),
+                _setting("Saved answers", "What you said always or never to, in every "
+                         "conversation.", self._rules_box(settings), below=True)),
             "Instructions": _page(
                 "Instructions", _setting("Instructions", "What Kadence is told at the start of every "
                          "conversation.", self.instructions, below=True)),
@@ -3504,7 +3518,32 @@ class SettingsDialog(QDialog):
             spending_limit=self.limit.text(),
             permissions=PermissionPolicy(self.permissions.currentData()),
             instructions=self.instructions.toPlainText(),
+            permission_rules=tuple(self.rules.item(i).data(Qt.ItemDataRole.UserRole)
+                                   for i in range(self.rules.count())),
         )
+
+    def _rules_box(self, settings: Settings) -> QWidget:
+        """The saved answers, and a way to take one back."""
+        self.rules = QListWidget()
+        self.rules.setMaximumHeight(140)
+        for rule in settings.permission_rules:
+            item = QListWidgetItem(f"{'Always allow' if rule.allow else 'Never allow'}: {rule}")
+            item.setData(Qt.ItemDataRole.UserRole, rule)
+            self.rules.addItem(item)
+        self.remove_rule = QPushButton("Remove")
+        self.remove_rule.setEnabled(False)
+        self.rules.currentRowChanged.connect(lambda row: self.remove_rule.setEnabled(row >= 0))
+        self.remove_rule.clicked.connect(lambda: self.rules.takeItem(self.rules.currentRow()))
+        box = QWidget()
+        column = QVBoxLayout(box)
+        column.setContentsMargins(0, 0, 0, 0)
+        if not settings.permission_rules:
+            column.addWidget(_label("None yet.", selectable=False, tone="muted"))
+            self.rules.hide()
+            self.remove_rule.hide()
+        column.addWidget(self.rules)
+        column.addWidget(self.remove_rule, 0, Qt.AlignmentFlag.AlignLeft)
+        return box
 
     def _save(self, *, restart: bool = False) -> None:
         try:

@@ -103,6 +103,14 @@ says why. If the check fails or the spending limit is reached, Kadence asks too.
 - It can be wrong. Choose "Work freely in the work folder, ask before anything else" to
   decide everything outside the folder yourself.
 
+**Saved answers.** When Kadence asks, **Always…** keeps your answer for every
+conversation: **Always allow** runs calls like it without asking from then on, **Never
+allow** refuses them without asking. A command is kept by its program and subcommand
+(`git status` covers `git status -s` too, but not `git status && rm …`); a command that
+runs code of any kind, such as `python fix.py`, is kept whole. Settings → Permissions
+lists what you saved, and **Remove** takes one back. An "always" never covers keys,
+passwords or Kadence's own data folder: those still ask.
+
 **How "in the work folder" is enforced.** A file action counts as inside when its path is
 in the work folder; a link that leads out of it counts as outside. Commands run in a
 sandbox ([bubblewrap](https://github.com/containers/bubblewrap)) in which they can:

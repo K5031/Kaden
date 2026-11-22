@@ -281,6 +281,11 @@ def loosening(current: Settings, update: SettingsUpdate) -> list[str]:
         if order.index(update.permissions) > order.index(current.permissions):
             reasons.append("lets the agent do more without asking: "
                            + PERMISSION_LABELS[update.permissions].lower())
+    if update.permission_rules is not None:
+        kept = set(update.permission_rules)
+        if taken := [str(rule) for rule in current.permission_rules
+                     if not rule.allow and rule not in kept]:
+            reasons.append("asks again about what you said never to: " + ", ".join(taken))
     return reasons
 
 

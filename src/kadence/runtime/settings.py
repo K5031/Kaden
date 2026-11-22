@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import tomllib
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +13,7 @@ import keyring
 import keyring.errors
 import tomli_w
 
-from kadence.api import KEYCHAIN_SERVICE, Budget, SettingsUpdate
+from kadence.api import KEYCHAIN_SERVICE, Budget, PermissionRule, SettingsUpdate
 
 SETTINGS_FILE = "settings.toml"
 BUDGET_INTS = ("max_tokens", "max_tool_calls")  # limits counted in whole things
@@ -42,7 +42,15 @@ def runtime_changes(update: SettingsUpdate) -> dict[str, Any]:
         changes["budget"] = _limits(update.budget)
     if update.permissions is not None:
         changes["permissions"] = update.permissions.value
+    if update.permission_rules is not None:
+        changes |= rule_lists(update.permission_rules)
     return changes
+
+
+def rule_lists(rules: Sequence[PermissionRule]) -> dict[str, list[str]]:
+    """The rules as settings.toml keeps them."""
+    return {"always_allow": [str(rule) for rule in rules if rule.allow],
+            "never_allow": [str(rule) for rule in rules if not rule.allow]}
 
 
 def _limits(budget: Budget) -> dict[str, Any]:

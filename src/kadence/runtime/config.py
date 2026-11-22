@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from kadence.api import Budget, McpServer, PermissionPolicy
+from kadence.api import Budget, McpServer, PermissionPolicy, PermissionRule
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are Kadence, an AI agent. Use the available tools to accomplish the user's goals.\n"
@@ -86,6 +86,7 @@ class RuntimeConfig:
     model: str | None = None  # default model; None = first model Core lists
     maintenance_model: str | None = None  # Completion(light=True); None = main model
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
+    permission_rules: tuple[PermissionRule, ...] = ()  # what the user answered always or never
     default_max_output_tokens: int = 4096
     max_retries: int = 3
     retry_base_delay_s: float = 1.0

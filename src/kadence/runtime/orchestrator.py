@@ -73,6 +73,7 @@ from kadence.api import (
     PermissionRequest,
     PermissionRequested,
     PermissionResolved,
+    PermissionRule,
     PlanItem,
     PlanStatus,
     Proposal,
@@ -539,6 +540,7 @@ class Runtime:
             budget=cfg.budget,
             permissions=self._permissions,
             system_prompt=cfg.system_prompt,
+            permission_rules=cfg.permission_rules,
             **await self._modules.fields(),
         )
 
@@ -920,7 +922,9 @@ class Runtime:
         self._config = replace(
             cfg, maintenance_model=light, budget=budget,
             permissions=u.permissions or cfg.permissions,
-            system_prompt=u.system_prompt or cfg.system_prompt)
+            system_prompt=u.system_prompt or cfg.system_prompt,
+            permission_rules=(cfg.permission_rules if u.permission_rules is None
+                              else tuple(u.permission_rules)))
         if self._agent_config is not None:
             self._agent_config = replace(self._agent_config, budget=budget,
                                          permissions=permissions)
@@ -1819,6 +1823,18 @@ class Runtime:
         if policy == PermissionPolicy.DENY:
             auto(Decision.DENY, "policy")
             return "Refused: the permission policy denies tool calls."
+        bare = self._bare(call)
+        if any(not rule.allow and rule.matches(bare) for rule in self._config.permission_rules):
+            auto(Decision.DENY, "rule")
+            return "Refused: the user said never to allow calls like this."
+        # The user's saved yes, unless a parent Kadence set a ceiling it must not pass, or
+        # the call touches what always asks (Kadence's own data, credentials).
+        if (self._ceiling is None
+                and any(rule.allow and rule.matches(bare)
+                        for rule in self._config.permission_rules)
+                and always_ask(call, self._config.data_dir) is None):
+            auto(Decision.ALLOW_ALWAYS, "rule")
+            return None
         if call.name in self._grants and (confined or self._grants[call.name]):
             auto(Decision.ALLOW_CONVERSATION, "grant")
             return None
@@ -1847,11 +1863,21 @@ class Runtime:
         self._update_state()
         decision = await future
         self._update_state()
-        if decision == Decision.DENY:
+        if decision in (Decision.ALLOW_ALWAYS, Decision.DENY_ALWAYS):
+            await self._save_rule(PermissionRule.for_call(
+                bare, allow=decision is Decision.ALLOW_ALWAYS))
+        if decision in (Decision.DENY, Decision.DENY_ALWAYS):
             return "Refused: permission denied."
         if decision == Decision.ALLOW_CONVERSATION:
             self._grants[call.name] = self._grants.get(call.name, False) or not confined
         return None
+
+    async def _save_rule(self, rule: PermissionRule) -> None:
+        """Keep an "always" or "never" answer, in place of any rule for the same calls."""
+        rules = tuple(r for r in self._config.permission_rules
+                      if (r.tool, r.prefix) != (rule.tool, rule.prefix)) + (rule,)
+        async with self._settings_lock:
+            await self._update_settings(SettingsUpdate(permission_rules=rules))
 
     async def _review(self, call: ToolCall, spec: ToolSpec) -> Verdict:
         """The automatic permission check (review.py). Fails closed: any problem asks."""

@@ -29,7 +29,7 @@ from typing import Any
 
 import tomli_w
 
-from kadence.api import MODULE_KINDS, Budget, McpServer, PermissionPolicy
+from kadence.api import MODULE_KINDS, Budget, McpServer, PermissionPolicy, PermissionRule
 from kadence.runtime import (
     InstanceConfig,
     ModuleLoadError,
@@ -73,7 +73,8 @@ LAUNCHER_FRONTENDS = {WINDOW: "desktop"}
 # Not an installed frontend: a person never chooses it in Settings; --headless runs it.
 HEADLESS_FACTORY = "kadence.frontends.headless:factory"
 SAVED_KEYS = ("modules", "model", "maintenance_model", "permissions",
-              "system_prompt", "work_folder", "budget", "mcp_servers")
+              "system_prompt", "work_folder", "budget", "mcp_servers", "always_allow",
+              "never_allow")
 
 
 def read_config(path: Path, *, required: bool,
@@ -274,8 +275,16 @@ def read_saved(path: Path) -> dict[str, Any]:
     except (TypeError, KeyError, AttributeError):
         raise SystemExit(f"{path}: each [[mcp_servers]] has a name, a command or url, and "
                          "env, a list of variable names") from None
+    rules = []
+    for key, allow in (("always_allow", True), ("never_allow", False)):
+        texts = data.get(key, [])
+        if not isinstance(texts, list) or not all(isinstance(t, str) and t.strip()
+                                                  for t in texts):
+            raise SystemExit(f"{path}: {key} is a list of rules, such as \"shell: git status\"")
+        rules += [PermissionRule.parse(text, allow=allow) for text in texts]
     runtime = {k: v for k, v in data.items()
-               if k not in ("modules", "work_folder", "mcp_servers")}
+               if k not in ("modules", "work_folder", "mcp_servers", "always_allow",
+                            "never_allow")}
     cleared = [k for k in ("model", "maintenance_model") if runtime.get(k) == ""]
     for key in cleared:
         del runtime[key]
@@ -286,6 +295,7 @@ def read_saved(path: Path) -> dict[str, Any]:
     if "work_folder" in data:
         saved["work_folder"] = data["work_folder"]
     saved["mcp_servers"] = servers
+    saved["permission_rules"] = tuple(rules)
     return saved
 
 

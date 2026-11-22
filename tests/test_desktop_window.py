@@ -121,6 +121,38 @@ async def test_permission_card_buttons_answer_the_prompt(make, qapp):
     assert widgets(window, ToolCard)[0].state.text().startswith("done")
 
 
+async def test_an_answer_can_be_kept_for_every_conversation(make, qapp):
+    """Always allow, or never: the card says what it will keep, and Settings lists it,
+    where it can be taken back."""
+    from kadence.api import PermissionRule
+
+    h: Harness = await make(permissions=PermissionPolicy.ASK)
+    h.tools.instant("shell", read_only=False)
+    h.core.add(Step(calls=[call("shell", {"command": "git status -s"})]), Step(text="ok"))
+    await h.start()
+    window, controller, _ = await open_window(h)
+    controller.send("look")
+    await eventually(lambda: window.prompts.count() == 1)
+    card = window.prompts.itemAt(0).widget()
+    [always] = buttons(card, "Always…")
+    entries = [a.text() for a in always.menu().actions()]
+    assert entries == ["Always allow “git status”", "Never allow “git status”"]
+    always.menu().actions()[0].trigger()
+    await eventually(lambda: window.prompts.count() == 0 and not controller.model.busy)
+    settings = await h.runtime.settings()
+    assert settings.permission_rules == (PermissionRule("shell", "git status"),)
+
+    dialog = SettingsDialog(window, h.runtime, controller, settings, [], 0.0)
+    dialog.open()
+    assert [dialog.rules.item(i).text() for i in range(dialog.rules.count())] == [
+        "Always allow: shell: git status"]
+    dialog.rules.setCurrentRow(0)
+    dialog.remove_rule.click()
+    dialog._save()
+    await eventually(lambda: not dialog.isVisible())
+    assert (await h.runtime.settings()).permission_rules == ()
+
+
 async def test_switching_is_disabled_while_busy(make, qapp):
     h: Harness = await make()
     h.tools.hanging("wait")
