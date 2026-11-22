@@ -1,4 +1,4 @@
-# Kadence
+# Kaden
 
 An AI agent for your computer, in a desktop app. It runs commands, works with
 files and searches the web, decides on its own only what is safe and asks you about the
@@ -7,32 +7,32 @@ OpenAI-compatible models.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/empty-dark.png">
-  <img src="docs/images/empty-light.png" alt="The Kadence desktop app on a new chat">
+  <img src="docs/images/empty-light.png" alt="The Kaden desktop app on a new chat">
 </picture>
 
 The [desktop app](docs/desktop-app.md), ready for a new chat.
 
 A runtime drives four swappable modules (Core, Memory, Tools, Frontend); see
-`src/kadence/api.py` and `SPEC.md`.
+`src/kaden/api.py` and `SPEC.md`.
 
 ## Quick start
 
 Requires Linux, Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-git clone https://github.com/K5031/Kadence.git
-uv tool install --python 3.13 --editable "Kadence[desktop]"
+git clone https://github.com/K5031/Kaden.git
+uv tool install --python 3.13 --editable "Kaden[desktop]"
 export ANTHROPIC_API_KEY=sk-ant-...   # or enter a key when the app asks for one
-kadence
+kaden
 ```
 
-Kadence works freely in the folder you choose for a chat; anything outside it gets a quick
-automatic check, and Kadence asks you when it is unsure. Choose a folder made for it;
+Kaden works freely in the folder you choose for a chat; anything outside it gets a quick
+automatic check, and Kaden asks you when it is unsure. Choose a folder made for it;
 your home folder is too broad to count.
 
 ## Documentation
 
-The [documentation](docs/README.md) covers getting started, using Kadence, settings, the
+The [documentation](docs/README.md) covers getting started, using Kaden, settings, the
 concepts behind it and development.
 
 ## Contributing

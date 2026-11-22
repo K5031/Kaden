@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from kadence.api import (
+from kaden.api import (
     BUILTIN_TOOLS,
     AgentState,
     Decision,
@@ -22,7 +22,7 @@ from kadence.api import (
     ToolSpec,
     ToolStatus,
 )
-from kadence.memory.tools import RECALL
+from kaden.memory.tools import RECALL
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
@@ -362,7 +362,7 @@ async def test_stop_ends_a_foreground_call(make: Any) -> None:
 
 
 def test_a_foreground_timeout_is_two_minutes_unless_set_and_at_most_ten() -> None:
-    from kadence.api import foreground_timeout
+    from kaden.api import foreground_timeout
 
     assert foreground_timeout({}) == 120
     assert foreground_timeout({"timeout": 5000}) == 5
@@ -400,7 +400,7 @@ async def test_a_foreground_tool_without_a_limit_of_its_own_gets_two_minutes(
         make: Any, monkeypatch: Any) -> None:
     """The limit comes from the tool's own: none set is the default foreground limit, and
     an endless one (a subagent) is waited for to the end."""
-    from kadence import api
+    from kaden import api
 
     monkeypatch.setattr(api, "FOREGROUND_TIMEOUT_S", 0.2)
     tools = FakeTools()

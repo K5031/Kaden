@@ -13,11 +13,11 @@ change or be forgotten. Contract issue 8.3 asked where these settings live.
 ## Decision
 
 A TOML file per instance: `--config FILE` (must exist), else `<data dir>/config.toml`
-(optional). Read with stdlib `tomllib` in `src/kadence/__main__.py`.
+(optional). Read with stdlib `tomllib` in `src/kaden/__main__.py`.
 
 ```toml
 [core]                      # also [memory], [tools], [frontend]
-factory = "kadence.core.openai_compat:factory"
+factory = "kaden.core.openai_compat:factory"
 options = { profile = "deepseek" }
 
 [runtime]
@@ -40,7 +40,7 @@ max_cost_usd = 5.0
   the config file, read at startup) replaces the default prompt; setting both, an empty
   prompt or a missing file stops startup. The runtime still appends its Continuous-mode
   instructions.
-- **Effective config.** `kadence --show-config` prints the config the instance would run
+- **Effective config.** `kaden --show-config` prints the config the instance would run
   with as TOML (written with `tomli-w`) and exits without building any module: defaults
   filled in, the default system prompt in full, values under keys that name a key, token,
   secret or password redacted. Unset settings that only the Core resolves (the model) are
@@ -55,7 +55,7 @@ max_cost_usd = 5.0
   keychain, and refuses a missing key at construction. That one-line message, like any
   module that rejects its options, opens the frontend's settings with it.
 
-Reference: `.agents/decisions.md`, "Running Kadence"; user docs: `docs/settings.md`.
+Reference: `.agents/decisions.md`, "Running Kaden"; user docs: `docs/settings.md`.
 
 ## Alternatives considered
 

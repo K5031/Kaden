@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from kadence.api import (
+from kaden.api import (
     JSON,
     Completed,
     Core,
@@ -32,7 +32,7 @@ from kadence.api import (
     Usage,
     UsageReport,
 )
-from kadence.runtime.settings import read_key
+from kaden.runtime.settings import read_key
 
 DEFAULT_MODELS = (
     ModelInfo(

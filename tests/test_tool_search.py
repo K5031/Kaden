@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from kadence.api import ToolOutput, ToolSpec, ToolStatus
-from kadence.runtime import orchestrator
+from kaden.api import ToolOutput, ToolSpec, ToolStatus
+from kaden.runtime import orchestrator
 from tests.conftest import Harness
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools

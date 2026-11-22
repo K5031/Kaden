@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from kadence.api import (
+from kaden.api import (
     PROFILE,
     ContextRequest,
     InstancePaths,
@@ -23,8 +23,8 @@ from kadence.api import (
     ToolResult,
     ToolStatus,
 )
-from kadence.memory.sqlite import SCHEMA_VERSION, CompactionConfig, SqliteMemory, factory
-from kadence.runtime.budget import estimate_tokens
+from kaden.memory.sqlite import SCHEMA_VERSION, CompactionConfig, SqliteMemory, factory
+from kaden.runtime.budget import estimate_tokens
 from tests.conformance.memory_suite import (
     TOKEN_RE,
     WINDOW,
@@ -83,27 +83,27 @@ class TestSqliteMemory(MemoryConformance):
         conv = await memory.create_conversation(title="test")
         await memory.append(conv.id, [text_message("tok0001")])
         await memory.save_note(PROFILE, "", "Lives in Oslo.")
-        note = await memory.save_note("Kadence", "The user's AI agent project",
+        note = await memory.save_note("Kaden", "The user's AI agent project",
                                       "Written in Python; the user pushes to main.")
         assert note.source_conversation_id is None
         text = await addendum(memory, conv.id)
-        assert "Lives in Oslo." in text and "Kadence" in text
+        assert "Lives in Oslo." in text and "Kaden" in text
         assert "The user's AI agent project" in text and "pushes to main" not in text
         await memory.aclose()
 
         memory = open_memory()
-        renamed = await memory.save_note("Kadence app", "", "Python.", note_id=note.id)
+        renamed = await memory.save_note("Kaden app", "", "Python.", note_id=note.id)
         assert (renamed.id, renamed.description) == (note.id, "The user's AI agent project")
-        same = await memory.save_note("kadence APP", "", "Python 3.13.")  # case ignored
+        same = await memory.save_note("kaden APP", "", "Python 3.13.")  # case ignored
         assert same.id == note.id and same.text == "Python 3.13."
-        assert [n.title for n in await memory.notes()] == [PROFILE, "Kadence app"]
+        assert [n.title for n in await memory.notes()] == [PROFILE, "Kaden app"]
         with pytest.raises(ValueError):
             await memory.save_note("Other", "", "x", note_id=profile.id)  # keeps its title
         with pytest.raises(ValueError):
             await memory.delete_note(profile.id)
         await memory.delete_note(note.id)
         assert [n.title for n in await memory.notes()] == [PROFILE]
-        assert "Kadence" not in await addendum(memory, conv.id)
+        assert "Kaden" not in await addendum(memory, conv.id)
         with pytest.raises(KeyError):
             await memory.delete_note(note.id)
 
@@ -371,7 +371,7 @@ async def test_the_pass_appends_to_notes_it_is_shown_by_title_only(open_store):
 
 
 async def test_a_failed_pass_reads_the_exchange_after_the_next_answer(open_store):
-    from kadence.api import CoreError
+    from kaden.api import CoreError
 
     class Failing(FakeCompletion):
         async def __call__(self, system, messages, *, max_tokens, light=False,
@@ -519,8 +519,8 @@ async def test_history_before_unknown_message_raises(open_store):
 
 _CRASH_SCRIPT = """
 import asyncio, os, sys
-from kadence.api import ContextRequest
-from kadence.memory.sqlite import SqliteMemory
+from kaden.api import ContextRequest
+from kaden.memory.sqlite import SqliteMemory
 
 class Complete:
     def __init__(self, memory):
@@ -750,7 +750,7 @@ async def test_the_saving_pass_is_told_what_not_to_keep(open_store):
 async def test_the_title_request_names_the_first_message_and_does_not_obey_it(open_store):
     """A conversation may open with an instruction; the light model is to name it, not
     carry it out."""
-    from kadence.api import Text
+    from kaden.api import Text
 
     memory = open_store()
     conv = await memory.create_conversation()
@@ -767,17 +767,17 @@ async def test_the_title_request_names_the_first_message_and_does_not_obey_it(op
     assert block.text.endswith("\n</message>\n\nWrite the title.")
 
 
-def test_a_summary_and_a_search_hit_say_which_words_are_kadences():
+def test_a_summary_and_a_search_hit_say_which_words_are_kadens():
     """What the summarizing model and recall read names a notice as one: its stored text
     carries no mark."""
-    from kadence.api import Author
-    from kadence.memory.sqlite.memory import _render_transcript
-    from kadence.memory.tools import _line
+    from kaden.api import Author
+    from kaden.memory.sqlite.memory import _render_transcript
+    from kaden.memory.tools import _line
 
     said = Message("u", Role.USER, (Text("Watch my inbox"),), 0.0)
     notice = Message("n", Role.USER, (Text("Time to check in on your duty."),), 60.0,
-                     Author.KADENCE)
+                     Author.KADEN)
     assert _render_transcript([said, notice]).splitlines() == [
         "[1970-01-01 00:00 user] Watch my inbox",
-        "[1970-01-01 00:01 notice from Kadence, not the user] Time to check in on your duty."]
+        "[1970-01-01 00:01 notice from Kaden, not the user] Time to check in on your duty."]
     assert " user " in _line("c", said) and " notice " in _line("c", notice)

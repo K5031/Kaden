@@ -4,12 +4,12 @@ Status: implemented — the shell, file and web tools take Claude Code's names, 
 
 ## Problem
 
-Kadence's shell, file and web tools did what Claude Code's do, under other names and
+Kaden's shell, file and web tools did what Claude Code's do, under other names and
 parameters: `shell`, `read_file`, `edit_file`, `search_files` and so on. Models from
 Anthropic and others are trained at length on Claude Code's tools (`Bash`, `Read`, `Edit`,
 `Grep`), with their exact parameters, and on what their results look like. A tool shaped
 the same way is one the model already knows how to use well; a near copy under other names
-is one it has to learn from the description each time. The user asked for Kadence's tools
+is one it has to learn from the description each time. The user asked for Kaden's tools
 to match Claude's.
 
 ## Decision
@@ -36,7 +36,7 @@ The shell, files and web module offers:
   the first entries of the result.
 - The Anthropic Core offers its own search as `WebSearch` too, sent to the API under
   Anthropic's name `web_search`, so it still takes the module's place.
-- Claude Code's per-call `description` is Kadence's `step_summary`, which the runtime adds
+- Claude Code's per-call `description` is Kaden's `step_summary`, which the runtime adds
   to every tool.
 - `Bash` runs a command until it ends or its `timeout`, or in the background when asked:
   see [Bash chooses its background](2026-11-22-bash-chooses-its-background.md).
@@ -46,7 +46,7 @@ The shell, files and web module offers:
 
 ## Alternatives considered
 
-- **Keep Kadence's names.** Each tool already did what its Claude Code counterpart does,
+- **Keep Kaden's names.** Each tool already did what its Claude Code counterpart does,
   and the descriptions said how to use them. Rejected at the user's word: the model's
   training is a better guide than a description, and nothing is gained by differing.
 - **Rename only, keep the parameters.** Half the benefit: the model reaches for `Read` and
@@ -59,7 +59,7 @@ The shell, files and web module offers:
 ## Consequences
 
 - The model meets tools it knows, on every provider: the names are plain function names.
-- Kadence's tool names mix Claude Code's (`Bash`, `Read`) with its own snake_case ones
+- Kaden's tool names mix Claude Code's (`Bash`, `Read`) with its own snake_case ones
   (`memory`, `wrap_up`).
 - Saved permission answers and hooks that name an old tool no longer match it; with no
   migration, they are the user's to re-make. Conversations from before keep calls under

@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from kadence.api import (
+from kaden.api import (
     AgentState,
     Decision,
     PermissionPolicy,
@@ -103,7 +103,7 @@ async def test_never_refuses_without_asking_and_rules_can_be_taken_back(make: An
 
 
 def test_saved_rules_are_read_back_and_a_wrong_one_is_named(tmp_path):
-    from kadence.__main__ import read_saved
+    from kaden.__main__ import read_saved
 
     path = tmp_path / "settings.toml"
     path.write_text('always_allow = ["Bash: git status", "WebFetch"]\n'

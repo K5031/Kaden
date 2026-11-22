@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from kadence.api import (
+from kaden.api import (
     AgentState,
     Author,
     Message,
@@ -21,7 +21,7 @@ from kadence.api import (
     ToolResult,
     ToolStatus,
 )
-from kadence.frontends.common import Card, card_of
+from kaden.frontends.common import Card, card_of
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
@@ -135,8 +135,8 @@ async def test_writing_instead_withdraws_the_option_before_the_message(make):
 async def test_the_desktop_shows_the_card_and_sends_a_reply(make):
     from PySide6.QtWidgets import QLabel, QPushButton, QToolButton
 
-    from kadence.frontends.desktop.viewmodel import Controller, ConversationModel
-    from kadence.frontends.desktop.window import MainWindow, WrapUpCard
+    from kaden.frontends.desktop.viewmodel import Controller, ConversationModel
+    from kaden.frontends.desktop.window import MainWindow, WrapUpCard
 
     h = await harness(make, [
         Step(text="Committed.", calls=[call("wrap_up", WRAP, id="w")]),
@@ -165,8 +165,8 @@ async def test_the_desktop_shows_the_card_and_sends_a_reply(make):
 async def test_the_desktop_runs_the_option_with_a_call(make):
     from PySide6.QtWidgets import QPushButton
 
-    from kadence.frontends.desktop.viewmodel import Controller, ConversationModel
-    from kadence.frontends.desktop.window import MainWindow, ProposalCard, WrapUpCard
+    from kaden.frontends.desktop.viewmodel import Controller, ConversationModel
+    from kaden.frontends.desktop.window import MainWindow, ProposalCard, WrapUpCard
 
     h = await harness(make, [
         Step(text="Committed.", calls=[call("wrap_up", ACTION, id="w")]),
@@ -192,8 +192,8 @@ async def test_the_desktop_runs_the_option_with_a_call(make):
 async def test_closing_the_card_puts_it_away(make):
     from PySide6.QtWidgets import QToolButton
 
-    from kadence.frontends.desktop.viewmodel import Controller, ConversationModel
-    from kadence.frontends.desktop.window import MainWindow, WrapUpCard
+    from kaden.frontends.desktop.viewmodel import Controller, ConversationModel
+    from kaden.frontends.desktop.window import MainWindow, WrapUpCard
 
     h = await harness(make, [Step(text="Committed.", calls=[call("wrap_up", WRAP, id="w")])])
     await h.turn("commit it")
@@ -222,15 +222,15 @@ def test_cards_come_from_wrap_up_and_ask_for_help():
 
 
 def _committed(message: Message) -> object:
-    from kadence.api import MessageCommitted
+    from kaden.api import MessageCommitted
 
     return MessageCommitted(message)
 
 
 async def test_a_background_result_or_notice_leaves_the_card_up(make):
-    from kadence.api import OperationResult
-    from kadence.api import Text as TextBlock
-    from kadence.frontends.desktop.viewmodel import ConversationModel
+    from kaden.api import OperationResult
+    from kaden.api import Text as TextBlock
+    from kaden.frontends.desktop.viewmodel import ConversationModel
 
     model = ConversationModel()
     wrap = ToolCall("w", "wrap_up", WRAP)
@@ -239,14 +239,14 @@ async def test_a_background_result_or_notice_leaves_the_card_up(make):
     model.apply(_committed(Message(
         "b", Role.USER, (OperationResult("op", ToolStatus.OK, "built"),), 0.0)))
     model.apply(_committed(Message("c", Role.USER, (TextBlock("Sub-session ended."),), 0.0,
-                                   Author.KADENCE)))
+                                   Author.KADEN)))
     assert model.card is not None  # neither is the user's answer
     model.apply(_committed(Message("d", Role.USER, (TextBlock("Not now"),), 0.0)))
     assert model.card is None
 
 
 def test_a_closed_card_stays_closed_when_the_history_is_reloaded():
-    from kadence.frontends.desktop.viewmodel import ConversationModel
+    from kaden.frontends.desktop.viewmodel import ConversationModel
 
     model = ConversationModel()
     wrap = ToolCall("w", "wrap_up", WRAP)
@@ -260,8 +260,8 @@ def test_a_closed_card_stays_closed_when_the_history_is_reloaded():
 async def test_options_are_told_apart_by_position_not_label(make):
     from PySide6.QtWidgets import QPushButton
 
-    from kadence.frontends.desktop.viewmodel import Controller, ConversationModel
-    from kadence.frontends.desktop.window import MainWindow, WrapUpCard
+    from kaden.frontends.desktop.viewmodel import Controller, ConversationModel
+    from kaden.frontends.desktop.window import MainWindow, WrapUpCard
 
     same = {**WRAP, "options": [{"label": "Yes", "call": PUSH}, {"label": "Yes"}]}
     h = await harness(make, [

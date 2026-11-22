@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from kadence.api import (
+from kaden.api import (
     AgentState,
     QuestionAnswered,
     QuestionAsked,

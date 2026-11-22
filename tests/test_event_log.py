@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from kadence.api import AgentState, Decision, SettingsUpdate
+from kaden.api import AgentState, Decision, SettingsUpdate
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools

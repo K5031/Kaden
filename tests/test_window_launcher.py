@@ -8,10 +8,10 @@ from typing import Any
 
 import pytest
 
-import kadence.__main__ as launcher
-from kadence import window
-from kadence.api import SettingsUpdate, StartOptions
-from kadence.runtime import ModuleSpec
+import kaden.__main__ as launcher
+from kaden import window
+from kaden.api import SettingsUpdate, StartOptions
+from kaden.runtime import ModuleSpec
 from tests.fakes import frontend as fake_frontend
 from tests.fakes.frontend import ScriptedFrontend
 from tests.test_modules import FAKE_MODULES, settings_file
@@ -50,14 +50,14 @@ def window_frontends(monkeypatch: pytest.MonkeyPatch, *scripts: Any, event_loop:
 
 
 def test_a_frontend_without_a_loop_of_its_own_runs_on_asyncio():
-    assert launcher.frontend_loop(ModuleSpec("kadence.frontends.headless:factory")) is asyncio.run
+    assert launcher.frontend_loop(ModuleSpec("kaden.frontends.headless:factory")) is asyncio.run
 
 
 def test_the_desktop_app_names_the_qt_loop():
-    from kadence.frontends.desktop import factory
-    from kadence.frontends.desktop.loop import run_on_qt
+    from kaden.frontends.desktop import factory
+    from kaden.frontends.desktop.loop import run_on_qt
 
-    assert launcher.frontend_loop(ModuleSpec("kadence.frontends.desktop:factory")) is run_on_qt
+    assert launcher.frontend_loop(ModuleSpec("kaden.frontends.desktop:factory")) is run_on_qt
     assert factory.event_loop is run_on_qt
 
 
@@ -105,7 +105,7 @@ def test_a_bad_config_is_shown_by_the_launchers_own_frontend(tmp_path, monkeypat
             shown.append(str(e.code))
             raise
 
-    from kadence.frontends import desktop
+    from kaden.frontends import desktop
 
     monkeypatch.setattr(desktop.factory, "event_loop", run)
     with pytest.raises(SystemExit):
@@ -114,7 +114,7 @@ def test_a_bad_config_is_shown_by_the_launchers_own_frontend(tmp_path, monkeypat
 
 
 def test_the_window_launcher_has_the_flags_of_an_app_and_no_others(tmp_path):
-    """What `kadence` was told of models and permissions goes on to it; what is for a
+    """What `kaden` was told of models and permissions goes on to it; what is for a
     program (headless, a duty, printing the configuration) does not exist here."""
     assert window.parse_args(["--data-dir", str(tmp_path), "--conversation", "c1"]) == (
         launcher.Launch(tmp_path, conversation="c1"))

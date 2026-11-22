@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from kadence.api import (
+from kaden.api import (
     TODO_STATUS,
     AgentState,
     Budget,
@@ -29,7 +29,7 @@ from kadence.api import (
     ToolResult,
     ToolStatus,
 )
-from kadence.runtime import duty as duties
+from kaden.runtime import duty as duties
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
@@ -537,7 +537,7 @@ async def test_the_task_stays_in_view_after_the_goal_is_finished(make):
 def test_the_agent_is_told_to_plan_first_whenever_a_task_is_more_than_one_action():
     """The rule is in the tool's description, which reaches the model whatever system
     prompt the user has written."""
-    from kadence.api import DUTY_TOOLS
+    from kaden.api import DUTY_TOOLS
 
     told = DUTY_TOOLS["TodoWrite"].description
     assert "Every task that edits files, runs more than one command or has several steps" in told
@@ -576,7 +576,7 @@ async def test_finishing_a_goal_finishes_the_step_the_agent_was_on(make):
 
 def test_the_agent_is_told_to_close_its_plan_when_it_finishes_a_goal():
     """Else it is sent back after the goal, for one more request, to tick the steps off."""
-    from kadence.api import DUTY_TOOLS
+    from kaden.api import DUTY_TOOLS
 
     told = DUTY_TOOLS["finish_goal"].description
     assert "TodoWrite" in told and "in the same message" in told

@@ -9,8 +9,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from kadence.api import Attachment, ToolCall, ToolContext, ToolOutput, Tools, ToolSpec
-from kadence.tools.shell_files import attachments
+from kaden.api import Attachment, ToolCall, ToolContext, ToolOutput, Tools, ToolSpec
+from kaden.tools.shell_files import attachments
 
 type ToolFn = Callable[[ToolCall, ToolContext], Awaitable[ToolOutput]]
 

@@ -1,4 +1,4 @@
-"""The headless frontend: another program drives Kadence with JSON-RPC 2.0 over stdin and
+"""The headless frontend: another program drives Kaden with JSON-RPC 2.0 over stdin and
 stdout, one message per line, and gets every runtime event as a notification."""
 
 from __future__ import annotations
@@ -10,9 +10,9 @@ from typing import Any
 
 import pytest
 
-import kadence.__main__ as launcher
-from kadence.api import AgentState, Budget, DutyKind, PermissionPolicy, StartOptions
-from kadence.frontends.headless import HeadlessFrontend, factory
+import kaden.__main__ as launcher
+from kaden.api import AgentState, Budget, DutyKind, PermissionPolicy, StartOptions
+from kaden.frontends.headless import HeadlessFrontend, factory
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 
@@ -201,7 +201,7 @@ def test_factory_options():
 def test_the_launcher_runs_the_headless_frontend(tmp_path):
     args = launcher.parse_args(["--data-dir", str(tmp_path), "--headless", "--goal", "Ship"])
     config = launcher.load_config(args)
-    assert config.frontend.factory == "kadence.frontends.headless:factory"
+    assert config.frontend.factory == "kaden.frontends.headless:factory"
     assert config.frontend.options == {"start": True, "duty": "Ship", "goal": True}
     assert config.runtime.modules.running["frontend"] is None
 
@@ -224,9 +224,9 @@ async def test_a_real_process_keeps_stdout_for_the_channel(tmp_path):
         '[runtime.budget]\nmax_cost_usd = 5.0\n')
     root = Path(__file__).resolve().parents[1]
     env = {**os.environ, "PYTHONPATH": str(root)}
-    env.pop("KADENCE_PERMISSION_CEILING", None)
+    env.pop("KADEN_PERMISSION_CEILING", None)
     process = await asyncio.create_subprocess_exec(
-        sys.executable, "-c", "import kadence.__main__ as m; print('stray'); m.main()",
+        sys.executable, "-c", "import kaden.__main__ as m; print('stray'); m.main()",
         "--headless", "--data-dir", str(data), "--goal", "Say ok",
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE, cwd=root, env=env)
@@ -251,7 +251,7 @@ async def test_a_real_process_keeps_stdout_for_the_channel(tmp_path):
 async def test_a_cancelled_request_is_forgotten_at_once():
     """The other end of the channel: a request whose caller gave up leaves nothing
     pending, and its late answer is dropped."""
-    from kadence.frontends.remote import Channel
+    from kaden.frontends.remote import Channel
 
     class Process:
         def __init__(self) -> None:

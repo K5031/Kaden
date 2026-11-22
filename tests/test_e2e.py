@@ -1,4 +1,4 @@
-"""End-to-end wiring: `python -m kadence` builds the modules named in the config file, by
+"""End-to-end wiring: `python -m kaden` builds the modules named in the config file, by
 default SqliteMemory, the Anthropic Core, ShellFilesTools rooted at the current directory and
 the desktop app. Without an API key the Core is replaced by the scripted fake; everything else is the
 real module."""
@@ -17,8 +17,8 @@ from typing import Any
 
 import pytest
 
-from kadence.__main__ import load_config, main, parse_args
-from kadence.api import (
+from kaden.__main__ import load_config, main, parse_args
+from kaden.api import (
     AgentState,
     Budget,
     Core,
@@ -36,20 +36,20 @@ from kadence.api import (
     Tools,
     ToolStatus,
 )
-from kadence.core.anthropic import AnthropicCore
-from kadence.core.openai_compat import OpenAICompatCore
-from kadence.frontends.desktop import DesktopFrontend
-from kadence.memory.sqlite import SqliteMemory
-from kadence.runtime import InstanceConfig, ModuleSpec, load_module, run_instance
-from kadence.runtime.config import DEFAULT_SYSTEM_PROMPT
-from kadence.tools.shell_files import ShellFilesTools
+from kaden.core.anthropic import AnthropicCore
+from kaden.core.openai_compat import OpenAICompatCore
+from kaden.frontends.desktop import DesktopFrontend
+from kaden.memory.sqlite import SqliteMemory
+from kaden.runtime import InstanceConfig, ModuleSpec, load_module, run_instance
+from kaden.runtime.config import DEFAULT_SYSTEM_PROMPT
+from kaden.tools.shell_files import ShellFilesTools
 from tests.fakes.core import Step, call
 
 COMMAND = "echo wired > out.txt && cat out.txt"
 
 
 def build_config(argv: list[str]) -> InstanceConfig:
-    """The configuration `kadence` builds from these command-line arguments."""
+    """The configuration `kaden` builds from these command-line arguments."""
     return load_config(parse_args(argv))
 
 
@@ -103,7 +103,7 @@ def test_build_config_wires_the_real_modules(workspace, tmp_path, monkeypatch):
 
 DEEPSEEK_CORE = """
 [core]
-factory = "kadence.core.openai_compat:factory"
+factory = "kaden.core.openai_compat:factory"
 options = { profile = "deepseek" }
 """
 
@@ -114,13 +114,13 @@ def test_config_file_in_the_data_dir_selects_the_core(workspace, tmp_path, monke
     data_dir.mkdir()
     (data_dir / "config.toml").write_text(DEEPSEEK_CORE)
     config = build_config(["--data-dir", str(data_dir)])
-    assert config.core == ModuleSpec("kadence.core.openai_compat:factory", {"profile": "deepseek"})
+    assert config.core == ModuleSpec("kaden.core.openai_compat:factory", {"profile": "deepseek"})
     assert isinstance(load_module(config.core, Core, InstancePaths(data_dir)), OpenAICompatCore)
     default = build_config(["--data-dir", str(tmp_path / "data")])
-    assert default.memory == ModuleSpec("kadence.memory.sqlite:factory")
-    assert default.tools == ModuleSpec("kadence.tools.shell_files:factory",
+    assert default.memory == ModuleSpec("kaden.memory.sqlite:factory")
+    assert default.tools == ModuleSpec("kaden.tools.shell_files:factory",
                                        {"root": str(workspace)})
-    assert default.frontend == ModuleSpec("kadence.frontends.desktop:factory")
+    assert default.frontend == ModuleSpec("kaden.frontends.desktop:factory")
 
 
 def test_explicit_config_file_wins_over_the_data_dir(workspace, tmp_path):
@@ -128,11 +128,11 @@ def test_explicit_config_file_wins_over_the_data_dir(workspace, tmp_path):
     data_dir.mkdir()
     (data_dir / "config.toml").write_text(DEEPSEEK_CORE)
     explicit = tmp_path / "other.toml"
-    explicit.write_text('[core]\nfactory = "kadence.core.anthropic:factory"\n'
+    explicit.write_text('[core]\nfactory = "kaden.core.anthropic:factory"\n'
                         '[tools]\noptions = { root = "/srv", shell_timeout = 5 }\n')
     config = build_config(["--data-dir", str(data_dir), "--config", str(explicit)])
-    assert config.core == ModuleSpec("kadence.core.anthropic:factory")
-    assert config.tools == ModuleSpec("kadence.tools.shell_files:factory",
+    assert config.core == ModuleSpec("kaden.core.anthropic:factory")
+    assert config.tools == ModuleSpec("kaden.tools.shell_files:factory",
                                       {"root": "/srv", "shell_timeout": 5})
 
 
@@ -200,7 +200,7 @@ def test_module_ids_of_the_configured_modules(workspace, tmp_path):
     assert state.work_folder == str(workspace) == config.tools.options["root"]
 
     path = tmp_path / "config.toml"
-    path.write_text('[core]\nfactory = "kadence.core.openai_compat:factory"\n'
+    path.write_text('[core]\nfactory = "kaden.core.openai_compat:factory"\n'
                     'options = { profile = "deepseek" }\n')
     assert build_config(["--data-dir", str(tmp_path)]).runtime.modules.running["core"] is None
 
@@ -215,7 +215,7 @@ def test_saved_settings_override_the_config_file(workspace, tmp_path):
         f'work_folder = "{folder}"\n[modules]\ncore = "deepseek"\n[budget]\nmax_cost_usd = 7.0\n')
     config = build_config(["--data-dir", str(tmp_path)])
     runtime = config.runtime
-    assert config.core == ModuleSpec("kadence.core.openai_compat:deepseek_factory")
+    assert config.core == ModuleSpec("kaden.core.openai_compat:deepseek_factory")
     assert runtime.modules.running["core"] == "deepseek"
     assert (runtime.model, runtime.maintenance_model) == ("deepseek-v4-pro", None)
     assert runtime.permissions is PermissionPolicy.ASK
@@ -267,7 +267,7 @@ def test_show_config_prints_the_effective_config_without_building_modules(
     out = capsys.readouterr().out
     assert "sk-secret" not in out and '"t"' not in out
     shown = tomllib.loads(out)
-    assert shown["core"]["factory"] == "kadence.core.anthropic:factory"
+    assert shown["core"]["factory"] == "kaden.core.anthropic:factory"
     assert shown["core"]["options"]["api_key"] == "<redacted>"
     assert shown["core"]["options"]["models"]["m"]["auth_token"] == "<redacted>"
     assert shown["tools"]["options"] == {"root": str(workspace)}
@@ -287,7 +287,7 @@ def test_show_config_prints_the_effective_config_without_building_modules(
 
 def test_shown_config_loads_back_to_the_same_instance(workspace, tmp_path, capsys):
     path = tmp_path / "config.toml"
-    path.write_text(RUNTIME + '[core]\nfactory = "kadence.core.openai_compat:factory"\n'
+    path.write_text(RUNTIME + '[core]\nfactory = "kaden.core.openai_compat:factory"\n'
                     'options = { profile = "deepseek" }\n')
     args = ["--data-dir", str(tmp_path), "--config", str(path)]
     original = build_config(args)
@@ -333,21 +333,21 @@ def test_missing_explicit_config_file_is_refused(workspace, tmp_path):
 
 
 def test_module_entry_point_help():
-    out = subprocess.run([sys.executable, "-m", "kadence", "--help"], capture_output=True,
+    out = subprocess.run([sys.executable, "-m", "kaden", "--help"], capture_output=True,
                          text=True, check=True, env={**os.environ, "ANTHROPIC_API_KEY": ""})
     assert "--data-dir" in out.stdout
 
 
-def test_kadence_command_runs_main():
+def test_kaden_command_runs_main():
     from importlib.metadata import entry_points
 
-    from kadence.__main__ import main
+    from kaden.__main__ import main
 
-    [script] = entry_points(group="console_scripts", name="kadence")
+    [script] = entry_points(group="console_scripts", name="kaden")
     assert script.load() is main
-    exe = Path(sys.executable).parent / "kadence"
+    exe = Path(sys.executable).parent / "kaden"
     out = subprocess.run([str(exe), "--help"], capture_output=True, text=True, check=True)
-    assert out.stdout.startswith("usage: kadence ")
+    assert out.stdout.startswith("usage: kaden ")
 
 
 async def test_instance_runs_on_the_scripted_core(workspace, tmp_path):

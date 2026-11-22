@@ -30,7 +30,7 @@ the agent goes on in the same turn. The user asked for Claude Code's way.
   a multiple choice, and Send once each question has an answer. A reply typed instead
   answers in words.
 - **KFM's harness** reports the question as the unit asking (`Asked`) and resting, as for
-  `ask_for_help`; the supervisor's next message reaches Kadence as a message, which
+  `ask_for_help`; the supervisor's next message reaches Kaden as a message, which
   answers it.
 
 ## Alternatives considered

@@ -13,9 +13,9 @@ import numpy as np
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from kadence.frontends.desktop import theme
-from kadence.frontends.desktop.voice.speech import Sentences, spoken
-from kadence.frontends.desktop.voice.turns import State, Voice
+from kaden.frontends.desktop import theme
+from kaden.frontends.desktop.voice.speech import Sentences, spoken
+from kaden.frontends.desktop.voice.turns import State, Voice
 from tests.conftest import eventually
 
 
@@ -211,7 +211,7 @@ async def test_the_speech_models_are_downloaded_whole_or_not_at_all(tmp_path):
 
     import httpx2
 
-    from kadence.frontends.desktop.voice.download import Model, fetch, megabytes, missing
+    from kaden.frontends.desktop.voice.download import Model, fetch, megabytes, missing
 
     packed = io.BytesIO()
     with tarfile.open(fileobj=packed, mode="w:bz2") as archive:
@@ -248,8 +248,8 @@ async def test_the_speech_models_are_downloaded_whole_or_not_at_all(tmp_path):
 def test_microphone_sound_is_made_mono_at_the_engines_rate():
     from PySide6.QtMultimedia import QAudioFormat
 
-    from kadence.frontends.desktop.voice.audio import as_heard
-    from kadence.frontends.desktop.voice.engine import RATE
+    from kaden.frontends.desktop.voice.audio import as_heard
+    from kaden.frontends.desktop.voice.engine import RATE
 
     stereo = np.array([[16384, -16384]] * 4800 + [[16384, 16384]] * 4800, dtype=np.int16)
     heard = as_heard(stereo.tobytes() + b"\x01", 48000, 2, QAudioFormat.SampleFormat.Int16)
@@ -277,12 +277,12 @@ async def test_the_voice_button_starts_a_spoken_conversation(
     reply is read aloud, and the agent is told it is being talked to."""
     import httpx2
 
-    from kadence.api import Role, Text
-    from kadence.frontends.desktop.viewmodel import Controller, ConversationModel
-    from kadence.frontends.desktop.voice.download import Model
-    from kadence.frontends.desktop.voice.mode import VoiceMode
-    from kadence.frontends.desktop.window import MainWindow
-    from kadence.runtime.config import VOICE_ON_NOTICE
+    from kaden.api import Role, Text
+    from kaden.frontends.desktop.viewmodel import Controller, ConversationModel
+    from kaden.frontends.desktop.voice.download import Model
+    from kaden.frontends.desktop.voice.mode import VoiceMode
+    from kaden.frontends.desktop.window import MainWindow
+    from kaden.runtime.config import VOICE_ON_NOTICE
     from tests.fakes.core import Step
 
     h = await make()
@@ -300,7 +300,7 @@ async def test_the_voice_button_starts_a_spoken_conversation(
         return microphones[-1]
 
     release = asyncio.Event()  # holds the download partway
-    monkeypatch.setattr("kadence.frontends.desktop.voice.download.CHUNK", 1)
+    monkeypatch.setattr("kaden.frontends.desktop.voice.download.CHUNK", 1)
 
     async def body():
         yield b"va"
@@ -319,7 +319,7 @@ async def test_the_voice_button_starts_a_spoken_conversation(
     window = MainWindow(h.runtime, controller, voice=voice)
     task = asyncio.create_task(controller.run())
     await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
-    assert window.voice_button.toolTip() == "Talk with Kadence"
+    assert window.voice_button.toolTip() == "Talk with Kaden"
 
     window.voice_button.click()
     await eventually(lambda: asked and not voice.on)  # declined: off, nothing fetched
@@ -349,7 +349,7 @@ async def test_the_voice_button_starts_a_spoken_conversation(
 
     window.voice_button.click()
     assert not voice.on and not mic.open
-    assert window.input.placeholderText() == "Message Kadence"
+    assert window.input.placeholderText() == "Message Kaden"
     assert window.voice_button.property("active") is False
     window.voice_button.click()  # on again: no question, the models are there
     await eventually(lambda: voice.spoken)
@@ -364,7 +364,7 @@ def test_a_microphone_that_reports_no_error_is_open(qapp, monkeypatch):
     from PySide6.QtCore import QBuffer, QIODevice
     from PySide6.QtMultimedia import QtAudio
 
-    from kadence.frontends.desktop.voice import audio
+    from kaden.frontends.desktop.voice import audio
 
     class Device:
         def isNull(self) -> bool:

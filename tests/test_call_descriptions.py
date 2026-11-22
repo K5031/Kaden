@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from kadence.api import DESCRIPTION_ARG, PermissionPolicy, ToolSpec, ToolStarted
+from kaden.api import DESCRIPTION_ARG, PermissionPolicy, ToolSpec, ToolStarted
 from tests.conftest import Harness
 from tests.fakes.core import ScriptedCore, Step, call
 

@@ -1,7 +1,7 @@
 """The headless channel carries the whole RuntimeAPI: every command is a request the
 headless frontend answers and the remote runtime sends. A command added to RuntimeAPI and
-forgotten in either breaks sub-sessions and programs that drive Kadence. The setup runtime
-(a Kadence that could not start) takes every command too, to refuse it with its reason."""
+forgotten in either breaks sub-sessions and programs that drive Kaden. The setup runtime
+(a Kaden that could not start) takes every command too, to refuse it with its reason."""
 
 from __future__ import annotations
 
@@ -9,11 +9,11 @@ import inspect
 
 import pytest
 
-from kadence.api import Refusal, RuntimeAPI, RuntimeStateError
-from kadence.frontends.headless import REQUESTS
-from kadence.frontends.remote import RemoteRuntime
-from kadence.runtime import RuntimeConfig
-from kadence.runtime.setup import SetupRuntime
+from kaden.api import Refusal, RuntimeAPI, RuntimeStateError
+from kaden.frontends.headless import REQUESTS
+from kaden.frontends.remote import RemoteRuntime
+from kaden.runtime import RuntimeConfig
+from kaden.runtime.setup import SetupRuntime
 
 NOT_REQUESTS = {"events", "restart"}  # events are notifications; restart is the parent's
 
@@ -43,8 +43,8 @@ def test_the_setup_runtime_has_every_command_with_the_same_parameters():
                 == list(inspect.signature(getattr(RuntimeAPI, name)).parameters)), name
 
 
-async def test_a_kadence_that_could_not_start_says_so_whatever_is_sent(tmp_path, monkeypatch):
-    monkeypatch.delenv("KADENCE_PERMISSION_CEILING", raising=False)
+async def test_a_kaden_that_could_not_start_says_so_whatever_is_sent(tmp_path, monkeypatch):
+    monkeypatch.delenv("KADEN_PERMISSION_CEILING", raising=False)
     setup = SetupRuntime(RuntimeConfig(data_dir=tmp_path), "terminal", "no API key")
     for command in (setup.send("look", files=["a.png"], spoken=True), setup.notify("x"),
                     setup.set_plan([]), setup.set_duty(None),

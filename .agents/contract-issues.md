@@ -1,6 +1,6 @@
 # Contract issues
 
-Places where `SPEC.md` or `src/kadence/api.py` is contradictory, ambiguous, or silent, found
+Places where `SPEC.md` or `src/kaden/api.py` is contradictory, ambiguous, or silent, found
 while building the runtime from them alone. Each entry gives the location, the problem,
 what the implementation assumes, and a proposed fix. Neither file was modified.
 
@@ -331,7 +331,7 @@ in section 9.
 - **Assumed:** Read-only auto-allow → ALLOW_ONCE; covered by a grant → ALLOW_CONVERSATION;
   DENY policy or non-interactive refusal → DENY. Each with a fresh request id.
 
-### 5.2 (S) Invalid KADENCE_PERMISSION_CEILING value
+### 5.2 (S) Invalid KADEN_PERMISSION_CEILING value
 - **Status:** **Resolved** (`inherited_ceiling()` returns DENY for an invalid value). Runtime changed. The runtime now relies on it.
 - **Where:** `PermissionPolicy.inherited_ceiling` raises ValueError.
 - **Assumed:** Fail closed: treated as DENY.
@@ -350,7 +350,7 @@ in section 9.
   reads or changes stored data), released at shutdown. `fcntl.flock` (POSIX only); the
   holder is named by the pid written into `instance.lock`. A review of #1 found that reads
   and writes before start() ran unlocked: a second process could delete a conversation
-  the first had open, and migrate the store under an older Kadence.
+  the first had open, and migrate the store under an older Kaden.
 
 ### 5.5 (S) When the ceiling is exported
 - **Status:** **Resolved** (2026-11-07). Stated in `PermissionPolicy.inherited_ceiling`.
@@ -467,7 +467,7 @@ in section 9.
 ### 8.3 (S) Where runtime settings live
 - **Status:** **Resolved** (implementation): `RuntimeConfig`, with model, maintenance
   model, permissions and budget read from `[runtime]` in the instance config file
-  (decisions.md, "Running Kadence").
+  (decisions.md, "Running Kaden").
 - **Problem:** Retries, timeouts, maintenance model, context-window overrides, budgets and
   the policy are "instance configuration" but have no defined type.
 - **Assumed:** `RuntimeConfig` (see decisions.md).
@@ -693,8 +693,8 @@ Against contract Draft 2.4. The stated assumption is what the module does.
   loaded, so a frontend cannot choose it. A GUI toolkit's loop must be the one that runs.
 - **Resolution:** The docstring says "Owns the UI; its launcher chooses the event loop".
   `FrontendInfo.kind` (and a frontend factory's `kind`) says which launcher runs it:
-  `"terminal"` frontends run under `kadence` on asyncio's loop, `"window"` frontends under
-  the desktop launcher on qasync's, which `kadence` hands over to.
+  `"terminal"` frontends run under `kaden` on asyncio's loop, `"window"` frontends under
+  the desktop launcher on qasync's, which `kaden` hands over to.
 
 ## 12. Found while building autonomy into sessions (contract Draft 3)
 
@@ -703,7 +703,7 @@ Against contract Draft 2.4. The stated assumption is what the module does.
 - **Where:** [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md), "Migrating
   existing data": "schema version 2, migrated in place".
 - **Problem:** Stores were already at version 2 (stable block tags); the user's
-  `~/.kadence/memory.db` is version 2, not 1.
+  `~/.kaden/memory.db` is version 2, not 1.
 - **Assumed:** The new layout is version 3.
 - **Fix:** None needed beyond the note, which now says version 3.
 
@@ -781,7 +781,7 @@ None was consulted or encountered. The only out-of-tree output seen was a system
 
 Update for the module migration: `.agents/process/MODULES.md` (added by the user after the clean-room
 build) explicitly directs importing the module implementations from
-the sibling repositories `kadence-memory`, `kadence-core` and `kadence-tools`. Their
+the sibling repositories `kaden-memory`, `kaden-core` and `kaden-tools`. Their
 `src/` and `tests/` were copied in (read-only use of those folders); their `api.py` copies
 were not, so this repository's contract stays the only one. Nothing else in those folders
 was used.
@@ -796,7 +796,7 @@ was used.
   checks stayed for those two.
 - **Resolution:** One criterion: what the runtime reads while running applies live; what is
   only passed to a factory applies at the next start. The key and work folder are saved at
-  once and apply at restart; nothing rebuilds a module while Kadence runs.
+  once and apply at restart; nothing rebuilds a module while Kaden runs.
 
 ### S2 (A) `[runtime].context_windows` duplicates the Core's `context_window`
 - **Status:** Resolved.
@@ -818,32 +818,32 @@ was used.
 
 ### D1 (C) The direction for fleets and the spec's scope
 - **Status:** Resolved (SPEC 1, 3, 4.4, 5, 10.1, 13): duties and the headless frontend.
-- **Where:** the user's direction of 2026-11-10 (Kadence as the base agent of a fleet
+- **Where:** the user's direction of 2026-11-10 (Kaden as the base agent of a fleet
   manager with ranks, supervisors and duties, kept in that manager's own project) against
-  SPEC 1 ("Kadence does not implement a bespoke multi-agent
+  SPEC 1 ("Kaden does not implement a bespoke multi-agent
   organization framework"), 10.2 (no centralized fleet management, no hardcoded hierarchy)
   and 13 (centralized fleet management and scheduled wake-ups out of scope).
 - **Problem:** The user's direction needs units that run by themselves, headless, and
   report upward; the spec rules out the fleet and the self-scheduling.
 - **Assumed:** Both hold if the fleet manager is a separate program: the spec stays about
-  one Kadence instance, and ranks and teams stay out of it. What a unit needs is added to
+  one Kaden instance, and ranks and teams stay out of it. What a unit needs is added to
   the spec as it is built: duties
   ([note](notes/implemented/2026-11-11-duties.md)),
   then a headless frontend ([note](notes/implemented/2026-11-11-headless-units.md)).
 - **Fix:** SPEC 1 and 13 say that managing a fleet is a separate program's and name what
-  Kadence provides toward it.
+  Kaden provides toward it.
 
 ## 15. Found while fixing the causes of patch code (2026-11-14)
 
-### P1 (C) Kadence's own messages were told apart by their first words
+### P1 (C) Kaden's own messages were told apart by their first words
 - **Status:** Resolved in `api.py`.
 - **Where:** `api.NOTICE_PREFIX`, `HIDDEN_NOTICE_PREFIX`; `Message`.
-- **Problem:** A notice Kadence wrote was an ordinary USER message whose text began with
+- **Problem:** A notice Kaden wrote was an ordinary USER message whose text began with
   a marker. Each reader recognised it its own way: the frontends, Memory's title, the
   voice lookup (a search for the notice's exact text), and the permission review, which
   left out one kind of notice only, so the others reached the reviewer as the user's
   words. A frontend wrote a sub-session's report with `send`, as the user.
-- **Fix:** `Message.author` (`Author.USER` or `Author.KADENCE`), `Message.hidden`,
+- **Fix:** `Message.author` (`Author.USER` or `Author.KADEN`), `Message.hidden`,
   `Message.spoken`, the one test `Message.from_user`, `MessageQueued.author`, and
   `RuntimeAPI.notify` for a notice a frontend writes. The marker is added in the request
   only. The archive's schema version went up; a store of the older version is refused.
@@ -875,7 +875,7 @@ was used.
   shown twice. Reading the history first loses a message instead. Nothing ties a
   history to an event number.
 - **Assumed:** The terminal frontend remembers the ids of the messages it has drawn and
-  ignores a `MessageCommitted` for one of them (`KadenceApp._rendered_ids`).
+  ignores a `MessageCommitted` for one of them (`KadenApp._rendered_ids`).
 - **Proposed fix:** Let `history()` take the snapshot's `seq` and return the transcript
   as of that event (or let `MessageCommitted` be the only way a message after the
   snapshot arrives). The frontends' own lists of drawn ids then go.

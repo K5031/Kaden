@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from kadence.api import (
+from kaden.api import (
     PERMISSION_CEILING_ENV,
     AgentState,
     Author,
@@ -43,7 +43,7 @@ from kadence.api import (
     ToolStatus,
     TransientCoreError,
 )
-from kadence.runtime.config import ACTIVATION_NOTICE, VOICE_ON_NOTICE
+from kaden.runtime.config import ACTIVATION_NOTICE, VOICE_ON_NOTICE
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
@@ -369,7 +369,7 @@ async def test_select_model(make: Any) -> None:
 async def test_model_without_context_window_is_refused(make: Any) -> None:
     """A window the provider does not report is configured on the Core (its `models`
     option), not in the runtime."""
-    from kadence.api import ModelInfo
+    from kaden.api import ModelInfo
 
     models = [ModelInfo("mystery", "Mystery", context_window=None)]
     h: Harness = await make(core=ScriptedCore(models=models))
@@ -378,7 +378,7 @@ async def test_model_without_context_window_is_refused(make: Any) -> None:
 
 
 async def test_the_time_the_model_thought_is_kept_with_its_reasoning(make: Any) -> None:
-    from kadence.api import Reasoning
+    from kaden.api import Reasoning
 
     core = ScriptedCore([Step(reasoning="hmm", text="ok", delay=0.05), Step(text="plain")])
     h: Harness = await make(core=core)
@@ -395,7 +395,7 @@ async def test_the_time_the_model_thought_is_kept_with_its_reasoning(make: Any) 
 
 async def test_the_agent_is_told_when_the_user_starts_and_stops_talking(make: Any) -> None:
     """In a runtime notice after the message, so the system prompt stays as it is."""
-    from kadence.runtime.config import VOICE_OFF_NOTICE, VOICE_ON_NOTICE
+    from kaden.runtime.config import VOICE_OFF_NOTICE, VOICE_ON_NOTICE
 
     def texts(transcript: Any) -> list[str]:
         return [b.text for m in transcript if m.role == Role.USER
@@ -422,7 +422,7 @@ async def test_the_agent_is_told_when_the_user_starts_and_stops_talking(make: An
     assert [m.spoken for m in stored if m.from_user] == [False, True, True, False]
     for m in stored:  # for the model alone, unremarked
         if m.blocks[0] in (Text(VOICE_ON_NOTICE), Text(VOICE_OFF_NOTICE)):
-            assert m.author is Author.KADENCE and m.hidden
+            assert m.author is Author.KADEN and m.hidden
             assert "Do not mention" in m.blocks[0].text
     told = next(m for m in core.requests[-1].messages
                 if m.role is Role.USER and VOICE_ON_NOTICE in m.blocks[0].text)
@@ -474,7 +474,7 @@ async def test_a_message_queued_after_the_last_turn_is_still_answered(make: Any)
     """A message that arrives while Memory saves what the exchange taught it, after the
     cycle's last look at its inbox, starts the next turn instead of waiting for whatever
     wakes the agent next."""
-    from kadence.api import Completion
+    from kaden.api import Completion
 
     core = ScriptedCore([Step(text="first answer"), Step(text="second answer")])
     h: Harness = await make(core=core)
@@ -541,7 +541,7 @@ async def test_an_exhausted_budget_refuses_with_that_reason(make: Any) -> None:
 async def test_the_state_says_when_the_model_is_no_longer_asked(make: Any) -> None:
     """After a cycle's last answer Memory still works, but nothing more comes from the
     model: the state is FINISHING then, not THINKING, so no frontend has to infer it."""
-    from kadence.api import Completion
+    from kaden.api import Completion
 
     h: Harness = await make(core=ScriptedCore([Step(text="answer")]))
     seen: list[AgentState] = []
@@ -768,7 +768,7 @@ async def test_crash_loses_only_the_queued_message(make: Any) -> None:
 
 
 async def test_maintenance_model(make: Any) -> None:
-    from kadence.api import Completion, Message
+    from kaden.api import Completion, Message
 
     bad: Harness = await make(maintenance_model="nonexistent")
     with pytest.raises(ValueError):
@@ -789,7 +789,7 @@ async def test_maintenance_model(make: Any) -> None:
     # maintain runs before the answer and once after it
     assert windows == [50_000, 50_000]
     assert [r.model for r in h.core.requests] == ["fake-2", "fake-1", "fake-2"]
-    from kadence.api import MaintenanceFinished, MaintenanceStarted
+    from kaden.api import MaintenanceFinished, MaintenanceStarted
 
     assert len(h.rec.of(MaintenanceStarted)) == len(h.rec.of(MaintenanceFinished)) == 2
 
@@ -797,7 +797,7 @@ async def test_maintenance_model(make: Any) -> None:
 @pytest.mark.parametrize("summary", ["SUMMARY: short", ""])
 async def test_compaction_is_announced(make: Any, summary: str) -> None:
     """Frontends show a compaction while it runs; other maintenance stays quiet."""
-    from kadence.api import CompactionFinished, CompactionStarted, Completion, Message
+    from kaden.api import CompactionFinished, CompactionStarted, Completion, Message
 
     def step(request: Any) -> Step:
         return Step(text=summary if request.maintenance else "ok")
@@ -823,7 +823,7 @@ async def test_compaction_is_announced(make: Any, summary: str) -> None:
 
 
 async def test_completion_caps_max_tokens_at_the_model_limit(make: Any) -> None:
-    from kadence.api import Completion, Message
+    from kaden.api import Completion, Message
 
     h: Harness = await make(maintenance_model="fake-2")  # max_output_tokens 1000
 
@@ -843,7 +843,7 @@ async def test_completion_caps_max_tokens_at_the_model_limit(make: Any) -> None:
 async def test_only_completion_requests_are_maintenance(make: Any) -> None:
     """Requests made through Memory's Completion are marked maintenance; turns, retries and
     overflow recovery are not, whatever tools they carry."""
-    from kadence.api import Completion, Message
+    from kaden.api import Completion, Message
 
     core = ScriptedCore([Step(error=ContextOverflowError("too long")),
                          Step(calls=[call("recall", {"query": "x"})]),
@@ -879,14 +879,14 @@ async def test_activate_appends_notice_after_assistant(make: Any) -> None:
     transcript = await h.transcript()
     assert [m.role for m in transcript] == [Role.USER, Role.ASSISTANT, Role.USER, Role.ASSISTANT]
     notice = transcript[2]
-    assert notice.author is Author.KADENCE and not notice.from_user
+    assert notice.author is Author.KADEN and not notice.from_user
     assert notice.blocks == (Text(ACTIVATION_NOTICE),)
     sent = h.core.requests[1].messages[-1]  # the model is told whose words these are
     assert sent.id == notice.id
     assert sent.blocks[0].text.endswith(f"] [Runtime notice] {ACTIVATION_NOTICE}")
 
 
-async def test_a_notice_is_written_as_kadence_and_wakes_the_agent(make: Any) -> None:
+async def test_a_notice_is_written_as_kaden_and_wakes_the_agent(make: Any) -> None:
     """notify: queued while a turn runs, like a message, and never taken for the user's."""
     core = ScriptedCore([Step(text="working", hang=True), Step(text="Noted.")])
     h: Harness = await make(core=core)
@@ -895,12 +895,12 @@ async def test_a_notice_is_written_as_kadence_and_wakes_the_agent(make: Any) -> 
     await eventually(lambda: core.requests)
     await h.runtime.notify("Sub-session 2 ended a turn: done.")
     [queued] = await h.rec.wait_for(lambda r: r.of(MessageQueued))
-    assert queued.author is Author.KADENCE
+    assert queued.author is Author.KADEN
     await h.runtime.stop()
     await h.rec.wait_state(AgentState.STOPPED)
     first, _partial, second = await h.transcript()
     assert first.blocks == (Text("Sub-session 1 ended a turn: done."),)
-    assert first.author is second.author is Author.KADENCE
+    assert first.author is second.author is Author.KADEN
     assert second.id == queued.message_id and not second.from_user
     assert core.requests[0].messages[0].blocks[0].text.endswith(
         "] [Runtime notice] Sub-session 1 ended a turn: done.")
@@ -919,7 +919,7 @@ async def test_background_outcomes_are_not_the_users_message(make: Any) -> None:
                      and h.runtime.snapshot().state == AgentState.IDLE)
     outcome = next(m for m in await h.transcript()
                    if any(isinstance(b, OperationResult) for b in m.blocks))
-    assert outcome.role is Role.USER and outcome.author is Author.KADENCE
+    assert outcome.role is Role.USER and outcome.author is Author.KADEN
 
 
 async def test_activate_empty_conversation(make: Any) -> None:
@@ -933,7 +933,7 @@ async def test_activate_empty_conversation(make: Any) -> None:
 
 
 async def test_activate_after_user_message_adds_no_notice(make: Any) -> None:
-    from kadence.api import CoreError
+    from kaden.api import CoreError
 
     core = ScriptedCore([Step(error=CoreError("boom")), Step(text="ok")])
     h: Harness = await make(core=core)
@@ -946,7 +946,7 @@ async def test_activate_after_user_message_adds_no_notice(make: Any) -> None:
 
 
 async def test_activate_after_tool_message_adds_no_notice(make: Any) -> None:
-    from kadence.api import CoreError
+    from kaden.api import CoreError
 
     tools = FakeTools()
     tools.instant("t")
@@ -976,7 +976,7 @@ async def test_message_committed_carries_stop_reason(make: Any) -> None:
 
 
 async def test_memory_saves_after_the_answer_and_the_apps_refresh(make: Any) -> None:
-    from kadence.api import Completion, MemoriesChanged
+    from kaden.api import Completion, MemoriesChanged
 
     h: Harness = await make()
     seen: list[str] = []
@@ -994,7 +994,7 @@ async def test_memory_saves_after_the_answer_and_the_apps_refresh(make: Any) -> 
 
 
 async def test_the_notes_saved_after_an_answer_are_named(make: Any) -> None:
-    from kadence.api import Completion, MemoriesChanged
+    from kaden.api import Completion, MemoriesChanged
 
     h: Harness = await make()
 

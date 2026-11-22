@@ -1,18 +1,18 @@
 # Agent Note: Sub-sessions
 
-Status: implemented — the frontend hosts sub-sessions: it starts headless Kadence children for the agent, lists them under their conversation, and opens each like a conversation of its own
+Status: implemented — the frontend hosts sub-sessions: it starts headless Kaden children for the agent, lists them under their conversation, and opens each like a conversation of its own
 
 ## Problem
 
 The user uses an app (the Claude desktop app) where an agent hands self-contained tasks to
 sub-sessions. They work on their own, report back, and the user can open any of them to see
-what it is doing. Kadence could not do this. An agent can only work in its one conversation; a
+what it is doing. Kaden could not do this. An agent can only work in its one conversation; a
 long side task fills its context and blocks the conversation while it runs.
 
 [Headless units](2026-11-11-headless-units.md) made the child easy: a
-Kadence started with `--headless` takes a goal and reports when it is done. What is
+Kaden started with `--headless` takes a goal and reports when it is done. What is
 missing is the host. In the Claude app the app itself starts and holds every session, so
-listing and peeking are trivial. In Kadence the user-facing host is the frontend.
+listing and peeking are trivial. In Kaden the user-facing host is the frontend.
 
 ## Decision
 
@@ -26,12 +26,12 @@ listing and peeking are trivial. In Kadence the user-facing host is the frontend
 
 ### The sub-session manager
 
-`kadence.frontends.sessions.SubSessions`, a Tools module with no UI code, which the
+`kaden.frontends.sessions.SubSessions`, a Tools module with no UI code, which the
 desktop app creates and offers. It offers:
 
 - `Agent(description, prompt, run_in_background, budget_usd, isolation)`, Claude Code's
   subagent tool ([all of Claude Code's tools](2026-11-22-all-of-claude-codes-tools.md)):
-  starts a child, a separate Kadence agent with its own context, in the conversation's
+  starts a child, a separate Kaden agent with its own context, in the conversation's
   work folder, on `prompt` as a goal, titled `description`. The agent calls it when the
   user asked for the work; when it is its own idea it proposes the call
   ([proposals](2026-11-11-proposals.md)), as the Claude app asks before a session the agent
@@ -46,7 +46,7 @@ desktop app creates and offers. It offers:
 
 How a child runs:
 
-- `<python> -m kadence --headless --data-dir <data>/sessions/<id>`: its own data folder,
+- `<python> -m kaden --headless --data-dir <data>/sessions/<id>`: its own data folder,
   with the parent's `config.toml` and `settings.toml` copied in, its spending limit set to
   `budget_usd` when it has one (none by default, never the parent's) and its work folder
   set to the conversation's. Keys come from the same OS
@@ -70,10 +70,10 @@ How a child runs:
 
 ### Opening a child
 
-`SubSessions.open(child)` returns a `RemoteRuntime` (`kadence.frontends.remote`): a
+`SubSessions.open(child)` returns a `RemoteRuntime` (`kaden.frontends.remote`): a
 RuntimeAPI over the child's channel. Every command but `restart` is a request;
 `snapshot()`, which must answer at once, is read on opening and kept current from the
-events. `kadence.frontends.wire` turns the channel's JSON back into API values. A frontend
+events. `kaden.frontends.wire` turns the channel's JSON back into API values. A frontend
 therefore shows a child with the same code as its own conversation.
 
 ### What the user sees
@@ -95,7 +95,7 @@ Choices are in `.agents/decisions.md` (Sub-sessions).
   frontend cannot see a module, so listing and peeking would need a new path from
   frontends through the runtime to that module.
 - **The runtime owns them,** as it owns operations. Listing would be natural through
-  RuntimeAPI, but the runtime would carry sub-sessions, which SPEC 1 keeps out of Kadence
+  RuntimeAPI, but the runtime would carry sub-sessions, which SPEC 1 keeps out of Kaden
   and every module and frontend would pay for.
 - **Waiting for the KFM.** The right home for fleets, but not built, and a person using
   one window wants the Claude app's behaviour now.
@@ -126,9 +126,9 @@ Choices are in `.agents/decisions.md` (Sub-sessions).
   user opens it; the sidebar says so. Routing prompts to a supervisor agent is the KFM's
   escalation, not built.
 - **Stopped on quit.** Working children stop with the window; they stay listed, and a click
-  on Resume, not Kadence itself, lets them carry on.
+  on Resume, not Kaden itself, lets them carry on.
 - **Notices wake the parent.** Each notice is a request the parent pays for.
 - **The channel protocol carries all of RuntimeAPI,** so it is a larger contract: a
-  renamed API type or field breaks reopening a child run by an older Kadence.
-- **Bundles.** A child is started as `python -m kadence` with the parent's interpreter; a
+  renamed API type or field breaks reopening a child run by an older Kaden.
+- **Bundles.** A child is started as `python -m kaden` with the parent's interpreter; a
   packaged app whose interpreter cannot do that cannot start children.

@@ -1,12 +1,12 @@
 # Agent Note: All of Claude Code's tools
 
-Status: implemented — every Kadence tool with a Claude Code counterpart takes its name, parameters and behaviour, and Claude Code's standard tools Kadence lacked are added
+Status: implemented — every Kaden tool with a Claude Code counterpart takes its name, parameters and behaviour, and Claude Code's standard tools Kaden lacked are added
 
 ## Problem
 
 [Claude Code's tools](2026-11-22-claude-code-tools.md) matched the shell, file and web
 tools, and [Bash chooses its background](2026-11-22-bash-chooses-its-background.md) matched
-how a command waits. The runtime's own tools still had Kadence's names (`op_status`,
+how a command waits. The runtime's own tools still had Kaden's names (`op_status`,
 `update_plan`, `skill`, `start_session`), the matched tools lacked some of Claude Code's
 parameters, and Claude Code's standard tools for notebooks, questions and loading tools
 had no counterpart. The user asked for a complete match.
@@ -14,17 +14,17 @@ had no counterpart. The user asked for a complete match.
 ## Decision
 
 What counts is Claude Code's standard tool set, the one every session has. Its tools for
-features Kadence does not have (`EnterWorktree` and `ExitWorktree`, scheduled agents,
+features Kaden does not have (`EnterWorktree` and `ExitWorktree`, scheduled agents,
 teams, Monitor, workflows) are out of scope, `EnterPlanMode` and `ExitPlanMode` come with
 [plan mode](2026-11-22-plan-mode.md), and `Agent`'s `isolation` with
 [subagents in worktrees](2026-11-22-subagents-in-worktrees.md); so are the Claude app's own tools, which `propose` and
-`wrap_up` already mirror, and Kadence's duty tools (`ask_for_help`, `finish_goal`), the
+`wrap_up` already mirror, and Kaden's duty tools (`ask_for_help`, `finish_goal`), the
 Memory tools and `screenshot`, which have no counterpart.
 
-Where Kadence has a feature a Claude Code tool lacks, the tool keeps it as an extra
+Where Kaden has a feature a Claude Code tool lacks, the tool keeps it as an extra
 optional parameter: a plan step's due time and note, a subagent's budget.
 
-| Tool | Parameters | Kadence's way |
+| Tool | Parameters | Kaden's way |
 |---|---|---|
 | `TaskOutput` | `task_id`, `block`, `timeout` | `block` (default) waits up to `timeout` ms (30 000 unless set, at most 600 000) for a background call |
 | `TaskStop` | `task_id` | stops a background call, a subagent waited for by one, or withdraws a proposal |
@@ -56,7 +56,7 @@ Two mechanisms in the runtime carry this:
   runtime's tools differed in meaning. Declined by the user: they want a complete match.
 - **TaskCreate, TaskUpdate, TaskList and TaskGet for the plan,** Claude Code's newest
   task-list tools. `TodoWrite` is the one models have the longest training on, and it
-  replaces the whole list in one call, as Kadence's plan always has.
+  replaces the whole list in one call, as Kaden's plan always has.
 - **Drop the extras** (due times, notes, budgets) for an exact schema. Reminders, duties'
   schedules and sub-session limits depend on them.
 - **A stop_session of its own.** `TaskStop` on the call that waits for a subagent stops

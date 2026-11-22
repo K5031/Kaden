@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from kadence.api import (
+from kaden.api import (
     AgentState,
     Budget,
     ConversationInfo,
@@ -39,7 +39,7 @@ from kadence.api import (
     Usage,
     UsageSnapshot,
 )
-from kadence.frontends.wire import from_json, to_json
+from kaden.frontends.wire import from_json, to_json
 
 CALL = ToolCall("c1", "search", {"type": "Text", "query": "x"})  # arguments stay a dict
 MESSAGE = Message("m1", Role.ASSISTANT, (
@@ -99,7 +99,7 @@ async def test_a_message_that_cannot_be_read_does_not_end_the_channel():
     import asyncio
     from types import SimpleNamespace
 
-    from kadence.frontends.remote import Channel
+    from kaden.frontends.remote import Channel
 
     out, err = asyncio.StreamReader(), asyncio.StreamReader()
     channel = Channel(SimpleNamespace(stdout=out, stderr=err, stdin=None))  # type: ignore[arg-type]

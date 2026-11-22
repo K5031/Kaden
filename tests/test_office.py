@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from kadence.api import File
-from kadence.tools.shell_files import attachments, office
+from kaden.api import File
+from kaden.tools.shell_files import attachments, office
 from tests.test_tools_shell_files import run, tools, workspace  # noqa: F401
 
 

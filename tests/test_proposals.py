@@ -1,4 +1,4 @@
-"""Proposals: the agent proposes a tool call; the user approves or dismisses it; Kadence
+"""Proposals: the agent proposes a tool call; the user approves or dismisses it; Kaden
 runs exactly that call on approval and wakes the agent with the outcome."""
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from kadence.api import (
+from kaden.api import (
     AgentState,
     OperationResult,
     PermissionPolicy,
@@ -134,8 +134,8 @@ async def test_withdrawing_and_stop_remove_the_card(make):
 async def test_the_desktop_shows_a_card_that_approves(make):
     from PySide6.QtWidgets import QLabel, QPushButton
 
-    from kadence.frontends.desktop.viewmodel import Controller, ConversationModel
-    from kadence.frontends.desktop.window import MainWindow, ProposalCard
+    from kaden.frontends.desktop.viewmodel import Controller, ConversationModel
+    from kaden.frontends.desktop.window import MainWindow, ProposalCard
 
     h = await harness(make, [
         Step(calls=[call("propose", {"call": WRITE, "reason": "They are messy"}, id="p")]),
@@ -148,7 +148,7 @@ async def test_the_desktop_shows_a_card_that_approves(make):
     window.show()
     [card] = await eventually(lambda: window.findChildren(ProposalCard))
     texts = " ".join(label.text() for label in card.findChildren(QLabel))
-    assert "Kadence proposes: Tidy notes.md" in texts and "They are messy" in texts
+    assert "Kaden proposes: Tidy notes.md" in texts and "They are messy" in texts
     [approve] = [b for b in card.findChildren(QPushButton) if b.text() == "Approve"]
     approve.click()
     await eventually(lambda: outcomes(h).get("p"))

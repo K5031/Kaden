@@ -5,14 +5,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from kadence.api import (
+from kaden.api import (
     PermissionPolicy,
     ServerToolUse,
     ToolSpec,
     ToolStarted,
     Usage,
 )
-from kadence.memory.sqlite import codec
+from kaden.memory.sqlite import codec
 from tests.conftest import Harness
 from tests.fakes.core import ScriptedCore, Step
 from tests.fakes.tools import FakeTools
@@ -29,7 +29,7 @@ async def harness(make: Any, *steps: Step, **config: Any) -> Harness:
     core = ScriptedCore([*steps, Step(text="done")])
     core.tools = [SEARCH]
     tools = FakeTools()
-    tools.instant("WebSearch", "Kadence's own search")
+    tools.instant("WebSearch", "Kaden's own search")
     tools.instant("WebFetch", "a page")
     return await make(core=core, tools=tools, **config)
 
@@ -77,7 +77,7 @@ def test_a_use_is_stored_and_searchable():
 def test_an_answer_cut_short_keeps_what_the_provider_charged_beyond_tokens():
     """Stop, a limit or an error after the first report charges an estimate: the larger
     token counts, and still the searches and the cache write the provider billed."""
-    from kadence.runtime.orchestrator import _Stream
+    from kaden.runtime.orchestrator import _Stream
 
     stream = _Stream(input_estimate=500, output_estimate=40)
     stream.report = Usage(100, 10, cached_tokens=7, cost_usd=0.5, extra_cost_usd=0.01)

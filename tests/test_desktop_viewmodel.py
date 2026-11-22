@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from kadence.api import (
+from kaden.api import (
     PROFILE,
     TODO_STATUS,
     AgentState,
@@ -51,7 +51,7 @@ from kadence.api import (
     Usage,
     UsageSnapshot,
 )
-from kadence.frontends.desktop.viewmodel import (
+from kaden.frontends.desktop.viewmodel import (
     BUDGET_MESSAGE,
     BUSY_MESSAGE,
     LABEL_CHARS,
@@ -424,7 +424,7 @@ def _plan(call_id: str, *steps: tuple[str, str]) -> ToolCall:
 
 
 def test_the_checklist_follows_the_newest_message_and_leaves_when_the_agent_stops():
-    from kadence.frontends.desktop.viewmodel import ChecklistItem
+    from kaden.frontends.desktop.viewmodel import ChecklistItem
 
     def said(i: str, role: Role, *blocks: object) -> MessageCommitted:
         return MessageCommitted(Message(i, role, tuple(blocks), 0.0))
@@ -450,7 +450,7 @@ def test_the_checklist_follows_the_newest_message_and_leaves_when_the_agent_stop
 def test_a_reopened_conversation_shows_no_checklist_unless_the_agent_is_working():
     from dataclasses import replace
 
-    from kadence.frontends.desktop.viewmodel import ChecklistItem
+    from kaden.frontends.desktop.viewmodel import ChecklistItem
 
     history = [
         Message("u1", Role.USER, (Text("fix the bug"),), 0.0),
@@ -468,7 +468,7 @@ def test_a_reopened_conversation_shows_no_checklist_unless_the_agent_is_working(
 def test_a_page_that_begins_with_a_result_leaves_it_to_the_page_before():
     """A tool's result may fall on a newer page than its call. It is shown with the
     call, when the earlier page is loaded, and never as a step of its own."""
-    from kadence.frontends.desktop.viewmodel import ToolItem
+    from kaden.frontends.desktop.viewmodel import ToolItem
 
     call_ = ToolCall("c1", "Read", {"file_path": "a.txt"})
     older = [Message("u1", Role.USER, (Text("read it"),), 0.0),
@@ -487,7 +487,7 @@ def test_a_page_that_begins_with_a_result_leaves_it_to_the_page_before():
 def test_thinking_before_and_after_a_plan_update_is_one_line():
     """A plan update is not shown as a step, so the thinking on both sides of it would be
     two Thinking lines one under the other."""
-    from kadence.api import Reasoning
+    from kaden.api import Reasoning
 
     model = ConversationModel()
     model.load(_snapshot(), ())
@@ -568,18 +568,18 @@ def test_failure_banner_until_the_next_cycle():
 
 
 def test_a_notice_meant_for_the_model_alone_is_not_shown():
-    from kadence.api import Author
+    from kaden.api import Author
 
     model = ConversationModel()
     model.load(_snapshot(), ())
     model.apply(MessageCommitted(Message(
-        "n", Role.USER, (Text("The user is typing again."),), 0.0, Author.KADENCE,
+        "n", Role.USER, (Text("The user is typing again."),), 0.0, Author.KADEN,
         hidden=True)))
     assert not of(model, NoticeItem) and not of(model, UserItem)
 
 
 def test_a_compaction_shows_a_line_that_says_how_it_ended():
-    from kadence.api import CompactionFinished, CompactionStarted
+    from kaden.api import CompactionFinished, CompactionStarted
 
     model = ConversationModel()
     model.load(_snapshot(), ())
@@ -646,7 +646,7 @@ async def test_seq_gap_triggers_recovery():
 
 # ── settings form ─────────────────────────────────────────────────────────
 
-SETTINGS = fake_settings(work_folder="/home/u/Kadence", permissions=PermissionPolicy.ASK)
+SETTINGS = fake_settings(work_folder="/home/u/Kaden", permissions=PermissionPolicy.ASK)
 
 
 def test_an_untouched_form_changes_nothing():
@@ -730,8 +730,8 @@ def test_welcome_conversation_labels_and_refusals():
                         ) == "call c1 is idle"
     assert user_message(ValueError("the idle timeout is outstanding")
                         ) == "the idle timeout is outstanding"
-    assert user_message(InstanceLockedError("Kadence is already open in another window (x)")
-                        ) == "Kadence is already open in another window (x)."
+    assert user_message(InstanceLockedError("Kaden is already open in another window (x)")
+                        ) == "Kaden is already open in another window (x)."
     assert user_message(ValueError("unknown model x")) == "unknown model x"
 
 
@@ -795,7 +795,7 @@ def test_a_step_still_arriving_says_what_it_does_without_its_input(name, arrivin
 
 
 async def test_a_tool_the_provider_ran_is_a_finished_step(make):
-    from kadence.api import ServerToolUse
+    from kaden.api import ServerToolUse
 
     use = ServerToolUse("srv_1", "web_search", {"query": "worlds"},
                         "Searched the web for “worlds”", "Worlds 2026\nhttps://w.example")
@@ -811,7 +811,7 @@ async def test_a_tool_the_provider_ran_is_a_finished_step(make):
 
 
 async def test_a_question_for_help_is_shown_until_it_is_answered(make):
-    from kadence.api import Budget, Duty
+    from kaden.api import Budget, Duty
 
     h: Harness = await make(budget=Budget(max_cost_usd=5))
     h.core.add(Step(calls=[call("ask_for_help", {"question": "Which account?"})]),
@@ -827,8 +827,8 @@ async def test_a_question_for_help_is_shown_until_it_is_answered(make):
 
 
 async def test_a_runtime_notice_is_shown_as_a_notice_not_as_the_users_words(make):
-    from kadence.api import Budget, Duty
-    from kadence.frontends.desktop.viewmodel import conversation_label
+    from kaden.api import Budget, Duty
+    from kaden.frontends.desktop.viewmodel import conversation_label
 
     h: Harness = await make(budget=Budget(max_cost_usd=5))
     h.core.add(Step(text="On it."))
@@ -845,7 +845,7 @@ async def test_a_runtime_notice_is_shown_as_a_notice_not_as_the_users_words(make
 
 
 def test_passing_80_percent_of_the_limit_gives_one_warning():
-    from kadence.api import Usage, UsageSnapshot, UsageUpdated
+    from kaden.api import Usage, UsageSnapshot, UsageUpdated
 
     model = ConversationModel()
     model.usage = UsageSnapshot(Usage(0, 0, cost_usd=7.0), 0, 0.0, {"max_cost_usd": 3.0})
@@ -905,7 +905,7 @@ def test_a_tool_shown_as_a_card_is_never_an_item():
 def test_an_earlier_page_adds_its_items_and_leaves_the_turn_under_way_alone():
     from dataclasses import replace
 
-    from kadence.api import Reasoning
+    from kaden.api import Reasoning
 
     def wrap(call_id: str, label: str) -> ToolCall:
         return ToolCall(call_id, "wrap_up", {"recap": "Done.", "options": [{"label": label}]})

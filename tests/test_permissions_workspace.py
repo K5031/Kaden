@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from kadence.api import (
+from kaden.api import (
     AgentState,
     Decision,
     PermissionPolicy,

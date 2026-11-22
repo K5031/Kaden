@@ -10,7 +10,7 @@ import httpx2
 import pytest
 from anthropic import AsyncAnthropic
 
-from kadence.api import (
+from kaden.api import (
     InferenceRequest,
     Message,
     Reasoning,
@@ -22,8 +22,8 @@ from kadence.api import (
     ToolStatus,
     Usage,
 )
-from kadence.core._common import ModelConfig
-from kadence.core.anthropic import AnthropicCore, Prefix, factory, to_messages, to_tool
+from kaden.core._common import ModelConfig
+from kaden.core.anthropic import AnthropicCore, Prefix, factory, to_messages, to_tool
 from tests.conformance.core_suite import (
     WEATHER_TOOL,
     CoreDriver,
@@ -304,7 +304,7 @@ async def test_rejected_reasoning_is_an_error_not_a_second_request(
         anthropic: AnthropicDriver) -> None:
     """The fingerprint kept with each thinking block (Prefix) is what keeps a block from
     being replayed where the API would reject it; there is no retry behind it."""
-    from kadence.api import CoreError
+    from kaden.api import CoreError
 
     request, _ = anthropic.reasoning_turn()
     answer = check_stream(await collect(anthropic.core, request)).message
@@ -320,7 +320,7 @@ async def test_rejected_reasoning_is_an_error_not_a_second_request(
 
 
 async def test_truncated_stream_is_transient(anthropic: AnthropicDriver) -> None:
-    from kadence.api import TransientCoreError
+    from kaden.api import TransientCoreError
 
     anthropic.stub.queue(Reply(events=[message_start(), *text_block(0, ["Hi"])]))
     with pytest.raises(TransientCoreError):
@@ -328,7 +328,7 @@ async def test_truncated_stream_is_transient(anthropic: AnthropicDriver) -> None
 
 
 async def test_other_invalid_requests_are_permanent(anthropic: AnthropicDriver) -> None:
-    from kadence.api import ContextOverflowError, CoreError, TransientCoreError
+    from kaden.api import ContextOverflowError, CoreError, TransientCoreError
 
     anthropic.stub.queue(Reply(status=400, json_body={"type": "error", "error": {
         "type": "invalid_request_error", "message": "tools.0: bad schema"}}))
@@ -368,7 +368,7 @@ async def test_built_in_prices_merge_with_configured_ones() -> None:
 
 
 async def test_factory(tmp_path) -> None:
-    from kadence.api import InstancePaths
+    from kaden.api import InstancePaths
 
     core = factory({"api_key": "k", "options": {"temperature": 0},
                     "models": {MODEL: {"input_usd_per_mtok": 1.0}}}, InstancePaths(tmp_path))
@@ -388,7 +388,7 @@ async def test_missing_key_fails_at_construction(monkeypatch) -> None:
 async def test_key_from_the_keychain(monkeypatch, keychain) -> None:
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
-    keychain.store[("kadence", "ANTHROPIC_API_KEY")] = "from-keychain"
+    keychain.store[("kaden", "ANTHROPIC_API_KEY")] = "from-keychain"
     core = AnthropicCore()
     assert core._client.api_key == "from-keychain"
     await core.aclose()
@@ -406,7 +406,7 @@ async def test_tool_call_without_arguments(anthropic: AnthropicDriver) -> None:
 
 # ── Live (opt-in) ────────────────────────────────────────────────────────
 
-LIVE = os.environ.get("KADENCE_LIVE_TESTS") == "1" and bool(os.environ.get("ANTHROPIC_API_KEY"))
+LIVE = os.environ.get("KADEN_LIVE_TESTS") == "1" and bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 
 class AnthropicLiveDriver(CoreDriver):
@@ -416,9 +416,9 @@ class AnthropicLiveDriver(CoreDriver):
 
     def __init__(self) -> None:
         thinking = json.loads(os.environ.get(
-            "KADENCE_ANTHROPIC_THINKING", '{"type": "enabled", "budget_tokens": 1024}'))
+            "KADEN_ANTHROPIC_THINKING", '{"type": "enabled", "budget_tokens": 1024}'))
         self.core = AnthropicCore(options={"thinking": thinking})
-        self.model = os.environ.get("KADENCE_ANTHROPIC_MODEL", "claude-haiku-5-5")
+        self.model = os.environ.get("KADEN_ANTHROPIC_MODEL", "claude-haiku-5-5")
 
     def request(self, messages, **kwargs):
         kwargs.setdefault("max_output_tokens", 4096)
@@ -435,7 +435,7 @@ class AnthropicLiveDriver(CoreDriver):
         return self.request([user("What is 17 * 23? Answer with the number.")]), Expect()
 
 
-@pytest.mark.skipif(not LIVE, reason="set KADENCE_LIVE_TESTS=1 and ANTHROPIC_API_KEY")
+@pytest.mark.skipif(not LIVE, reason="set KADEN_LIVE_TESTS=1 and ANTHROPIC_API_KEY")
 class TestAnthropicLive(CoreSuite):
     @pytest.fixture
     async def driver(self):

@@ -9,7 +9,7 @@ import random
 from collections.abc import Sequence
 from typing import Any
 
-from kadence.api import InstancePaths, ToolCall, ToolContext, ToolOutput, Tools, ToolSpec
+from kaden.api import InstancePaths, ToolCall, ToolContext, ToolOutput, Tools, ToolSpec
 
 ROLL = ToolSpec(
     name="roll_dice",

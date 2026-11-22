@@ -4,10 +4,10 @@ Status: implemented — installed Core, Tools and Frontend modules are chosen by
 
 ## Problem
 
-Kadence's architecture makes Core, Memory, Tools and Frontend swappable, and users should be
+Kaden's architecture makes Core, Memory, Tools and Frontend swappable, and users should be
 able to write their own modules, frontends included. A different module meant editing
 `[core]`, `[memory]`, `[tools]` or `[frontend]` in `config.toml` with a Python import path,
-which a non-technical user cannot do, and Kadence could not list what is installed. The
+which a non-technical user cannot do, and Kaden could not list what is installed. The
 settings screen offered only a fixed list of providers, and a frontend could not be chosen
 at all, since a frontend cannot replace itself while it runs.
 
@@ -20,29 +20,29 @@ maintenance model, system prompt, budget, permissions. These apply live. A
 setting is a **module setting** if it is only passed into a module's factory or read when
 the module is built: which module of each kind, the API key, the Tools' starting `root`,
 profiles, prices, context windows, base URLs, compaction options. These are saved
-at once and apply at the next start of Kadence; the running instance keeps its modules until
+at once and apply at the next start of Kaden; the running instance keeps its modules until
 then, so the user keeps working. There are no exceptions: nothing rebuilds a module while
-Kadence runs, so module settings save in any state.
+Kaden runs, so module settings save in any state.
 
 The per-model context window is a Core option (its `models` option); the runtime has no
 copy of it.
 
 ### Discovery: entry points
 
-Installed modules are Python entry points, one group per kind: `kadence.cores`,
-`kadence.memories`, `kadence.tools`, `kadence.frontends`. The entry point's name is the
-module's id; its target is the factory, `factory(options, paths)`. Kadence's own modules
+Installed modules are Python entry points, one group per kind: `kaden.cores`,
+`kaden.memories`, `kaden.tools`, `kaden.frontends`. The entry point's name is the
+module's id; its target is the factory, `factory(options, paths)`. Kaden's own modules
 register the same way in `pyproject.toml`:
 
 | Group | Built-in ids |
 |---|---|
-| `kadence.cores` | `anthropic`, `deepseek`, `openai` |
-| `kadence.memories` | `sqlite` |
-| `kadence.tools` | `shell-files` |
-| `kadence.frontends` | `desktop` |
+| `kaden.cores` | `anthropic`, `deepseek`, `openai` |
+| `kaden.memories` | `sqlite` |
+| `kaden.tools` | `shell-files` |
+| `kaden.frontends` | `desktop` |
 
 A provider is a Core entry: the DeepSeek and OpenAI profiles have their own factories
-(`kadence.core.openai_compat:deepseek_factory`, `openai_factory`). A factory may carry
+(`kaden.core.openai_compat:deepseek_factory`, `openai_factory`). A factory may carry
 `display_name`; a Core factory `key_name` (its key's environment variable and keychain
 entry); a frontend factory `kind`, `"terminal"` (the default) or `"window"`. Only entry
 points whose package imports are listed (`runtime/modules.py`, `installed()`). The desktop
@@ -57,7 +57,7 @@ frontend's package imports PySide6 and qasync at the top, so it is listed only w
   no id.
 - `Settings.restart_needed` says saved module settings differ from the running instance;
   `restart_frontend` names the frontend Restart now brings up; `startup_error` says why the
-  modules could not be built, and `already_open` marks the case where another Kadence holds
+  modules could not be built, and `already_open` marks the case where another Kaden holds
   the data folder, so frontends say to close it rather than to fix the settings.
   `work_folder` is the saved one.
 - `SettingsUpdate.modules` maps kinds to installed ids (`ValueError` otherwise). Choices
@@ -70,7 +70,7 @@ frontend's package imports PySide6 and qasync at the top, so it is listed only w
 
 ### Startup
 
-- `kadence` builds the config from `config.toml`, then `settings.toml`, then command-line
+- `kaden` builds the config from `config.toml`, then `settings.toml`, then command-line
   flags. A chosen module keeps `config.toml`'s options only when it is the module named
   there. Import paths in `config.toml` keep working.
 - `run_instance` builds the frontend first, then Core, Memory and Tools. When they cannot
@@ -91,35 +91,35 @@ frontend's package imports PySide6 and qasync at the top, so it is listed only w
   `launch()` in `__main__.py` builds the next instance in the same process, with the
   frontend starting in that conversation.
 - `FrontendInfo.kind` says where a frontend runs: a terminal frontend in the terminal
-  `kadence` (also `kd`) is started in, a window frontend in the window launcher
-  (`kadence.window`). Kadence's own frontend, the desktop app, is a window frontend; a
+  `kaden` (also `kd`) is started in, a window frontend in the window launcher
+  (`kaden.window`). Kaden's own frontend, the desktop app, is a window frontend; a
   terminal frontend is one the user installed. Neither launcher knows
   a toolkit: each runs a frontend on the event loop its factory names (`event_loop`,
   default `asyncio.run`; the desktop app names Qt's through qasync,
   `frontends/desktop/loop.py`), and a Restart to a frontend on another loop leaves the
   current one and starts that one (`__main__.run_frontends`). Unless the chosen frontend
-  is a terminal one, `kadence` hands over to the window launcher at launch (as for Restart
+  is a terminal one, `kaden` hands over to the window launcher at launch (as for Restart
   now, below) and returns; without a display it prints that there is none and that
-  `kadence --headless` runs it for another program, and exits with an error. The window
+  `kaden --headless` runs it for another program, and exits with an error. The window
   launcher, run directly or by a bundle, opens the desktop app even with a saved terminal
   frontend, since a window cannot open a terminal.
 - From a terminal frontend to a window frontend, when a display is available, Restart now
-  ends the terminal frontend and `kadence` starts the window launcher
-  (`python -m kadence.window`) as a detached process on the same data directory,
+  ends the terminal frontend and `kaden` starts the window launcher
+  (`python -m kaden.window`) as a detached process on the same data directory,
   config file and conversation. Without a display, `restart_frontend` stays the running
-  one, and the notice says the desktop app will be used the next time Kadence is started
+  one, and the notice says the desktop app will be used the next time Kaden is started
   on a computer with a display. From a window frontend to a terminal one, the desktop app says that
-  frontend will be used the next time `kadence` is run in a terminal; Restart now restarts
+  frontend will be used the next time `kaden` is run in a terminal; Restart now restarts
   the desktop app for any other pending change.
 - Frontends offer Restart now in their settings and after saving a module setting;
-  `kadence.frontends.common.restart_notice` words what waits for it.
+  `kaden.frontends.common.restart_notice` words what waits for it.
 
 ### Memory is not offered in the app
 
 A different Memory module is a different archive: conversations and long-term memory of the
 old one are not shown after the restart, and come back when the user switches back. That
-is a choice of storage, not of how Kadence works, so the desktop app's settings offer the
-Core and Tools only (`kadence.frontends.common.MODULE_LABELS`). Memory
+is a choice of storage, not of how Kaden works, so the desktop app's settings offer the
+Core and Tools only (`kaden.frontends.common.MODULE_LABELS`). Memory
 stays a module: it is chosen with `[memory]` in `config.toml`, or by id through
 `SettingsUpdate.modules` from any frontend that wants to offer it.
 
@@ -133,7 +133,7 @@ Code: `api.py` (`ModuleInfo`, `ModuleChoice`, `Settings`, `SettingsUpdate`,
 ## Alternatives considered
 
 - **Offering Memory in the app too**, with a warning before saving. Built and removed:
-  Kadence has one memory module, a switch only hides every conversation, and the warning
+  Kaden has one memory module, a switch only hides every conversation, and the warning
   had to explain why. Users who want another archive edit `config.toml`.
 - **Swapping modules live, while running.** A frontend cannot replace itself, a different
   Memory under an open conversation has none of its messages, and the live Core swap needed
@@ -146,8 +146,8 @@ Code: `api.py` (`ModuleInfo`, `ModuleChoice`, `Settings`, `SettingsUpdate`,
 - **Typing an import path in the app** (`package.module:factory`). Works for any module
   with no registration, but non-technical users cannot know paths, and a typo is found only
   at the next start.
-- **A plugin folder in the data directory** (drop `.py` files into `~/.kadence/plugins`).
-  No packaging needed, but Kadence would execute whatever lands in that folder and has no
+- **A plugin folder in the data directory** (drop `.py` files into `~/.kaden/plugins`).
+  No packaging needed, but Kaden would execute whatever lands in that folder and has no
   dependency handling; entry points make installing the trust decision and resolve
   dependencies.
 - **A supervisor process that restarts the instance.** Could restart without the launcher
@@ -174,10 +174,10 @@ Code: `api.py` (`ModuleInfo`, `ModuleChoice`, `Settings`, `SettingsUpdate`,
   a setup runtime and module discovery. `settings()` imports every installed module once
   per process, PySide6 included where the desktop extra is installed.
 - Restarting in the same process keeps module code loaded at the first start; code
-  changed on disk needs Kadence to be started again.
+  changed on disk needs Kaden to be started again.
 - Choosing Memory takes editing `config.toml`; nobody hides their conversations by
   picking from a list.
-- The desktop app opens however Kadence is started where a display is, and a saved
+- The desktop app opens however Kaden is started where a display is, and a saved
   frontend never blocks a launch: the launchers fall back to the desktop app.
 - The [settings note](2026-11-07-settings-for-non-technical-users.md) describes the
   settings in these terms.

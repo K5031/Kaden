@@ -7,15 +7,15 @@ Changes the desktop part of [a folder per conversation](2026-11-10-folder-per-co
 ## Problem
 
 Started from the app menu, the desktop app has no meaningful current folder. It fell back
-to `~/Kadence`, which it created, so every chat the user had not placed worked there:
+to `~/Kaden`, which it created, so every chat the user had not placed worked there:
 files of unrelated tasks piled up in one folder the user never chose, and the project a
 chat belonged to was a guess. The user compared it with Claude's desktop app, where a
 session is always started on a folder the user picks, and asked for the same.
 
 ## Decision
 
-- **No folder of the app's own.** `kadence-desktop` starts its Tools in the current
-  directory, as `kadence` does. `~/Kadence` and `run_frontends(default_root=)` are gone.
+- **No folder of the app's own.** `kaden-desktop` starts its Tools in the current
+  directory, as `kaden` does. `~/Kaden` and `run_frontends(default_root=)` are gone.
 - **A new chat asks.** `Controller.folder_picked` is true for a chat opened with a
   folder, a conversation id or `seed_from`, and false for a plain new chat. While it is
   false and the chat is unused, the folder button reads "Choose folder", the title has
@@ -32,7 +32,7 @@ session is always started on a folder the user picks, and asked for the same.
 - **Start a new chat in the folder used last.** One click less, and what the note linked
   above chose in spirit. The user was offered it and chose asking every time: the folder
   is then always a decision, never an inheritance.
-- **Keep `~/Kadence` as the fallback.** The problem above.
+- **Keep `~/Kaden` as the fallback.** The problem above.
 - **Fall back to the home folder.** Nothing in the home folder counts as inside the work
   folder ([free in the work folder](2026-11-10-free-in-the-work-folder.md)), so every
   action would ask.

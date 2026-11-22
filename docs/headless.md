@@ -1,11 +1,11 @@
-# Driving Kadence from a program
+# Driving Kaden from a program
 
-`kadence --headless` runs Kadence without a screen, for another program to drive: a fleet
-manager, a script, a test. The program starts Kadence as a child process and talks to it
-over Kadence's stdin and stdout.
+`kaden --headless` runs Kaden without a screen, for another program to drive: a fleet
+manager, a script, a test. The program starts Kaden as a child process and talks to it
+over Kaden's stdin and stdout.
 
 ```bash
-kadence --headless --data-dir ~/units/writer --goal "Draft the launch post"
+kaden --headless --data-dir ~/units/writer --goal "Draft the launch post"
 ```
 
 | Option | Does |
@@ -13,7 +13,7 @@ kadence --headless --data-dir ~/units/writer --goal "Draft the launch post"
 | `--headless` | Use stdin and stdout for the program, as below |
 | `--continuous "…"` | Start a new conversation that [runs continuously](concepts.md#running-continuously) on this right away |
 | `--goal "…"` | The same, as a goal: it ends when the agent says it is reached |
-| `--data-dir`, `--config`, `--conversation`, `--model`, `--maintenance-model`, `--permissions` | See [Starting](using-kadence.md#starting) |
+| `--data-dir`, `--config`, `--conversation`, `--model`, `--maintenance-model`, `--permissions` | See [Starting](using-kaden.md#starting) |
 
 Give each unit its own data folder. Its `config.toml` sets the model, permissions and
 spending limit, if it should have one; see [config.toml](settings.md#configtoml).
@@ -21,12 +21,12 @@ spending limit, if it should have one; see [config.toml](settings.md#configtoml)
 ## The channel
 
 [JSON-RPC 2.0](https://www.jsonrpc.org/specification), one message per line, UTF-8.
-Kadence writes nothing else to stdout: anything else the process prints goes to stderr, and
-so do Kadence's own errors, such as continuous work that cannot start. Closing Kadence's stdin quits it
+Kaden writes nothing else to stdout: anything else the process prints goes to stderr, and
+so do Kaden's own errors, such as continuous work that cannot start. Closing Kaden's stdin quits it
 the way closing the window does.
 
 **Requests** have the names and parameters of the runtime's commands, every one but
-`restart`. Objects may be sent with their `"type"`, as Kadence sends them; the desktop app
+`restart`. Objects may be sent with their `"type"`, as Kaden sends them; the desktop app
 drives its sub-sessions this way:
 
 | Method | Params |
@@ -67,10 +67,10 @@ under `"type"`, such as `MessageCommitted`, `StateChanged`, `PermissionRequested
 **States.** `StateChanged` carries `not_started`, `idle`, `thinking`, `running_tools`,
 `awaiting_permission`, `finishing`, `stopping`, `stopped` or `failed`. The agent is at
 work from `thinking` until it is `idle` again; in `finishing` its answer is complete and
-Kadence saves what it learned.
+Kaden saves what it learned.
 
 **A message says who wrote it.** A `Message` with role `user` has an `author`: `user`,
-or `kadence` for what Kadence itself wrote for the agent (a check-in, a reminder,
+or `kaden` for what Kaden itself wrote for the agent (a check-in, a reminder,
 background results). Its `text` is exactly what was written. To tell the agent something
 that is not the user's words, use `notify` with a `text` instead of `send`.
 

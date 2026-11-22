@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
-from kadence.api import (
+from kaden.api import (
     AgentState,
     EventEnvelope,
     Frontend,

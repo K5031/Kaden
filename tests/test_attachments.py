@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from kadence.api import (
+from kaden.api import (
     AgentState,
     Document,
     File,
@@ -26,10 +26,10 @@ from kadence.api import (
     ToolStatus,
     attachment_text,
 )
-from kadence.core.openai_compat import to_messages as openai_messages
-from kadence.memory.sqlite import SqliteMemory
-from kadence.runtime.budget import estimate_tokens
-from kadence.tools.shell_files import ShellFilesTools, attachments
+from kaden.core.openai_compat import to_messages as openai_messages
+from kaden.memory.sqlite import SqliteMemory
+from kaden.runtime.budget import estimate_tokens
+from kaden.tools.shell_files import ShellFilesTools, attachments
 from tests.conformance.core_suite import collect
 from tests.conformance.tools_suite import RecordingContext
 from tests.conftest import eventually

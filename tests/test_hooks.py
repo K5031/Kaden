@@ -9,8 +9,8 @@ from typing import Any
 
 import pytest
 
-from kadence.api import PermissionPolicy, ToolStatus
-from kadence.runtime.hooks import Hook
+from kaden.api import PermissionPolicy, ToolStatus
+from kaden.runtime.hooks import Hook
 from tests.conftest import Harness
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
@@ -72,7 +72,7 @@ async def test_a_hook_after_a_call_sees_its_result_and_can_add_to_it(make: Any, 
 
 async def test_a_hook_that_fails_or_hangs_does_not_stop_the_work(make: Any, tmp_path,
                                                                  monkeypatch):
-    monkeypatch.setattr("kadence.runtime.hooks.TIMEOUT_S", 0.5)
+    monkeypatch.setattr("kaden.runtime.hooks.TIMEOUT_S", 0.5)
     broken = Hook("before", script(tmp_path, "broken", "sys.exit(1)\n"))
     slow = Hook("before", script(tmp_path, "slow", "import time\ntime.sleep(30)\n"))
     core = ScriptedCore([Step(calls=[call("Bash", {"command": "ls"}, id="a")]),
@@ -102,7 +102,7 @@ async def test_the_runtimes_own_tools_run_no_hooks(make: Any, tmp_path):
     '[[hooks]]\nwhen = "before"\n',
     '[[hooks]]\nwhen = "before"\ncommand = "x"\nshell = true\n'])
 def test_a_hook_that_is_not_one_is_named(tmp_path, text):
-    from kadence.__main__ import Launch, load_config
+    from kaden.__main__ import Launch, load_config
 
     (tmp_path / "config.toml").write_text(text)
     with pytest.raises(SystemExit, match="hooks"):
@@ -110,7 +110,7 @@ def test_a_hook_that_is_not_one_is_named(tmp_path, text):
 
 
 def test_hooks_are_read_from_the_configuration(tmp_path):
-    from kadence.__main__ import Launch, load_config
+    from kaden.__main__ import Launch, load_config
 
     (tmp_path / "config.toml").write_text(
         '[[hooks]]\nwhen = "after"\ntool = "Edit"\ncommand = "ruff format ."\n')

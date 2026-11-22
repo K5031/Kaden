@@ -8,7 +8,7 @@ Status: implemented — `Agent` takes Claude Code's `isolation: "worktree"`, so 
 subagents that edit code, or a subagent and its parent, then edit the same checkout: one's
 half-done change breaks the other's tests, and their work cannot be reviewed or dropped
 apart. Claude Code solves this with `isolation: "worktree"` on its `Agent` tool, and the
-user wants Kadence to match Claude Code.
+user wants Kaden to match Claude Code.
 
 ## Decision
 
@@ -33,14 +33,14 @@ user wants Kadence to match Claude Code.
 - Deleting a sub-session removes its worktree only when it has no changes: changed code
   is the user's, and is never erased with a session's record.
 
-The git work is `git` run as a subprocess (`kadence.frontends.worktrees`), off the event
+The git work is `git` run as a subprocess (`kaden.frontends.worktrees`), off the event
 loop. Adding, removing and starting a child's process run one at a time per manager, so a
 worktree is never removed under a process that is starting in it.
 
 ### EnterWorktree and ExitWorktree are not built
 
 Claude Code's `EnterWorktree` moves its own session into a new worktree, and
-`ExitWorktree` moves it back. In Kadence a conversation's folder is fixed for its life:
+`ExitWorktree` moves it back. In Kaden a conversation's folder is fixed for its life:
 `ConversationInfo.folder` is set when it starts, the runtime hands it to the Tools modules
 (`use_folder`) only on opening a conversation, its long-term memory notes and project
 skills are found by it, and the desktop app lists conversations under it. Moving a
@@ -72,4 +72,4 @@ and `Agent` with `isolation` keeps parallel work apart.
 - Git must be installed; without it the call is an error.
 - A subagent's result can take up to the child's stop grace (10 s) longer, while its
   process quits and its worktree is checked.
-- Kadence's own conversation cannot move into a worktree, as Claude Code's session can.
+- Kaden's own conversation cannot move into a worktree, as Claude Code's session can.

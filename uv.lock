@@ -700,7 +700,7 @@ wheels = [
 ]
 
 [[package]]
-name = "kadence"
+name = "kaden"
 version = "0.0.0"
 source = { editable = "." }
 dependencies = [
@@ -734,7 +734,7 @@ desktop = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "kadence", extra = ["desktop"] },
+    { name = "kaden", extra = ["desktop"] },
     { name = "psutil" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -771,7 +771,7 @@ provides-extras = ["desktop"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "kadence", extras = ["desktop"] },
+    { name = "kaden", extras = ["desktop"] },
     { name = "psutil", specifier = ">=7.2.2" },
     { name = "pytest" },
     { name = "pytest-asyncio" },

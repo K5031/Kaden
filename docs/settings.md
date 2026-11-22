@@ -22,8 +22,8 @@ first.
 ## Changes that apply at restart
 
 The AI provider, its key, Tools and tool servers (MCP) are saved at once but
-used from the next start of Kadence; until then you keep working as before. The settings
-screen says so and offers **Restart now**: Kadence stops what it is doing, as when you quit,
+used from the next start of Kaden; until then you keep working as before. The settings
+screen says so and offers **Restart now**: Kaden stops what it is doing, as when you quit,
 and starts again with the new settings in the same conversation.
 
 After a provider change, the new provider starts with its first model; choose another one
@@ -33,9 +33,9 @@ after the restart.
 where they are, but are not shown while another Memory is used; they come back when you
 switch back. The settings screen asks before saving such a change.
 
-## When Kadence cannot start
+## When Kaden cannot start
 
-If Kadence cannot start with your settings (no API key yet, a provider or module that is no
+If Kaden cannot start with your settings (no API key yet, a provider or module that is no
 longer installed, wrong options in `config.toml`), it still opens, with the settings and a
 message saying what is wrong. Fix it there and choose **Restart now**. At the first start a
 welcome window asks for your API key instead; see
@@ -43,19 +43,19 @@ welcome window asks for your API key instead; see
 
 ## Installed modules
 
-The provider and Tools lists show every module installed with Kadence: its own,
+The provider and Tools lists show every module installed with Kaden: its own,
 and those of any package you install that provides one. A module is a program that runs
 with your permissions, so install only ones you trust; see
 [Writing a module](writing-modules.md).
 
 The memory module, where conversations and long-term memory are kept, is not in the
 settings screen: another one would be another archive, without your conversations. It is
-set with `[memory]` in [config.toml](#configtoml). Kadence comes with two:
+set with `[memory]` in [config.toml](#configtoml). Kaden comes with two:
 
 - **Notes** (the default): About you and one note per topic, shared by all your
   conversations and saved after each answer. See [Memory](concepts.md#memory).
 - **Files per project**, as in Claude Code: each project gets its own memory
-  folder, `~/.kadence/projects/<project>/memory/`, with a `MEMORY.md` index and one
+  folder, `~/.kaden/projects/<project>/memory/`, with a `MEMORY.md` index and one
   Markdown file per fact. A project is a git repository, so chats in its subfolders and
   worktrees share one memory; a folder outside any repository is its own project. The agent writes them itself while it works, and every
   conversation in that folder sees the index as it was when the conversation started: a
@@ -66,7 +66,7 @@ set with `[memory]` in [config.toml](#configtoml). Kadence comes with two:
 
   ```toml
   [memory]
-  factory = "kadence.memory.files:factory"
+  factory = "kaden.memory.files:factory"
   ```
 
   It keeps its conversations in `memory-files.db`, so it starts empty; your other
@@ -83,33 +83,33 @@ set with `[memory]` in [config.toml](#configtoml). Kadence comes with two:
 | Never run tools | Can only talk |
 
 **Deciding automatically.** When the agent wants to do something outside its work folder
-(run a command outside the sandbox, read a file elsewhere, push to GitHub), Kadence first
+(run a command outside the sandbox, read a file elsewhere, push to GitHub), Kaden first
 asks the model for memory upkeep whether it fits what you asked for. It runs without
-asking when it clearly does and is easy to undo, or only reads. Kadence asks you when it
+asking when it clearly does and is easy to undo, or only reads. Kaden asks you when it
 deletes or overwrites something you did not mention, sends data anywhere, publishes,
 spends money, changes system settings, or when the check is unsure; the question then
-says why. If the check fails or the spending limit is reached, Kadence asks too.
+says why. If the check fails or the spending limit is reached, Kaden asks too.
 
 - The check sees your messages and the action, not what the agent read, so a web page or
   a file cannot talk it into allowing something.
 - Anything that touches keys and passwords (SSH and GPG keys, `.env` files, shell
   startup files such as `~/.bashrc`, password stores, cloud credentials, browser
-  profiles, the keychain) or Kadence's own data folder
+  profiles, the keychain) or Kaden's own data folder
   always asks you, without a check: a secret the agent reads goes to your AI provider, and
-  Kadence's data folder holds your conversations and the very settings that limit the
+  Kaden's data folder holds your conversations and the very settings that limit the
   agent.
 - Each check is a small request to your provider and counts toward the spending limit. Set
   a cheap **Model for memory upkeep** to keep it cheap.
 - It can be wrong. Choose "Work freely in the work folder, ask before anything else" to
   decide everything outside the folder yourself.
 
-**Saved answers.** When Kadence asks, **Always…** keeps your answer for every
+**Saved answers.** When Kaden asks, **Always…** keeps your answer for every
 conversation: **Always allow** runs calls like it without asking from then on, **Never
 allow** refuses them without asking. A command is kept by its program and subcommand
 (`git status` covers `git status -s` too, but not `git status && rm …`); a command that
 runs code of any kind, such as `python fix.py`, is kept whole. Settings → Permissions
 lists what you saved, and **Remove** takes one back. An "always" never covers keys,
-passwords or Kadence's own data folder: those still ask.
+passwords or Kaden's own data folder: those still ask.
 
 **How "in the work folder" is enforced.** A file action counts as inside when its path is
 in the work folder; a link that leads out of it counts as outside. Commands run in a
@@ -137,12 +137,12 @@ Things to know:
 ## Spending limit
 
 The limit counts everything spent in this data folder, across all conversations, at the
-providers' list prices. When it is reached, Kadence stops the current step and refuses new
+providers' list prices. When it is reached, Kaden stops the current step and refuses new
 ones until you raise the limit. The settings screen shows what has been spent so far.
 
 ## Where settings live
 
-Everything is in Kadence's data folder, `~/.kadence` (or `--data-dir`, or `$KADENCE_DATA_DIR`):
+Everything is in Kaden's data folder, `~/.kaden` (or `--data-dir`, or `$KADEN_DATA_DIR`):
 
 | File | Holds |
 |---|---|
@@ -151,14 +151,14 @@ Everything is in Kadence's data folder, `~/.kadence` (or `--data-dir`, or `$KADE
 | `memory.db` | Your conversations and long-term memory |
 | `memory-files.db`, `projects/` | The same, with the files-per-project memory |
 | `skills/` | Your own [skills](concepts.md#skills) |
-| `usage.json` | What has been spent so far; delete it, while Kadence is closed, to start counting from zero |
-| `events.jsonl` | Activity log of what Kadence did and when; it holds no message text, tool input or tool output |
+| `usage.json` | What has been spent so far; delete it, while Kaden is closed, to start counting from zero |
+| `events.jsonl` | Activity log of what Kaden did and when; it holds no message text, tool input or tool output |
 
 Settings from the screen override `config.toml`, and command-line options override both.
 To see the result, with defaults filled in and secrets hidden:
 
 ```bash
-kadence --show-config
+kaden --show-config
 ```
 
 ## config.toml
@@ -168,7 +168,7 @@ instructions from a file next to the config:
 
 ```toml
 [core]
-factory = "kadence.core.openai_compat:deepseek_factory"
+factory = "kaden.core.openai_compat:deepseek_factory"
 
 [runtime]
 model = "deepseek-flash"
@@ -184,11 +184,11 @@ max_tool_calls = 200
 ```
 
 `[core]`, `[memory]`, `[tools]` and `[frontend]` each take a `factory` and `options`; a
-section left out uses Kadence's default. A module chosen in the settings screen replaces the
+section left out uses Kaden's default. A module chosen in the settings screen replaces the
 one named here, keeping these `options` only when it is the same module. Options a module
 understands (prices, context windows, base URLs, compaction) are set here only, and apply
-at the next start. The output of `kadence --show-config` is a valid `config.toml` to start
-from. A file that is not valid stops Kadence with a one-line message naming the mistake; a
+at the next start. The output of `kaden --show-config` is a valid `config.toml` to start
+from. A file that is not valid stops Kaden with a one-line message naming the mistake; a
 module that rejects its options opens the settings with the message instead.
 
 ### Hooks
@@ -212,10 +212,10 @@ A hook gets the call as JSON on its input (`tool`, `arguments`, `folder`, and af
 call its `result`) and runs in the conversation's folder, as you, outside the sandbox.
 When it exits with code **2**, what it wrote to standard error goes to the agent: before a
 call, the call is refused with that reason; after one, it is added to the result. Any
-other exit code, or a hook still running after a minute, changes nothing. Kadence's own
+other exit code, or a hook still running after a minute, changes nothing. Kaden's own
 tools (the plan, background work) run no hooks.
 
-With Claude models that always think (Opus 5.x, Sonnet 5.x, Haiku 5.x), Kadence asks for a
+With Claude models that always think (Opus 5.x, Sonnet 5.x, Haiku 5.x), Kaden asks for a
 summary of the thinking to be streamed, so you see it under **Thinking…** as it happens.
 To change that, set `thinking` in the Core's options for that model, for example
 `thinking = { type = "adaptive", display = "omitted" }`.
@@ -231,7 +231,7 @@ maintenance_options = { thinking = { type = "disabled" } }
 Haiku 5.5, Sonnet 5 and Opus 5 accept this. Opus 5.5, Sonnet 5.5 and Fable cannot switch
 thinking off and refuse the request, so use it only with a maintenance model that can.
 
-With Claude, Kadence asks Anthropic to cache each conversation, so every request after the
+With Claude, Kaden asks Anthropic to cache each conversation, so every request after the
 first pays about a tenth or less for what was already sent. The cache lasts five minutes
 after the last request. For work with longer pauses (a conversation that runs continuously and checks in every half
 hour), keep it for an hour instead, at a higher price for the first request:
@@ -243,7 +243,7 @@ cache_control = { type = "ephemeral", ttl = "1h" }
 
 ## API keys
 
-Kadence looks for a key in the environment first (`ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`,
+Kaden looks for a key in the environment first (`ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`,
 `OPENAI_API_KEY`), then in the keychain where the settings screen stores it. Keys never go
-into Kadence's files or logs. Variables of tool servers are kept in the keychain too, as
+into Kaden's files or logs. Variables of tool servers are kept in the keychain too, as
 `mcp/<server>/<NAME>`.

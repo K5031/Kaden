@@ -4,13 +4,13 @@ Status: implemented — a `screenshot` tool in the built-in Tools module lets th
 
 ## Problem
 
-Kadence works on the user's computer but is blind to it: it reads files and command
+Kaden works on the user's computer but is blind to it: it reads files and command
 output, not what is on screen. The user wants to say "look at my screen" or "what is
 wrong with this window", typed or in voice mode, and have the agent see it.
 
 ## Decision
 
-A tool `screenshot`, without arguments, in `kadence.tools.shell_files` (`screen.py`). It
+A tool `screenshot`, without arguments, in `kaden.tools.shell_files` (`screen.py`). It
 captures the whole desktop, all monitors, and returns the picture as an attachment of the
 tool result, the way `Read` returns a picture, so every Core that shows pictures to
 its model shows this one. Every frontend has it, since it belongs to the Tools module.
@@ -33,12 +33,12 @@ its model shows this one. Every frontend has it, since it belongs to the Tools m
 - **Continuous screen sharing.** Every look costs tokens and sends the screen to the model
   provider; a look on request is enough.
 - **The desktop portal (xdg-desktop-portal Screenshot).** Works on every Wayland desktop,
-  but asks the user in a dialog of its own on each capture, on top of Kadence's permission,
+  but asks the user in a dialog of its own on each capture, on top of Kaden's permission,
   and needs a D-Bus library.
 - **Capturing in the desktop frontend with Qt.** Qt cannot read the screen on Wayland
   either, and an instance under another frontend would have no tool.
-- **An `active window` target.** While the user types or talks to Kadence, the active
-  window is Kadence's own.
+- **An `active window` target.** While the user types or talks to Kaden, the active
+  window is Kaden's own.
 - **A module of its own.** One tool; the built-in module already carries the web tools
   beside shell and files.
 

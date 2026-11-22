@@ -89,7 +89,7 @@ bwrap --ro-bind / / --tmpfs /home --tmpfs /root --tmpfs /run/user --tmpfs /tmp
 ```
 
 Whether it works is tested once when the module is built, by running `true` in it, off
-the event loop: `bwrap` missing, user namespaces disabled, or Kadence itself running in a
+the event loop: `bwrap` missing, user namespaces disabled, or Kaden itself running in a
 sandbox all leave the shell unsandboxed. Stop, cancellation and timeouts act on the
 `bwrap` process group as they did on the shell's.
 
@@ -138,7 +138,7 @@ user choose each chat's folder.
 - **A sandbox bug is a security bug.** A mistake in the bubblewrap arguments lets an
   unasked command out. A test probes the boundary from inside: writing outside, listing
   the home folder, reaching the session bus.
-- **Secrets in the environment stay out.** Keys exported in a shell profile reach Kadence
+- **Secrets in the environment stay out.** Keys exported in a shell profile reach Kaden
   started from a terminal; a sandboxed command runs unasked and may use the network, so it
   gets the environment without them (`shell_files.sandbox_environment`). A secret under
   another name still gets through; unsandboxed commands, which are checked first, keep
@@ -155,7 +155,7 @@ user choose each chat's folder.
 - **Reads and the ceiling.** `allow_read_only` reads anywhere without asking and
   `allow_workspace` does not, so the two are not strictly ordered; the ceiling orders them
   by what may be changed.
-- **Linux only.** Without bubblewrap (macOS, some Linux setups, a Kadence that itself runs
+- **Linux only.** Without bubblewrap (macOS, some Linux setups, a Kaden that itself runs
   in a sandbox) shell commands ask; file calls in the work folder still run freely.
 - **A looser default.** New users get an agent that changes files in its folder unasked.
   The folder is theirs to choose, and the welcome says what the agent may do.

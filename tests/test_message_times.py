@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from kadence.api import Role, Text
+from kaden.api import Role, Text
 from tests.conftest import Harness
 from tests.fakes.core import Step, call
 from tests.fakes.tools import FakeTools
