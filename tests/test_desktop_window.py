@@ -9,6 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import asyncio
 import itertools
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -2109,3 +2110,16 @@ async def test_a_plan_sent_back_from_its_card_keeps_plan_mode(make, qapp):
     await eventually(lambda: window.prompts.count() == 0 and not controller.model.busy)
     assert (await h.results())["x"].status == ToolStatus.REFUSED
     assert h.runtime.snapshot().plan_mode
+
+
+def test_the_thinking_line_counts_the_seconds_until_the_thinking_is_over(qapp):
+    item = AssistantItem(reasoning="Looking", thinking_since=time.monotonic() - 12)
+    bubble = AssistantBubble(item)
+    assert bubble.thinking.text() == "Thinking… 12s" and bubble.ticking.isActive()
+    item.thinking_since -= 60  # a minute later
+    bubble.ticking.timeout.emit()
+    assert bubble.thinking.text() == "Thinking… 1m 12s"
+    item.final, item.thought_s = True, 73.0
+    bubble.refresh()
+    bubble._render()
+    assert bubble.thinking.text() == "Thought for 1m 13s" and not bubble.ticking.isActive()

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -117,7 +119,7 @@ async def test_a_turn_with_reasoning_and_a_tool(make):
     assert isinstance(user, UserItem) and user.text == "find x" and not user.queued
     assert isinstance(first, AssistantItem) and first.final
     assert (first.reasoning, first.text) == ("hmm", "Let me look.")
-    assert isinstance(tool, ToolItem) and tool.name == "look" and tool.summary == "x"
+    assert isinstance(tool, ToolItem) and tool.name == "look" and tool.summary == "Used look" and tool.detail == "x"
     assert tool.status is ToolStatus.OK and tool.state_label == "done"
     assert tool.content.startswith("found it") and tool.duration_s is not None
     assert isinstance(last, AssistantItem) and last.text == "**Done.**"
@@ -752,9 +754,44 @@ def test_a_tool_call_with_a_description_shows_it_as_its_title():
     tool = ToolItem("c", "Bash", '{"command": "ls -la", "step_summary": "List the files"}')
     assert tool.summary == "List the files" and tool.detail == "ls -la"
     plain = ToolItem("c", "remember", '{"text": "Studies CS at UCL"}')
-    assert plain.summary == "Studies CS at UCL" and plain.sentence is None
-    streaming = ToolItem("c", "Bash", '{"command": "ls')
-    assert streaming.summary == '{"command": "ls'
+    assert plain.summary == "Use remember" and plain.detail == "Studies CS at UCL"
+    streaming = ToolItem("c", "Bash", '{"command": "ls')  # never the half-written input
+    assert streaming.summary == "Run a command"
+
+
+@pytest.mark.parametrize("name, arguments, doing, done", [
+    ("Bash", {"command": "ls -la"}, "Run a command", "Ran a command"),
+    ("Read", {"file_path": "/src/main.py"}, "Read main.py", "Read main.py"),
+    ("Write", {"file_path": "notes.md", "content": "x"}, "Write notes.md", "Wrote notes.md"),
+    ("Edit", {"file_path": "a/b.toml", "old_string": "x", "new_string": "y"},
+     "Edit b.toml", "Edited b.toml"),
+    ("Glob", {"pattern": "**/*.py"}, "Find files matching **/*.py",
+     "Found files matching **/*.py"),
+    ("Grep", {"pattern": "TODO", "path": "src"}, "Search for “TODO” in src",
+     "Searched for “TODO” in src"),
+    ("WebSearch", {"query": "rust async"}, "Search the web for “rust async”",
+     "Searched the web for “rust async”"),
+    ("WebFetch", {"url": "https://docs.python.org/3/x"}, "Fetch docs.python.org",
+     "Fetched docs.python.org"),
+    ("Agent", {"description": "Tidy notes", "prompt": "…"}, "Start a subagent: Tidy notes",
+     "Started a subagent: Tidy notes"),
+    ("mcp__github__create_issue", {"title": "Bug"}, "Github: create issue",
+     "Github: create issue"),
+])
+def test_a_step_without_a_description_reads_as_claude_shows_it(name, arguments, doing, done):
+    call = json.dumps(arguments)
+    assert ToolItem("c", name, call).summary == doing
+    finished = ToolItem("c", name, call)
+    finished.status = ToolStatus.OK
+    assert finished.summary == done
+
+
+@pytest.mark.parametrize("name, arriving", [
+    ("Bash", "Run a command"), ("Read", "Read a file"), ("Edit", "Edit a file"),
+    ("Grep", "Search files"), ("WebFetch", "Fetch a page"),
+    ("mcp__github__create_issue", "Github: create issue")])
+def test_a_step_still_arriving_says_what_it_does_without_its_input(name, arriving):
+    assert ToolItem("c", name, '{"file_path": "/src/ma').summary == arriving
 
 
 async def test_a_tool_the_provider_ran_is_a_finished_step(make):
@@ -918,3 +955,11 @@ def test_a_streamed_reply_is_an_item_from_its_first_text_on():
     assert (reply.reasoning, reply.text) == ("Looking", "Hello")
     assert not AssistantItem().shown and not AssistantItem(text="x", hidden=True).shown
     assert AssistantItem(interrupted=True).shown and AssistantItem(refused=True).shown
+
+
+def test_a_reply_knows_when_its_thinking_began():
+    model = ConversationModel()
+    before = time.monotonic()
+    model.apply(ReasoningDelta("Looking"))
+    [item] = [i for i in model.items if isinstance(i, AssistantItem)]
+    assert item.thinking_since is not None and before <= item.thinking_since <= time.monotonic()

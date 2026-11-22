@@ -106,6 +106,7 @@ from kadence.frontends.common import (
     plan_steps,
     provider_step,
     result_text,
+    tool_sentence,
 )
 from kadence.frontends.sessions import SubSessions
 
@@ -150,6 +151,7 @@ class AssistantItem:
     text: str = ""
     reasoning: str = ""
     thought_s: float | None = None  # how long the model thought, once committed
+    thinking_since: float | None = None  # time.monotonic() when its thinking began to stream
     final: bool = False  # committed; False while streaming
     created_at: float | None = None  # when its message was committed
     interrupted: bool = False  # the cycle ended before it was committed
@@ -178,16 +180,22 @@ class ToolItem:
     duration_s: float | None = None
 
     @property
-    def sentence(self) -> str | None:
-        """The model's plain-language description of the call, if it gave one."""
+    def sentence(self) -> str:
+        """What the call does, in words: the model's own description of it, else what
+        Claude would show for the tool (common.tool_sentence); never its raw input."""
         headline = self._parts()[0]
-        return clip(headline, MAX_ARGS_CHARS) if headline else None
+        if not headline:
+            try:
+                arguments = json.loads(self.arguments)
+            except ValueError:  # still arriving
+                arguments = None
+            headline = tool_sentence(self.name, arguments if isinstance(arguments, dict)
+                                     else None)
+        return clip(headline, MAX_ARGS_CHARS)
 
     @property
     def summary(self) -> str:
-        """The call's description, in the past tense once it succeeded, else its arguments."""
-        if self.sentence is None:
-            return clip(self.detail, MAX_ARGS_CHARS)
+        """The call's sentence, in the past tense once it succeeded."""
         return past_tense(self.sentence) if self.status is ToolStatus.OK else self.sentence
 
     @property
@@ -711,9 +719,12 @@ class ConversationModel:
                 before.hidden = True
                 self.on_change(Updated(before))
             self._stream.append(self._add(
-                AssistantItem(reasoning=text) if reasoning else AssistantItem(text)))
+                AssistantItem(reasoning=text, thinking_since=time.monotonic()) if reasoning
+                else AssistantItem(text)))
             return
         if reasoning:
+            if not tail.reasoning:
+                tail.thinking_since = time.monotonic()
             tail.reasoning += text
         else:
             tail.text += text

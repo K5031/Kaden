@@ -15,6 +15,7 @@ import json
 import re
 import shutil
 import tempfile
+import time
 from collections.abc import Callable, Container, Sequence
 from dataclasses import dataclass
 from functools import partial
@@ -151,6 +152,7 @@ from kadence.frontends.common import (
     raises_limit,
     request_note,
     restart_notice,
+    tool_sentence,
 )
 from kadence.frontends.desktop import app_menu, syntax, theme
 from kadence.frontends.desktop.viewmodel import (
@@ -269,12 +271,15 @@ def _label(text: str = "", *, wrap: bool = True, selectable: bool = True,
     return label
 
 
+def _duration(seconds: float) -> str:
+    """"4s", "1m 5s"."""
+    minutes, rest = divmod(max(1, round(seconds)), 60)
+    return f"{minutes}m {rest}s" if minutes else f"{rest}s"
+
+
 def _thought(seconds: float | None) -> str:
     """The thinking line once the thinking is over: "Thought for 4s"."""
-    if seconds is None:
-        return "Thought"
-    minutes, rest = divmod(max(1, round(seconds)), 60)
-    return f"Thought for {minutes}m {rest}s" if minutes else f"Thought for {rest}s"
+    return "Thought" if seconds is None else f"Thought for {_duration(seconds)}"
 
 
 def _discard(widget: QWidget) -> None:
@@ -866,6 +871,8 @@ class AssistantBubble(QWidget):
             layout.addWidget(widget)
         self._timer = QTimer(self, singleShot=True, interval=RENDER_INTERVAL_MS)
         self._timer.timeout.connect(self._render)
+        self.ticking = QTimer(self, interval=1000)  # the thinking line's seconds, as they pass
+        self.ticking.timeout.connect(self._render_thinking)
         self._render()
 
     def refresh(self) -> None:
@@ -896,14 +903,28 @@ class AssistantBubble(QWidget):
         self.copy.setIcon(theme.icon("check" if copied else "copy", theme.current().muted))
         self.copy.setToolTip("Copied" if copied else "Copy")
 
+    def _render_thinking(self) -> None:
+        """"Thinking… 12s" while it thinks, counting; "Thought for 14s" once it is over."""
+        item = self.item
+        self.thinking.setVisible(bool(item.reasoning))
+        thinking = bool(item.reasoning) and not item.final and not item.text
+        if thinking and item.thinking_since is not None:
+            self.thinking.setText(
+                f"Thinking… {_duration(time.monotonic() - item.thinking_since)}")
+        else:
+            self.thinking.setText("Thinking…" if thinking else _thought(item.thought_s))
+        if thinking and item.thinking_since is not None:
+            if not self.ticking.isActive():
+                self.ticking.start()
+        else:
+            self.ticking.stop()
+
     def _toggle_thinking(self, shown: bool) -> None:
         self.reasoning.setVisible(shown)
 
     def _render(self) -> None:
         item = self.item
-        self.thinking.setVisible(bool(item.reasoning))
-        self.thinking.setText("Thinking…" if not item.final and not item.text
-                              else _thought(item.thought_s))
+        self._render_thinking()
         self.reasoning.setText(item.reasoning)
         self.body.setVisible(bool(item.text))
         self.body.setMarkdown(item.text)
@@ -1333,8 +1354,8 @@ class PermissionCard(QFrame):
         layout.setContentsMargins(14, 10, 12, 10)
         call = request.call
         headline, detail = call_parts(call.arguments)
-        layout.addWidget(_label(f"Kadence wants to: {headline}" if headline
-                                else f"Kadence wants to use {call.name}", role="strong"))
+        headline = headline or tool_sentence(call.name, call.arguments)
+        layout.addWidget(_label(f"Kadence wants to: {headline}", role="strong"))
         layout.addWidget(_label(request_note(request), tone="muted"))
         if detail:
             layout.addWidget(Detail(detail))

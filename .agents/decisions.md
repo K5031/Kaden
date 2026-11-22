@@ -606,6 +606,7 @@ Design: [Agent Note](notes/implemented/2026-11-10-step-descriptions.md).
 | Opened | Closed by default; the desktop app keeps a group open while its first step stays first |
 | Live title | The latest step not yet ended, with its state (preparing, running, in the background) |
 | Ended title | One step: its sentence and its problem; several: "N steps" and problems counted by label ("1 failed, 1 declined") |
+| Step text | As Claude shows a step: the model's `step_summary`, else `common.tool_sentence`: a phrase per Claude Code tool from its arguments ("Read main.py", "Search for “TODO” in src", "Fetch docs.python.org"), the tool's phrase alone while its input still arrives ("Run a command"), "Server: tool name" for a tool server's tool, "Use <name>" for any other; past tense once done. The raw input stays in the tooltip and the details. Permission and proposal cards use the same words |
 | Cancel | The desktop group line has Cancel for its live step; each step keeps its own |
 | Step rows | No box; "done" is not shown, its duration is in the tooltip; other states stay visible |
 
@@ -857,7 +858,7 @@ The design is in [the note](notes/implemented/2026-11-12-voice-conversation.md);
 |---|---|
 | Measured | By the runtime, not the Core: the time the model spent before answering in one model call: from the call's start, or its last output that was not reasoning, to the first output after reasoning that is not reasoning, summed (`_Stream.thought`). Counting only between reasoning deltas gave 0.001 s with Opus 5.5, which sends its thinking summary in one piece once it is over |
 | Kept | In `Reasoning.seconds` on the message's first Reasoning block, so the archive has it and a reopened conversation shows the same line; a model call without streamed reasoning has none |
-| Shown | Desktop: the line above a reply reads "Thinking…" while it streams, then "Thought for 4s" (the sum when thinking was joined across a plan update), or "Thought" where no time is stored |
+| Shown | Desktop: the line above a reply reads "Thinking… 3s" while it streams, counted each second from its first reasoning delta (`AssistantItem.thinking_since`, the window's clock; "Thinking…" alone where that is not known), then "Thought for 4s" (the sum when thinking was joined across a plan update), or "Thought" where no time is stored |
 
 ## The plan as a checklist
 

@@ -8,11 +8,12 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
-from collections.abc import Container, Iterable, Sequence
+from collections.abc import Callable, Container, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from kadence.api import (
     DESCRIPTION_ARG,
@@ -116,7 +117,8 @@ def proposal_parts(proposal: Proposal) -> tuple[str, str]:
         headline = headline or (
             f"Start a subagent: {arguments.get('description') or arguments.get('prompt')}")
         detail = ""
-    return f"Kadence proposes: {headline or f'using {proposal.call.name}'}", detail
+    headline = headline or tool_sentence(proposal.call.name, proposal.call.arguments)
+    return f"Kadence proposes: {headline}", detail
 
 
 PERMISSION_SHORT = {  # for a picker: a word or two
@@ -153,7 +155,7 @@ _DOUBLED = {"stop": "stopped", "plan": "planned", "drop": "dropped", "commit": "
             "submit": "submitted", "ship": "shipped", "zip": "zipped", "unzip": "unzipped",
             "tag": "tagged", "log": "logged", "pin": "pinned", "map": "mapped"}
 _REGULAR = frozenset({
-    "add", "analyse", "analyze", "append", "apply", "archive", "ask", "back", "backup",
+    "message", "add", "analyse", "analyze", "append", "apply", "archive", "ask", "back", "backup",
     "calculate", "cancel", "change", "check", "clean", "clear", "clone", "close", "collect",
     "combine", "compare", "compile", "compress", "configure", "confirm", "convert", "copy",
     "count", "crawl", "create", "debug", "decrypt", "delete", "deploy", "describe", "disable",
@@ -227,6 +229,64 @@ def group_title(steps: Sequence[tuple[str, str, str | None]]) -> tuple[str, str,
     if len(steps) == 1:
         return steps[0][0], steps[0][1], None
     return steps_title(len(steps)), step_problems(problem for _, problem, _ in steps), None
+
+
+def _file(path: Any) -> str:
+    return Path(path).name or str(path) if isinstance(path, str) and path else "a file"
+
+
+def _quoted(value: Any) -> str:
+    return f"“{value}”" if isinstance(value, str) and value else ""
+
+
+def _host(url: Any) -> str:
+    return (urlsplit(url).hostname or url) if isinstance(url, str) and url else "a page"
+
+
+# What a call of each of Claude Code's tools does, in words, as Claude shows it: while its
+# input still arrives (the first), and from its arguments once they have.
+_PHRASES: dict[str, tuple[str, Callable[[Mapping[str, Any]], str]]] = {
+    "Bash": ("Run a command", lambda a: "Run a command"),
+    "Read": ("Read a file", lambda a: f"Read {_file(a.get('file_path'))}"),
+    "Write": ("Write a file", lambda a: f"Write {_file(a.get('file_path'))}"),
+    "Edit": ("Edit a file", lambda a: f"Edit {_file(a.get('file_path'))}"),
+    "NotebookEdit": ("Edit a notebook", lambda a: f"Edit {_file(a.get('notebook_path'))}"),
+    "Glob": ("Find files", lambda a: f"Find files matching {a.get('pattern') or '*'}"),
+    "Grep": ("Search files", lambda a: f"Search for {_quoted(a.get('pattern')) or 'text'}"
+             + (f" in {a['path']}" if isinstance(a.get("path"), str) and a["path"] else "")),
+    "WebSearch": ("Search the web", lambda a: "Search the web" + (
+        f" for {_quoted(a.get('query'))}" if a.get("query") else "")),
+    "WebFetch": ("Fetch a page", lambda a: f"Fetch {_host(a.get('url'))}"),
+    "Agent": ("Start a subagent", lambda a: "Start a subagent" + (
+        f": {a['description']}" if isinstance(a.get("description"), str) else "")),
+    "SendMessage": ("Message a subagent", lambda a: "Message a subagent"),
+    "TaskOutput": ("Check a background task", lambda a: "Check a background task"),
+    "TaskStop": ("Stop a background task", lambda a: "Stop a background task"),
+    "Skill": ("Load a skill", lambda a: f"Load the {a.get('skill') or 'a'} skill"),
+    "ToolSearch": ("Load tools", lambda a: "Load tools"),
+    "AskUserQuestion": ("Ask you", lambda a: "Ask you"),
+    "EnterPlanMode": ("Enter plan mode", lambda a: "Enter plan mode"),
+    "ExitPlanMode": ("Present the plan", lambda a: "Present the plan"),
+    "TodoWrite": ("Update the plan", lambda a: "Update the plan"),
+    "screenshot": ("Look at the screen", lambda a: "Look at the screen"),
+    "recall": ("Search earlier conversations", lambda a: "Search earlier conversations"
+               + (f" for {_quoted(a.get('query'))}" if a.get("query") else "")),
+    "read_around": ("Read an earlier conversation", lambda a: "Read an earlier conversation"),
+    "memory": ("Check memory", lambda a: "Check memory"),
+}
+
+
+def tool_sentence(name: str, arguments: Mapping[str, Any] | None) -> str:
+    """What a call does, in words, as Claude shows a step: from its arguments, or from its
+    name alone while they still arrive (None). A tool server's tool is its server and name
+    ("Github: create issue"); any other tool is "Use <name>"."""
+    if name in _PHRASES:
+        arriving, done = _PHRASES[name]
+        return arriving if arguments is None else done(arguments)
+    if name.startswith("mcp__") and name.count("__") >= 2:
+        _, server, tool = name.split("__", 2)
+        return f"{server.replace('_', ' ').capitalize()}: {tool.replace('_', ' ')}"
+    return f"Use {name}"
 
 
 def call_parts(arguments: Any) -> tuple[str | None, str]:
