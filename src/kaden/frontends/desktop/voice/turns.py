@@ -32,8 +32,13 @@ class Engine(Protocol):
 
     def transcribe(self, samples: np.ndarray) -> str: ...
 
-    def speak(self, text: str) -> tuple[np.ndarray, int]:
-        """`text` as sound: float32 mono samples and their rate."""
+    def speak(self, text: str, *, check: bool = True) -> tuple[np.ndarray, int]:
+        """`text` as sound: float32 mono samples and their rate. `check`: where the engine
+        hears its speech back for flaws, do so; not when the sound is waited for."""
+
+    def warm(self) -> None:
+        """Get ready to speak in the voice chosen, so that its first sentence does not
+        wait for it."""
 
 
 class Player(Protocol):
@@ -42,20 +47,38 @@ class Player(Protocol):
 
     def stop(self) -> None: ...
 
+    def close(self) -> None:
+        """Nothing more will be played: let go of the sound output."""
+
+
+TOGETHER = 120  # characters of sentences made into sound at once, behind the first
+FIRST = 20  # a first sentence shorter than this ("Okay.") is made with the next
+
 
 class Voice:
     """One voice conversation. The owner feeds it the microphone (`heard`), the agent's
-    reply as it streams (`reply`, `reply_ended`) and when the agent stops (`agent_idle`)."""
+    reply as it streams (`reply`, `reply_ended`) and when the agent stops (`agent_idle`).
+    `failed` is told when what was said cannot be understood or a sentence cannot be
+    made into sound; the conversation is then over."""
 
     def __init__(self, engine: Engine, player: Player, send: Callable[[str], object],
-                 on_change: Callable[[], object]) -> None:
+                 on_change: Callable[[], object], *,
+                 failed: Callable[[Exception], object] = lambda _error: None) -> None:
         self.engine, self.player = engine, player
-        self._send, self._on_change = send, on_change
+        self._send, self._on_change, self._failed = send, on_change, failed
         self.state = State.OFF
         self._sentences = Sentences()
         self._to_say: asyncio.Queue[str] = asyncio.Queue()
+        # Sounds made and not yet played: one, so that the next sentence is made while
+        # one plays, and no further.
+        self._made: asyncio.Queue[tuple[np.ndarray, int]] = asyncio.Queue(maxsize=1)
+        self._making = False
+        self._playing = False
+        self._held: str | None = None  # taken from _to_say, too long to join the last
+        self._epoch = 0  # counts speech dropped; a sound made before a drop is not played
         self._tasks: set[asyncio.Task[None]] = set()
         self._speaker: asyncio.Task[None] | None = None
+        self._maker: asyncio.Task[None] | None = None
         self._agent_busy = False
         self._muted = False  # interrupted: the rest of this reply is not read
 
@@ -66,16 +89,18 @@ class Voice:
 
     def start(self, *, agent_busy: bool = False) -> None:
         self._agent_busy, self._muted = agent_busy, False
+        self._maker = asyncio.ensure_future(self._make())
         self._speaker = asyncio.ensure_future(self._speak())
         self._listen() if not agent_busy else self._set(State.THINKING)
 
     def stop(self) -> None:
-        for task in (*self._tasks, self._speaker):
+        for task in (*self._tasks, self._speaker, self._maker):
             if task is not None:
                 task.cancel()
         self._tasks.clear()
-        self._speaker = None
+        self._speaker = self._maker = None
         self._drop_speech()
+        self.player.close()
         self._set(State.OFF)
 
     def heard(self, samples: np.ndarray) -> None:
@@ -105,7 +130,7 @@ class Voice:
 
     def agent_idle(self) -> None:
         self._agent_busy = False
-        if self.state is State.THINKING and self._to_say.empty() and not self.busy:
+        if self.state is State.THINKING and not self._speech_left and not self.busy:
             self._listen()
 
     def interrupt(self) -> None:
@@ -116,10 +141,18 @@ class Voice:
         self._drop_speech()
         self._listen()
 
+    @property
+    def _speech_left(self) -> bool:
+        return (not self._to_say.empty() or self._held is not None or self._making
+                or not self._made.empty())
+
     def _drop_speech(self) -> None:
         self._sentences = Sentences()
-        while not self._to_say.empty():
-            self._to_say.get_nowait()
+        self._held = None
+        self._epoch += 1
+        for queue in (self._to_say, self._made):
+            while not queue.empty():
+                queue.get_nowait()
         self.player.stop()
 
     def _listen(self) -> None:
@@ -132,7 +165,11 @@ class Voice:
             self._on_change()
 
     async def _said(self, utterance: np.ndarray) -> None:
-        text = (await asyncio.to_thread(self.engine.transcribe, utterance)).strip()
+        try:
+            text = (await asyncio.to_thread(self.engine.transcribe, utterance)).strip()
+        except Exception as e:  # noqa: BLE001 - reported; the owner ends the conversation
+            self._failed(e)
+            return
         if self.state is not State.THINKING:
             return
         if not text:
@@ -141,12 +178,47 @@ class Voice:
         self._agent_busy = True
         self._send(text)
 
+    async def _make(self) -> None:
+        """Make each sentence into sound as soon as the one before is made. With nothing
+        to play, one sentence alone (with the next if shorter than FIRST), so that speech
+        starts soon; behind one playing, those waiting together, up to TOGETHER
+        characters."""
+        while True:
+            sentence, self._held = self._held or await self._to_say.get(), None
+            behind = self._playing or not self._made.empty()
+            while (behind or len(sentence) < FIRST) and not self._to_say.empty():
+                following = self._to_say.get_nowait()
+                if len(sentence) + 1 + len(following) > TOGETHER:
+                    self._held = following
+                    break
+                sentence += " " + following
+            self._set(State.SPEAKING)
+            self._making, epoch = True, self._epoch
+            try:
+                # The first sound is waited for, so it is not heard back for flaws.
+                sound = await asyncio.to_thread(self.engine.speak, sentence, check=behind)
+            except Exception as e:  # noqa: BLE001 - reported; the owner ends it
+                self._making = False
+                self._failed(e)
+                return
+            self._making = False
+            if epoch == self._epoch:  # not dropped meanwhile
+                await self._made.put(sound)
+            elif not self._speech_left:
+                self._done_speaking()
+
     async def _speak(self) -> None:
         while True:
-            sentence = await self._to_say.get()
-            self._set(State.SPEAKING)
-            samples, rate = await asyncio.to_thread(self.engine.speak, sentence)
+            samples, rate = await self._made.get()
             if self.state is State.SPEAKING:  # not interrupted meanwhile
-                await self.player.play(samples, rate)
-            if self.state is State.SPEAKING and self._to_say.empty():
-                self._listen() if not self._agent_busy else self._set(State.THINKING)
+                self._playing = True
+                try:
+                    await self.player.play(samples, rate)
+                finally:
+                    self._playing = False
+            if not self._speech_left:
+                self._done_speaking()
+
+    def _done_speaking(self) -> None:
+        if self.state is State.SPEAKING:
+            self._listen() if not self._agent_busy else self._set(State.THINKING)

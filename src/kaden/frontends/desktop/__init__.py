@@ -77,7 +77,7 @@ class DesktopFrontend(Frontend):
         controller = Controller(runtime, ConversationModel())
         window = MainWindow(runtime, controller, self.zoom_file, self.sessions)
         if self.zoom_file is not None:
-            window.voice.set_voice(await load_voice(self.zoom_file))
+            await window.voice.restore(await load_voice(self.zoom_file))
         server = (await single.listen(self.data_dir, window.bring_forward)
                   if self.data_dir is not None else None)
         closed = asyncio.Event()

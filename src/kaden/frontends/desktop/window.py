@@ -55,6 +55,7 @@ from PySide6.QtGui import (
     QPainter,
     QPainterPath,
     QPaintEvent,
+    QPalette,
     QPen,
     QPixmap,
     QShortcut,
@@ -186,7 +187,8 @@ from kaden.frontends.desktop.viewmodel import (
     step_segments,
     user_message,
 )
-from kaden.frontends.desktop.voice.mode import DEFAULT_VOICE, VOICES, VoiceMode
+from kaden.frontends.desktop.voice.mode import DEFAULT_VOICE, KOKORO_VOICES, VoiceMode
+from kaden.frontends.desktop.voice.natural import RECORDING_TYPES
 from kaden.frontends.remote import RemoteRuntime
 from kaden.frontends.sessions import SubSession, SubSessions
 
@@ -250,13 +252,13 @@ async def save_look(path: Path, voice: str = DEFAULT_VOICE) -> None:
 
 
 async def load_voice(path: Path) -> str:
-    """The voice saved in `path` (voice.mode.VOICES); DEFAULT_VOICE where there is none."""
+    """The name of the voice saved in `path`; DEFAULT_VOICE where there is none."""
     def read() -> str:
         try:
             name = json.loads(path.read_text(encoding="utf-8")).get("voice")
         except (OSError, ValueError, AttributeError):
             return DEFAULT_VOICE
-        return name if name in VOICES else DEFAULT_VOICE
+        return name if isinstance(name, str) else DEFAULT_VOICE
     return await asyncio.to_thread(read)
 
 
@@ -1753,8 +1755,32 @@ class MessageBox(QPlainTextEdit):
     def __init__(self) -> None:
         super().__init__()
         self.setFrameShape(QFrame.Shape.NoFrame)
+        self._hint = ""
         self.document().documentLayout().documentSizeChanged.connect(self._fit)
         self._fit()
+
+    # The hint is drawn here, not by Qt: Qt starts it where the cursor blinks, which
+    # then covers its first letter ("|lessage Kaden").
+    def setPlaceholderText(self, text: str) -> None:
+        self._hint = text
+        self.viewport().update()
+
+    def placeholderText(self) -> str:
+        return self._hint
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        super().paintEvent(event)
+        if not self._hint or not self.document().isEmpty():
+            return
+        caret = self.cursorRect()
+        left = caret.x() + max(self.cursorWidth(), 1) + 1  # a pixel's gap after the cursor
+        painter = QPainter(self.viewport())
+        painter.setPen(self.palette().color(QPalette.ColorRole.PlaceholderText))
+        width = self.viewport().width() - left
+        painter.drawText(QRect(left, caret.y(), width, caret.height()),
+                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                         self.fontMetrics().elidedText(self._hint, Qt.TextElideMode.ElideRight,
+                                                       width))
 
     def _fit(self, *_: object) -> None:
         lines = min(max(self.MIN_LINES, int(self.document().size().height())), self.MAX_LINES)
@@ -3593,17 +3619,33 @@ class SettingsDialog(QDialog):
         self.servers = McpDialog(self, runtime, controller, embedded=True)
         # How Kaden sounds when you talk with it: chosen at once, as Claude's voice is.
         self.voice = QComboBox()
-        self.voice.addItems(list(VOICES))
+        self.voice.addItems(voice.voices() if voice is not None else list(KOKORO_VOICES))
         self.play_voice = QPushButton("Play")
         self.play_voice.setEnabled(voice is not None)
+        # The natural voice speaks in any voice it hears in a recording.
+        self.add_voice = QPushButton("Add…")
+        self.add_voice.setToolTip("Add a voice from a recording")
+        self.add_voice.setVisible(voice is not None and voice.natural)
+        self.remove_voice = QToolButton()
+        self.remove_voice.setIcon(theme.icon("close", theme.current().muted, 14))
+        self.remove_voice.setToolTip("Remove this voice")
+        self.remove_voice.setAccessibleName("Remove this voice")
+        self.remove_voice.setVisible(self.add_voice.isVisibleTo(self))
+        self.recording_dialog: QFileDialog | None = None
         if voice is not None:
             self.voice.setCurrentText(voice.voice)
             self.voice.currentTextChanged.connect(voice.set_voice)
             self.play_voice.clicked.connect(
                 lambda: self.controller.command(voice.preview()))
+            self.add_voice.clicked.connect(lambda: self._choose_recording(voice))
+            self.remove_voice.clicked.connect(lambda: self._confirm_removal(voice))
+            self.voice.currentTextChanged.connect(self._show_removable)
         voice_row = QHBoxLayout()
         voice_row.addWidget(self.voice)
         voice_row.addWidget(self.play_voice)
+        voice_row.addWidget(self.add_voice)
+        voice_row.addWidget(self.remove_voice)
+        self._show_removable()
         self.pages: dict[str, QWidget] = {
             "General": _page(
                 "General", self.startup_error,
@@ -3675,6 +3717,41 @@ class SettingsDialog(QDialog):
         outer.addLayout(body, 1)
         outer.addLayout(footer)
         self._corners = RoundedCorners(self)
+
+    def _choose_recording(self, voice: VoiceMode) -> None:
+        """A recording of about ten seconds of someone speaking, made a voice."""
+        self.recording_dialog = QFileDialog(self, "Add a voice from a recording",
+                                            str(Path.home()))
+        self.recording_dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
+        self.recording_dialog.setNameFilter(
+            f"Recordings ({' '.join('*' + kind for kind in RECORDING_TYPES)})")
+        self.recording_dialog.fileSelected.connect(
+            lambda path: self.controller.command(self._add_recording(voice, Path(path))))
+        self.recording_dialog.open()
+
+    def _show_removable(self, *_: object) -> None:
+        """Only a voice copied from a recording can be removed."""
+        self.remove_voice.setEnabled(self.voice.currentIndex() > 0
+                                     and self.add_voice.isVisibleTo(self))
+
+    def _confirm_removal(self, voice: VoiceMode) -> None:
+        name = self.voice.currentText()
+        self.removal = confirm(
+            self, f"Remove {name}?",
+            lambda: self.controller.command(self._remove_recording(voice, name)),
+            yes="Remove", details="Your own file of the recording stays.", danger=True)
+
+    async def _remove_recording(self, voice: VoiceMode, name: str) -> None:
+        await voice.remove_recording(name)
+        self.voice.removeItem(self.voice.findText(name))
+        self.voice.setCurrentText(voice.voice)
+        self._show_removable()
+
+    async def _add_recording(self, voice: VoiceMode, path: Path) -> None:
+        name = await voice.add_recording(path)
+        if self.voice.findText(name) < 0:
+            self.voice.addItem(name)
+        self.voice.setCurrentText(name)
 
     def show_page(self, name: str) -> None:
         self.nav.setCurrentRow(list(self.pages).index(name))

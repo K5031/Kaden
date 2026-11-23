@@ -44,6 +44,14 @@ You can talk instead of typing. Click the sound-wave button in the message box:
   the speech models (about 830 MB) into its data folder.
 - **Pick its voice** in **Settings → General → Voice**: Heart (the default), Bella,
   Nicole, Michael or Fenrir. **Play** lets you hear one first.
+- **A natural voice** with an NVIDIA GPU: install the `voice-gpu` extra (see
+  [Desktop app](desktop-app.md#a-natural-voice)). Kaden then hears you with Whisper,
+  which gets more of your words right, and speaks with Chatterbox, in its own voice
+  (**Natural**) or one copied from a recording: **Settings → General → Voice → Add…**,
+  10 to 30 seconds of one person speaking clearly, as WAV, MP3, FLAC, OGG or Opus (as
+  voice messages are saved). The voice takes the file's name. A recording in another
+  language works too; Kaden still speaks English. **×** beside it removes a copied voice
+  (your own file of the recording stays). Its models are about 4.8 GB.
 - **English only** for now.
 
 ### Attaching files

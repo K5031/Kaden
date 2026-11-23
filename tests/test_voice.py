@@ -32,6 +32,7 @@ def test_only_words_are_read_aloud():
         "It costs $3.50 (about 20% more), café prices."
 
 
+
 def test_a_reply_is_cut_into_sentences_while_it_streams():
     sentences = Sentences()
     assert sentences.feed("Hello there. I am ") == ["Hello there."]
@@ -56,7 +57,9 @@ class ScriptedEngine:
 
     def __init__(self, *words: str) -> None:
         self.words = list(words)
-        self.spoke: list[str] = []
+        self.spoke: list[str] = []  # made into sound, whether played or not
+        self.warmed: list[str] = []
+        self.checked: list[bool] = []  # whether each was to be heard back
         self.resets = 0
 
     def hear(self, samples: np.ndarray) -> list[np.ndarray]:
@@ -68,19 +71,26 @@ class ScriptedEngine:
     def transcribe(self, samples: np.ndarray) -> str:
         return self.words.pop(0)
 
-    def speak(self, text: str) -> tuple[np.ndarray, int]:
+    def speak(self, text: str, *, check: bool = True) -> tuple[np.ndarray, int]:
         self.spoke.append(text)
-        return np.zeros(4, dtype=np.float32), 24000
+        self.checked.append(check)
+        return np.frombuffer(text.encode(), dtype=np.uint8).astype(np.float32), 24000
+
+    def warm(self) -> None:
+        self.warmed.append(self.voice)  # type: ignore[attr-defined]
 
 
 class Speaker:
     def __init__(self) -> None:
         self.played = 0
+        self.said: list[str] = []  # what was played, as ScriptedEngine made it
         self.stopped = 0
+        self.closed = False
         self.hold: asyncio.Event | None = None  # set to keep a sentence playing
 
     async def play(self, samples: np.ndarray, rate: int) -> None:
         self.played += 1
+        self.said.append(bytes(samples.astype(np.uint8)).decode())
         if self.hold is not None:
             await self.hold.wait()
 
@@ -88,6 +98,9 @@ class Speaker:
         self.stopped += 1
         if self.hold is not None:
             self.hold.set()
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def make(*words: str) -> tuple[Voice, ScriptedEngine, Speaker, list[str], list[State]]:
@@ -119,19 +132,20 @@ async def test_what_is_said_is_sent_and_the_reply_is_spoken_then_it_listens_agai
     assert engine.spoke == ["It is noon.", "Lunch time"] and speaker.played == 2
     assert sent == ["what time is it"]
     assert states[:3] == [State.LISTENING, State.THINKING, State.SPEAKING]
+    assert not speaker.closed  # one sound output for the whole conversation
     voice.stop()
-    assert voice.state is State.OFF
+    assert voice.state is State.OFF and speaker.closed
 
 
 async def test_what_is_said_into_an_interrupted_reply_does_not_bring_it_back():
     """The reply that was interrupted still streams when the next thing is said: its
     rest stays unread, and the reply after it is read."""
-    voice, engine, speaker, sent, _states = make("tell me a story", "stop")
+    voice, _engine, speaker, sent, _states = make("tell me a story", "stop")
     speaker.hold = asyncio.Event()
     voice.start()
     voice.heard(TALK)
     await eventually(lambda: sent == ["tell me a story"])
-    voice.reply("Once upon a time. There was a fox. ")
+    voice.reply("Once upon a time, in a wood. There was a fox. ")
     await eventually(lambda: voice.state is State.SPEAKING)
     voice.interrupt()
     speaker.hold = None
@@ -140,20 +154,20 @@ async def test_what_is_said_into_an_interrupted_reply_does_not_bring_it_back():
     voice.reply("It lived in a den. ")  # still the interrupted reply
     voice.reply_ended()
     await asyncio.sleep(0.05)
-    assert engine.spoke == ["Once upon a time."]
+    assert speaker.said == ["Once upon a time, in a wood."]
     voice.reply("All right. ")  # the answer to what was said
     voice.reply_ended()
-    await eventually(lambda: engine.spoke == ["Once upon a time.", "All right."])
+    await eventually(lambda: speaker.said == ["Once upon a time, in a wood.", "All right."])
     voice.stop()
 
 
 async def test_a_reply_after_an_interrupted_one_is_read_though_nothing_was_said():
-    voice, engine, speaker, sent, _states = make("tell me a story")
+    voice, _engine, speaker, sent, _states = make("tell me a story")
     speaker.hold = asyncio.Event()
     voice.start()
     voice.heard(TALK)
     await eventually(lambda: sent == ["tell me a story"])
-    voice.reply("Once upon a time. There was a fox. ")
+    voice.reply("Once upon a time, in a wood. There was a fox. ")
     await eventually(lambda: voice.state is State.SPEAKING)
     voice.interrupt()
     speaker.hold = None
@@ -161,7 +175,7 @@ async def test_a_reply_after_an_interrupted_one_is_read_though_nothing_was_said(
     voice.agent_idle()
     voice.reply("The build is done. ")  # one the agent began by itself
     voice.reply_ended()
-    await eventually(lambda: engine.spoke[-1] == "The build is done.")
+    await eventually(lambda: speaker.said[-1] == "The build is done.")
     voice.stop()
 
 
@@ -174,24 +188,93 @@ async def test_nothing_understood_sends_nothing():
 
 
 async def test_interrupting_stops_the_speech_and_listens():
-    voice, engine, speaker, sent, _states = make("tell me a story", "stop")
+    voice, _engine, speaker, sent, _states = make("tell me a story", "stop")
     speaker.hold = asyncio.Event()
     voice.start()
     voice.heard(TALK)
     await eventually(lambda: sent == ["tell me a story"])
-    voice.reply("Once upon a time. There was a fox. ")
+    voice.reply("Once upon a time, in a wood. There was a fox. ")
     await eventually(lambda: voice.state is State.SPEAKING)
     voice.interrupt()
     assert speaker.stopped == 1 and voice.state is State.LISTENING
     voice.reply("It lived in a den. ")  # the rest of that reply is not read
     voice.reply_ended()
     await asyncio.sleep(0.05)
-    assert engine.spoke == ["Once upon a time."]
+    assert speaker.said == ["Once upon a time, in a wood."]
     speaker.hold = None
     voice.heard(TALK)
     await eventually(lambda: sent == ["tell me a story", "stop"])
     voice.reply("Okay. ")
-    await eventually(lambda: engine.spoke[-1] == "Okay.")
+    await eventually(lambda: speaker.said[-1] == "Okay.")
+
+
+async def test_the_next_sentence_is_made_while_one_plays():
+    """A slow voice makes a sentence in about the time it takes to play: made one after
+    the other, each would wait for the one before to finish."""
+    voice, engine, speaker, sent, _states = make("go on")
+    speaker.hold = asyncio.Event()
+    voice.start()
+    voice.heard(TALK)
+    await eventually(lambda: sent == ["go on"])
+    voice.reply("This is the first one. Two. ")
+    await eventually(lambda: engine.spoke == ["This is the first one.", "Two."])
+    assert speaker.said == ["This is the first one."]  # still playing
+    speaker.hold.set()
+    speaker.hold = None
+    voice.reply_ended()
+    voice.agent_idle()
+    await eventually(lambda: voice.state is State.LISTENING)
+    assert speaker.said == ["This is the first one.", "Two."]
+    voice.stop()
+
+
+async def test_while_one_sentence_plays_the_next_few_are_made_together():
+    """The first sentence is made alone, so that speech starts soon; behind it, short
+    sentences are made together: each costs the voice about the same however short,
+    and it sounds better with more to read."""
+    voice, engine, speaker, sent, _states = make("go on")
+    speaker.hold = asyncio.Event()
+    voice.start()
+    voice.heard(TALK)
+    await eventually(lambda: sent == ["go on"])
+    voice.reply("This is the first one. Two. Three. ")
+    await eventually(lambda: engine.spoke == ["This is the first one.", "Two. Three."])
+    # Heard back for repeats only behind the first: that one is waited for.
+    assert engine.checked == [False, True]
+    speaker.hold.set()
+    speaker.hold = None
+    voice.reply_ended()
+    voice.agent_idle()
+    await eventually(lambda: speaker.said == ["This is the first one.", "Two. Three."])
+    voice.stop()
+
+async def test_a_very_short_first_sentence_is_made_with_the_next():
+    """"Okay." plays for about a second: too short to cover making what follows."""
+    voice, engine, _speaker, sent, _states = make("go on")
+    voice.start()
+    voice.heard(TALK)
+    await eventually(lambda: sent == ["go on"])
+    voice.reply("Okay. I ran all of the tests just now. Done. ")
+    voice.reply_ended()
+    voice.agent_idle()
+    await eventually(lambda: voice.state is State.LISTENING)
+    assert engine.spoke[0] == "Okay. I ran all of the tests just now."
+    voice.stop()
+
+async def test_speech_that_cannot_be_made_is_reported():
+    class Broken(ScriptedEngine):
+        def speak(self, text: str, *, check: bool = True) -> tuple[np.ndarray, int]:
+            raise RuntimeError("CUDA out of memory")
+
+    engine, speaker, sent, failures = Broken("hi"), Speaker(), [], []
+    voice = Voice(engine, speaker, sent.append, lambda: None, failed=failures.append)
+    voice.start()
+    voice.heard(TALK)
+    await eventually(lambda: sent == ["hi"])
+    voice.reply("Hello. ")
+    await eventually(lambda: len(failures) == 1)
+    assert str(failures[0]) == "CUDA out of memory" and speaker.said == []
+    voice.stop()
 
 
 async def test_turned_on_while_the_agent_works_it_waits_for_its_turn():
@@ -238,6 +321,10 @@ async def test_the_speech_models_are_downloaded_whole_or_not_at_all(tmp_path):
     assert (folder / "listener" / "model.onnx").read_bytes() == b"weights"
     assert seen[-1] == 1.0 and seen == sorted(seen)
     assert sorted(p.name for p in folder.iterdir()) == ["listener", "vad.onnx"]  # no leftovers
+
+    deep = [Model("weights/one.bin", "https://models.example/vad.onnx", 3, archive=False)]
+    await fetch(folder, deep, seen.append, transport=httpx2.MockTransport(serve))
+    assert (folder / "weights" / "one.bin").read_bytes() == b"vad"
 
     gone = [Model("other", "https://models.example/other.tar.bz2", 10)]
     with pytest.raises(httpx2.HTTPError):
@@ -413,23 +500,187 @@ def test_speech_is_played_on_both_channels():
 async def test_the_voice_is_chosen_heard_and_used(tmp_path):
     """As in Claude's voice mode: a few named voices; Play speaks a sample in one; voice
     mode speaks in the one chosen."""
-    from kaden.frontends.desktop.voice.mode import DEFAULT_VOICE, SAMPLE, VOICES, VoiceMode
+    from kaden.frontends.desktop.voice.mode import DEFAULT_VOICE, KOKORO_VOICES, SAMPLE, VoiceMode
 
     engine, speaker = ScriptedEngine(), Speaker()
-
-    class Controller:
-        def __init__(self) -> None:
-            self.listeners: list = []
-
-    async def ask(text: str, details: str) -> bool:
-        return True
-
-    mode = VoiceMode(Controller(), tmp_path, ask, engine=lambda _folder: engine,
-                     microphone=lambda heard: None, speaker=lambda: speaker, models=())
-    assert mode.voice == DEFAULT_VOICE == "Heart" and VOICES["Heart"] == 3
+    mode = VoiceMode(Controller(), tmp_path, yes, engine=lambda _folder: engine,
+                     microphone=lambda heard: None, speaker=lambda: speaker, models=(),
+                     natural=False)
+    assert mode.voice == DEFAULT_VOICE == "Heart" and KOKORO_VOICES["Heart"] == 3
     mode.set_voice("Michael")
     await mode.preview()
-    assert engine.voice == VOICES["Michael"] and engine.spoke == [SAMPLE]
+    assert engine.voice == "Michael" and engine.spoke == [SAMPLE] and speaker.closed
+    # The voice is made ready when loaded and when chosen, not at its first sentence.
+    mode.set_voice("Bella")
+    await eventually(lambda: engine.warmed == ["Michael", "Bella"])
     assert speaker.played == 1
     mode.set_voice("Nobody")  # not a voice: the choice stays
-    assert mode.voice == "Michael"
+    assert mode.voice == "Bella"
+
+
+class Controller:
+    def __init__(self) -> None:
+        self.listeners: list = []
+
+
+async def yes(text: str, details: str) -> bool:
+    return True
+
+
+async def test_with_the_natural_voice_installed_it_speaks_as_itself_or_a_recording(tmp_path):
+    """Chatterbox: its own voice, and any copied from a recording the user adds; the
+    recording is kept in the voice folder and listed the next time."""
+    from kaden.frontends.desktop.voice.mode import NATURAL, VoiceMode
+
+    engine, speaker = ScriptedEngine(), Speaker()
+    folder = tmp_path / "voice"
+
+    def natural() -> VoiceMode:
+        return VoiceMode(Controller(), folder, yes, engine=lambda _folder: engine,
+                         microphone=lambda heard: None, speaker=lambda: speaker,
+                         models=(), natural=True)
+
+    mode = natural()
+    assert mode.voices() == [NATURAL] and mode.voice == NATURAL
+    recording = tmp_path / "Grandpa.wav"
+    recording.write_bytes(b"RIFF")
+    assert await mode.add_recording(recording) == "Grandpa"
+    assert (folder / "voices" / "Grandpa.wav").read_bytes() == b"RIFF"
+    assert mode.voices() == [NATURAL, "Grandpa"] and mode.voice == "Grandpa"
+    await mode.preview()
+    assert engine.voice == "Grandpa" and speaker.played == 1
+    message = tmp_path / "Mei.OPUS"  # a voice message, as chat apps save them
+    message.write_bytes(b"OggS")
+    assert await mode.add_recording(message) == "Mei"
+
+    again = natural()
+    await again.restore("Grandpa")
+    assert again.voices() == [NATURAL, "Grandpa", "Mei"] and again.voice == "Grandpa"
+    await again.remove_recording("Grandpa")  # its copy goes; the user's file stays
+    assert again.voices() == [NATURAL, "Mei"] and again.voice == NATURAL
+    assert not (folder / "voices" / "Grandpa.wav").exists() and recording.exists()
+    await again.remove_recording(NATURAL)  # its own voice cannot be removed
+    assert again.voices() == [NATURAL, "Mei"]
+    await again.restore("Heart")  # a Kokoro voice: not one of these
+    assert again.voice == NATURAL
+
+
+async def test_the_voice_saved_is_restored_when_it_is_one_of_the_voices(tmp_path):
+    from kaden.frontends.desktop.voice.mode import DEFAULT_VOICE, VoiceMode
+
+    mode = VoiceMode(Controller(), tmp_path, yes, models=(), natural=False)
+    await mode.restore("Bella")
+    assert mode.voice == "Bella"
+    await mode.restore("Nobody")
+    assert mode.voice == DEFAULT_VOICE
+
+
+def test_only_the_speech_models_in_use_are_fetched():
+    from kaden.frontends.desktop.voice import download
+
+    natural = [m.name for m in download.models(natural=True)]
+    kokoro = [m.name for m in download.models(natural=False)]
+    assert kokoro == [download.VAD.name, download.PARAKEET.name, download.KOKORO.name]
+    # With the natural voice, Whisper listens on the GPU and Chatterbox speaks.
+    assert natural[0] == download.VAD.name
+    assert {name.split("/")[0] for name in natural[1:]} == {"whisper", "chatterbox"}
+    assert "whisper/model.safetensors" in natural
+
+
+async def test_a_recording_is_found_by_its_whole_name_whatever_it_holds(tmp_path):
+    """File names from the web hold brackets and the like; they are names, not patterns."""
+    from kaden.frontends.desktop.voice.mode import VoiceMode
+    from kaden.frontends.desktop.voice.natural import recording
+
+    name = "Voice - Gwen [SUBBED] - English [DCbHTjR-jp4]"
+    mode = VoiceMode(Controller(), tmp_path, yes, models=(), natural=True)
+    for content in (b"first", b"second"):  # the same name again replaces it
+        source = tmp_path / f"{name}.opus"
+        source.write_bytes(content)
+        assert await mode.add_recording(source) == name
+    found = recording(tmp_path, name)
+    assert found is not None and found.read_bytes() == b"second"
+    assert recording(tmp_path, "Voice - Gwen S - English D") is None
+
+
+async def test_voice_mode_ends_and_says_why_when_speech_fails(tmp_path):
+    from types import SimpleNamespace
+
+    from kaden.frontends.desktop.voice.mode import VoiceMode
+
+    class Broken(ScriptedEngine):
+        def speak(self, text: str, *, check: bool = True) -> tuple[np.ndarray, int]:
+            raise RuntimeError("CUDA out of memory")
+
+    notices: list[str] = []
+    controller = SimpleNamespace(listeners=[], model=SimpleNamespace(
+        busy=False, notify=notices.append))
+    mode = VoiceMode(controller, tmp_path, yes, engine=lambda _folder: Broken(),
+                     microphone=FakeMicrophone, speaker=Speaker, models=(), natural=False)
+    mode.toggle()
+    await eventually(lambda: mode.spoken)
+    assert mode._voice is not None
+    mode._voice.reply("Hello. ")
+    await eventually(lambda: not mode.on)
+    assert notices == ["Voice stopped: CUDA out of memory"]
+
+
+def test_long_pauses_in_a_recording_are_shortened():
+    """A clip of voice lines leaves silence between them; Chatterbox would copy it as
+    the speaker's way of talking. Short pauses are part of speech and stay."""
+    from kaden.frontends.desktop.voice.natural import PAUSE_S, without_long_pauses
+
+    rate = 1000
+    t = np.arange(rate) / rate
+
+    def tone(seconds: float) -> np.ndarray:
+        return (0.5 * np.sin(2 * np.pi * 50 * t[: int(seconds * rate)])).astype(np.float32)
+
+    def quiet(seconds: float) -> np.ndarray:
+        return np.zeros(int(seconds * rate), np.float32)
+
+    clip = np.concatenate([quiet(1.0), tone(1), quiet(2.5), tone(1), quiet(0.15), tone(1),
+                           quiet(3.0)])
+    shortened = without_long_pauses(clip, rate)
+    # The 2.5 s gap becomes a short pause, the 0.15 s one stays; the ends are trimmed.
+    assert abs(len(shortened) / rate - (3 + PAUSE_S + 0.15)) < 0.05
+    assert np.abs(shortened).max() == np.abs(clip).max()
+    assert without_long_pauses(quiet(2), rate).size == 0
+
+
+def test_a_sentence_said_with_repeats_is_told_from_one_said_right():
+    """Whisper writes numbers as digits and may spell a name differently: neither is a
+    flaw. A word or phrase said again, or words that were not meant, are."""
+    from kaden.frontends.desktop.voice.engine import flaws
+
+    meant = "I ran the tests, and all twelve hundred of them pass."
+    assert flaws(meant, "I ran the tests and all 1,200 of them pass.") == 0
+    assert flaws("Hi, I'm Kaden.", "Hi, I'm Caden.") == 0
+    assert flaws("Want me to commit it?", "Want me to commit, commit it?") > 0
+    assert flaws("Want me to commit it?", "Want me to commit it? Want me to commit it?") > 0
+    assert flaws("Okay.", "Okay. Mm, hmm, so yeah, anyway, okay.") > 0
+    assert flaws("Want me to commit it?", "") > 0  # nothing heard at all
+    assert flaws("Sure thing.", "Sure thing? Oh...") > 0  # a sound it made up
+    assert flaws("Hmm, let me think.", "Hmm, let me think.") == 0  # one that was meant
+    assert flaws("", "") == 0
+
+
+def test_a_flawed_sentence_is_made_again_and_the_best_one_kept():
+    from kaden.frontends.desktop.voice.engine import checked
+
+    takes = iter(["hi hi there", "hi there", "never asked for"])
+    made: list[str] = []
+
+    def speak(text: str) -> tuple[np.ndarray, int]:
+        made.append(next(takes))
+        return np.array([len(made)], np.float32), 24000
+
+    def hear(samples: np.ndarray, rate: int) -> str:
+        return made[int(samples[0]) - 1]
+
+    samples, _rate = checked(speak, hear, "Hi there.", attempts=3)
+    assert samples[0] == 2 and made == ["hi hi there", "hi there"]  # the second was right
+
+    takes, made[:] = iter(["hi hi there", "hi hi hi there", "hi hi hi hi there"]), []
+    samples, _ = checked(speak, hear, "Hi there.", attempts=3)
+    assert samples[0] == 1 and len(made) == 3  # none right: the least wrong

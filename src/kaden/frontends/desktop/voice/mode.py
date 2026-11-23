@@ -4,7 +4,9 @@ conversation (turns.Voice) on the open conversation's events."""
 from __future__ import annotations
 
 import asyncio
+import shutil
 from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import httpx2
@@ -14,20 +16,36 @@ from PySide6.QtCore import QObject, Signal
 from kaden.api import MessageCommitted, Role, RuntimeEvent, StateChanged, Text, TextDelta
 from kaden.frontends.desktop.viewmodel import Controller
 from kaden.frontends.desktop.voice import download
+from kaden.frontends.desktop.voice.natural import (
+    NATURAL,
+    RECORDING_TYPES,
+    RECORDINGS_DIR,
+    installed,
+    recording,
+)
 from kaden.frontends.desktop.voice.turns import Engine, Player, State, Voice
 
-# The voices to choose from, as Claude's voice mode offers a few by name: Kokoro's best
+# The voices to choose from, as Claude's voice mode offers a few by name. With the
+# natural voice: its own and those copied from recordings; otherwise Kokoro's best
 # American English speakers, by their number in kokoro-multi-lang-v1_0.
-VOICES = {"Heart": 3, "Bella": 2, "Nicole": 6, "Michael": 16, "Fenrir": 14}
+KOKORO_VOICES = {"Heart": 3, "Bella": 2, "Nicole": 6, "Michael": 16, "Fenrir": 14}
 DEFAULT_VOICE = "Heart"
 SAMPLE = "Hi, I'm Kaden. This is how I sound when we talk."
 STATUS = {State.LISTENING: "Listening…", State.THINKING: "Thinking…",
           State.SPEAKING: "Speaking… Esc to interrupt"}
 
 
-def _sherpa(folder: Path) -> Engine:
+def _kokoro(folder: Path) -> Engine:
+    from kaden.frontends.desktop.voice.engine import Kokoro, Parakeet, SherpaEngine
+    return SherpaEngine(folder, Kokoro(folder), Parakeet(folder))
+
+
+def _chatterbox(folder: Path) -> Engine:
     from kaden.frontends.desktop.voice.engine import SherpaEngine
-    return SherpaEngine(folder)
+    from kaden.frontends.desktop.voice.natural import Chatterbox, Whisper
+    with ThreadPoolExecutor(2) as pool:  # both load onto the GPU at once
+        speech, listener = pool.submit(Chatterbox, folder), pool.submit(Whisper, folder)
+        return SherpaEngine(folder, speech.result(), listener.result(), check=True)
 
 
 def _microphone(heard: Callable[[np.ndarray], object]) -> object:
@@ -43,23 +61,29 @@ def _speaker() -> Player:
 class VoiceMode(QObject):
     """`changed` is emitted whenever `on` or `status` changes. `ask` puts a question to
     the user and answers whether they agreed. Nothing of speech is loaded until voice
-    mode is first turned on."""
+    mode is first turned on. `natural`: speak with the natural voice (installed() when
+    not given)."""
 
     changed = Signal()
 
     def __init__(self, controller: Controller, folder: Path | None,
                  ask: Callable[[str, str], Awaitable[bool]], *,
-                 engine: Callable[[Path], Engine] = _sherpa,
+                 engine: Callable[[Path], Engine] | None = None,
                  microphone: Callable[[Callable[[np.ndarray], object]], object] = _microphone,
                  speaker: Callable[[], Player] = _speaker,
-                 models: tuple[download.Model, ...] = download.MODELS,
-                 transport: httpx2.AsyncBaseTransport | None = None) -> None:
+                 models: tuple[download.Model, ...] | None = None,
+                 transport: httpx2.AsyncBaseTransport | None = None,
+                 natural: bool | None = None) -> None:
         super().__init__()
+        self.natural = installed() if natural is None else natural
         self.controller, self.folder, self._ask = controller, folder, ask
-        self._make_engine, self._make_microphone, self._make_speaker = engine, microphone, speaker
-        self._models, self._transport = models, transport
+        self._make_engine = engine or (_chatterbox if self.natural else _kokoro)
+        self._make_microphone, self._make_speaker = microphone, speaker
+        self._models = download.models(natural=self.natural) if models is None else models
+        self._transport = transport
         self.on = False
-        self.voice = DEFAULT_VOICE
+        self._recordings: list[str] = []  # the names of the voices copied from recordings
+        self.voice = self.voices()[0]
         self.status = ""
         self.progress: float | None = None  # of the model download, while it runs
         self._engine: Engine | None = None
@@ -87,12 +111,66 @@ class VoiceMode(QObject):
         self.on, self.progress = False, None
         self._say("")
 
+    def voices(self) -> list[str]:
+        if self.natural:
+            return [NATURAL, *self._recordings]
+        return list(KOKORO_VOICES)
+
     def set_voice(self, name: str) -> None:
-        """Speak as `name` (VOICES) from now on; any other name changes nothing."""
-        if name in VOICES:
+        """Speak as `name` (one of voices()) from now on; any other name changes nothing."""
+        if name in self.voices():
             self.voice = name
             if self._engine is not None:
-                self._engine.voice = VOICES[name]  # type: ignore[attr-defined]
+                self._engine.voice = name  # type: ignore[attr-defined]
+                asyncio.ensure_future(self._warm())
+
+    async def restore(self, name: str | None) -> None:
+        """Find the recordings added before and speak as `name`, the voice chosen before,
+        where it is still one of voices(); the first of them otherwise."""
+        if self.natural and self.folder is not None:
+            self._recordings = await asyncio.to_thread(self._recorded, self.folder)
+        self.voice = self.voices()[0]
+        if name is not None:
+            self.set_voice(name)
+
+    async def add_recording(self, path: Path) -> str:
+        """Copy the recording at `path` into the voice folder as a voice named after the
+        file, and speak as it; its name. OSError when it cannot be copied."""
+        if self.folder is None:
+            raise RuntimeError("Voice needs Kaden's data folder, and there is none.")
+        folder = self.folder / RECORDINGS_DIR
+
+        def copy() -> None:
+            folder.mkdir(parents=True, exist_ok=True)
+            if (old := recording(self.folder, path.stem)) is not None:  # one per name
+                old.unlink()
+            shutil.copyfile(path, folder / f"{path.stem}{path.suffix.lower()}")
+        await asyncio.to_thread(copy)
+        self._recordings = sorted({*self._recordings, path.stem} - {NATURAL})
+        self.set_voice(path.stem)
+        return path.stem
+
+    async def remove_recording(self, name: str) -> None:
+        """Delete Kaden's copy of the recording voice `name` was made from (not the file
+        the user added it from); its own voice, NATURAL, stays. Speaks as NATURAL if it
+        spoke as `name`. OSError when it cannot be deleted."""
+        if name not in self._recordings or self.folder is None:
+            return
+        folder = self.folder
+
+        def delete() -> None:
+            if (path := recording(folder, name)) is not None:
+                path.unlink()
+        await asyncio.to_thread(delete)
+        self._recordings.remove(name)
+        if self.voice == name:
+            self.set_voice(NATURAL)
+
+    @staticmethod
+    def _recorded(folder: Path) -> list[str]:
+        found = {path.stem for path in (folder / RECORDINGS_DIR).glob("*")
+                 if path.suffix.lower() in RECORDING_TYPES}
+        return sorted(found - {NATURAL})
 
     async def preview(self) -> None:
         """Say SAMPLE in the chosen voice, getting the speech models first if need be."""
@@ -100,7 +178,11 @@ class VoiceMode(QObject):
             return
         assert self._engine is not None
         samples, rate = await asyncio.to_thread(self._engine.speak, SAMPLE)
-        await self._make_speaker().play(samples, rate)
+        speaker = self._make_speaker()
+        try:
+            await speaker.play(samples, rate)
+        finally:
+            speaker.close()
 
     async def _ready(self) -> bool:
         """The engine is loaded, its models fetched first with the user's yes; False when
@@ -116,9 +198,19 @@ class VoiceMode(QObject):
             return False
         self._say("Getting voice ready…")
         self._engine = await asyncio.to_thread(self._make_engine, self.folder)
-        self._engine.voice = VOICES[self.voice]  # type: ignore[attr-defined]
+        self._engine.voice = self.voice  # type: ignore[attr-defined]
+        await self._warm()
         self._say("")
         return True
+
+    async def _warm(self) -> None:
+        """Get the chosen voice ready; a recording that cannot be read shows up when it
+        is spoken, so it is not reported here."""
+        assert self._engine is not None
+        try:
+            await asyncio.to_thread(self._engine.warm)
+        except Exception:  # noqa: BLE001, S110 - see the docstring
+            pass
 
     def interrupt(self) -> bool:
         """Stop reading the reply and listen; False when nothing was being read."""
@@ -138,7 +230,8 @@ class VoiceMode(QObject):
                 self.stop()
                 return
             assert self._engine is not None
-            voice = Voice(self._engine, self._make_speaker(), self._said, self._moved)
+            voice = Voice(self._engine, self._make_speaker(), self._said, self._moved,
+                          failed=self._failed)
             microphone = self._make_microphone(voice.heard)
             microphone.start()  # type: ignore[attr-defined]
         except asyncio.CancelledError:
@@ -169,6 +262,10 @@ class VoiceMode(QObject):
         finally:
             self.progress = None
         return True
+
+    def _failed(self, error: Exception) -> None:
+        self.stop()
+        self.controller.model.notify(f"Voice stopped: {error}")
 
     def _said(self, text: str) -> None:
         self.controller.send(text, spoken=True)

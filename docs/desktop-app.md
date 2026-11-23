@@ -44,6 +44,19 @@ Python 3.15 yet. Without the `desktop` extra the app cannot start. On a computer
 display, `kaden` says so and exits; see
 [Driving Kaden from a program](headless.md) for running it without a screen.
 
+### A natural voice
+
+With an NVIDIA GPU (about 5 GB of its memory free), Kaden can speak with a more natural
+voice, in voices copied from recordings, and understand you better. It needs Python 3.14 and a few GB more of
+libraries (PyTorch):
+
+```bash
+uv tool install --python 3.14 --editable "Kaden[voice-gpu]"
+```
+
+Without the extra, or on Python 3.13, Kaden speaks with its usual voices. See
+[Talking with Kaden](using-kaden.md#talking-with-kaden).
+
 ## First start
 
 When no API key is saved, a welcome window asks for three things:

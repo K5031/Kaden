@@ -7,8 +7,8 @@ import asyncio
 from collections.abc import Callable
 
 import numpy as np
-from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QObject
-from PySide6.QtMultimedia import QAudio, QAudioFormat, QAudioSink, QAudioSource, QMediaDevices
+from PySide6.QtCore import QIODevice, QObject, QTimer
+from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QAudioSource, QMediaDevices
 
 from kaden.frontends.desktop.voice.engine import RATE
 
@@ -96,40 +96,91 @@ def as_played(samples: np.ndarray, rate: int) -> tuple[QAudioFormat, bytes]:
 
 
 class Speaker(QObject):
-    """turns.Player on the default sound output."""
+    """turns.Player on the default sound output: one stream, open from the first sound
+    until `close`, with silence between sounds. A stream opened for each sound would
+    start each one cold, and the sound chip, asleep after a pause, loses its first
+    syllable while it wakes."""
+
+    TICK_MS = 10
+    AHEAD_S = 0.05  # silence kept queued so the stream never runs dry
 
     def __init__(self) -> None:
         super().__init__()
         self._sink: QAudioSink | None = None
+        self._out: QIODevice | None = None
+        self._format: QAudioFormat | None = None
+        self._pending = bytearray()  # of the sound being played, not yet handed to Qt
+        self._written = 0  # bytes handed to Qt since the stream (re)started
+        self._ends_at = 0  # where the sound being played ends, in those bytes
         self._done: asyncio.Future[None] | None = None
+        self._timer = QTimer(self)
+        self._timer.setInterval(self.TICK_MS)
+        self._timer.timeout.connect(self._feed)
 
     async def play(self, samples: np.ndarray, rate: int) -> None:
         self.stop()
         if not len(samples):
             return
         sound, pcm = as_played(samples, rate)
-        buffer = QBuffer(self)
-        buffer.setData(QByteArray(pcm))
-        buffer.open(QIODevice.OpenModeFlag.ReadOnly)
-        sink = self._sink = QAudioSink(QMediaDevices.defaultAudioOutput(), sound, self)
+        self._open(sound)
+        self._pending += pcm
+        self._ends_at = self._written + len(self._pending)
         done = self._done = asyncio.get_running_loop().create_future()
-
-        def changed(state: QAudio.State) -> None:  # the annotation lets Qt pass the state
-            # Idle: all of it was played. Stopped: stop(), or the device failed.
-            if state.name in ("IdleState", "StoppedState") and not done.done():
-                done.set_result(None)
-
-        sink.stateChanged.connect(changed)
-        sink.start(buffer)
-        try:
-            await done
-        finally:
-            sink.stop()
-            sink.deleteLater()
-            buffer.deleteLater()
-            if self._sink is sink:
-                self._sink = None
+        self._feed()
+        await done
 
     def stop(self) -> None:
+        """Stop the sound being played at once; the stream stays open."""
+        self._pending.clear()
+        if self._sink is not None and self._done is not None and not self._done.done():
+            self._sink.reset()  # drops what Qt still holds of it
+            self._out, self._written = self._sink.start(), 0
+        self._finish()
+
+    def close(self) -> None:
+        self._pending.clear()
+        self._finish()
+        self._timer.stop()
+        if self._sink is not None:
+            self._sink.stop()
+            self._sink.deleteLater()
+        self._sink = self._out = self._format = None
+
+    def _open(self, sound: QAudioFormat) -> None:
+        if self._format == sound and self._sink is not None:
+            return
+        self.close()
+        self._format = sound
+        self._sink = QAudioSink(QMediaDevices.defaultAudioOutput(), sound, self)
+        self._out, self._written = self._sink.start(), 0
+        self._timer.start()
+
+    def _feed(self) -> None:
+        sink, out, sound = self._sink, self._out, self._format
+        if sink is None or out is None or sound is None:
+            return
+        if sink.state().name == "StoppedState" and sink.error().name != "NoError":
+            self.close()  # the device failed: nothing more is heard
+            return
+        frame = sound.bytesPerFrame()
+        if self._pending:
+            room = sink.bytesFree() - sink.bytesFree() % frame
+            chunk = bytes(self._pending[:room])
+            if chunk:
+                written = max(out.write(chunk), 0)
+                del self._pending[:written]
+                self._written += written
+        else:
+            queued = self._written - sound.bytesForDuration(sink.processedUSecs())
+            silence = sound.bytesForDuration(int(self.AHEAD_S * 1e6)) - queued
+            silence -= silence % frame
+            if silence > 0 and sink.bytesFree() >= silence:
+                self._written += max(out.write(bytes(silence)), 0)
+        if self._done is not None and not self._pending and \
+                sound.bytesForDuration(sink.processedUSecs()) >= self._ends_at:
+            self._finish()
+
+    def _finish(self) -> None:
         if self._done is not None and not self._done.done():
             self._done.set_result(None)
+        self._done = None

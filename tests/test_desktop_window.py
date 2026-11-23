@@ -2172,12 +2172,12 @@ async def test_the_chosen_voice_is_kept_with_the_look(tmp_path):
     await window_module.save_look(saved, voice="Bella")
     assert await window_module.load_voice(saved) == "Bella"
     assert await window_module.load_look(saved) == (theme.zoom(), theme.choice())
-    saved.write_text('{"voice": "Nobody"}')
+    saved.write_text('{"voice": 3}')
     assert await window_module.load_voice(saved) == "Heart"
 
 
 async def test_the_voice_is_chosen_in_settings(make, qapp):
-    from kaden.frontends.desktop.voice.mode import VOICES
+    from kaden.frontends.desktop.voice.mode import KOKORO_VOICES
 
     h: Harness = await make()
     await h.start()
@@ -2185,7 +2185,55 @@ async def test_the_voice_is_chosen_in_settings(make, qapp):
     dialog = SettingsDialog(window, h.runtime, controller, await h.runtime.settings(), [],
                             0.0, voice=window.voice)
     names = [dialog.voice.itemText(i) for i in range(dialog.voice.count())]
-    assert names == list(VOICES) and dialog.voice.currentText() == "Heart"
+    assert names == list(KOKORO_VOICES) and dialog.voice.currentText() == "Heart"
+    assert dialog.add_voice.isHidden()  # recordings are copied by the natural voice only
     dialog.voice.setCurrentText("Fenrir")
     assert window.voice.voice == "Fenrir"
     assert dialog.play_voice.isEnabled()
+
+
+async def test_a_voice_is_added_from_a_recording_in_settings(make, qapp, tmp_path):
+    from kaden.frontends.desktop.voice.mode import NATURAL, VoiceMode
+
+    h: Harness = await make()
+    await h.start()
+    window, controller, _ = await open_window(h)
+
+    async def yes(text: str, details: str) -> bool:
+        return True
+
+    voice = VoiceMode(controller, tmp_path / "voice", yes, models=(), natural=True)
+    dialog = SettingsDialog(window, h.runtime, controller, await h.runtime.settings(), [],
+                            0.0, voice=voice)
+    assert not dialog.add_voice.isHidden() and dialog.voice.currentText() == NATURAL
+    dialog.show()
+    QApplication.processEvents()
+    for button in (dialog.play_voice, dialog.add_voice, dialog.remove_voice):  # not cut off
+        assert button.width() >= button.sizeHint().width(), button.text()
+    dialog.close()
+    recording = tmp_path / "Ada.mp3"
+    recording.write_bytes(b"ID3")
+    await dialog._add_recording(voice, recording)
+    names = [dialog.voice.itemText(i) for i in range(dialog.voice.count())]
+    assert names == [NATURAL, "Ada"] and dialog.voice.currentText() == voice.voice == "Ada"
+    assert dialog.remove_voice.isEnabled()  # a copied voice can be removed
+    await dialog._remove_recording(voice, "Ada")
+    names = [dialog.voice.itemText(i) for i in range(dialog.voice.count())]
+    assert names == [NATURAL] and dialog.voice.currentText() == voice.voice == NATURAL
+    assert not dialog.remove_voice.isEnabled()  # Natural cannot
+
+
+def test_the_hint_in_the_message_box_starts_after_the_cursor(qapp):
+    """The blinking cursor does not cover the first letter of "Message Kaden"."""
+    box = window_module.MessageBox()
+    box.setPlaceholderText("Message Kaden")
+    assert box.placeholderText() == "Message Kaden"
+    box.resize(300, 40)
+    caret_ends = box.cursorRect().x() + box.cursorWidth()  # the first pixel after it
+    box.setCursorWidth(0)  # nothing but the hint is drawn
+    image = box.viewport().grab().toImage()
+    inked = [x for x in range(image.width()) for y in range(image.height())
+             if image.pixelColor(x, y) != image.pixelColor(0, 0)]
+    assert inked and min(inked) >= caret_ends + 1  # a pixel's gap
+    box.setPlainText("Hi")
+    assert box.placeholderText() == "Message Kaden"  # kept for when the box empties

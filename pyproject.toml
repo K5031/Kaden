@@ -57,6 +57,13 @@ desktop = [
     "sherpa-onnx>=1.13,<2",
     "sherpa-onnx-core>=1.13,<2",  # the libraries; uv does not see sherpa-onnx requires it
 ]
+# The natural voice on an NVIDIA GPU (docs/using-kaden.md). Chatterbox allows a PyTorch
+# new enough for RTX 50 GPUs on Python 3.14 only.
+voice-gpu = [
+    "kaden[desktop]",
+    "chatterbox-tts>=0.1.7; python_version >= '3.14'",
+    "setuptools<81; python_version >= '3.14'",  # its watermarker imports pkg_resources
+]
 
 [dependency-groups]
 dev = [

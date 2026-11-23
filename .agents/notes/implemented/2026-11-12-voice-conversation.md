@@ -48,6 +48,9 @@ the user agrees (`voice/download.py`); a model is in place only once it is whole
 goes in and out through Qt Multimedia (`voice/audio.py`). Nothing of this is imported
 until voice mode is first turned on.
 
+Where an NVIDIA GPU and the `voice-gpu` extra are there, Chatterbox speaks instead of
+Kokoro: see [a natural voice on the GPU](2026-11-22-natural-voice-on-the-gpu.md).
+
 sherpa-onnx is held below version 2: version 2.0.1 speaks Kokoro only from a word list
 and leaves out every word that is not in it (plurals, names), where 1.13 falls back to
 espeak-ng for them.
@@ -61,7 +64,8 @@ connects it to the window, the controller's events, the microphone and the downl
   the message box shows what is happening: Listening, Thinking, Speaking.
 - Kaden listens until the user has been silent for 0.9 s, then sends what was said. It
   listens only when it is its turn to.
-- The reply is spoken sentence by sentence while it streams (`voice/speech.py`). Code
+- The reply is spoken sentence by sentence while it streams (`voice/speech.py`), each
+  made into sound while the one before plays. Code
   blocks, tables, links' addresses, markup and symbols that are not words are left out of
   the speech and stay on screen.
 - While Kaden speaks, the microphone is not listened to: without echo cancellation it

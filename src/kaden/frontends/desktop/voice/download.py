@@ -24,17 +24,45 @@ class Model:
     archive: bool = True  # a .tar.bz2 holding the folder `name`
 
 
-MODELS = (
-    Model("silero_vad.onnx", f"{_RELEASES}/asr-models/silero_vad.onnx", 643_854, archive=False),
-    Model("sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
-          f"{_RELEASES}/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
-          482_440_461),
-    Model("kokoro-multi-lang-v1_0", f"{_RELEASES}/tts-models/kokoro-multi-lang-v1_0.tar.bz2",
-          349_000_000),
-)
+VAD = Model("silero_vad.onnx", f"{_RELEASES}/asr-models/silero_vad.onnx", 643_854,
+            archive=False)  # hears when the user talks
+PARAKEET = Model("sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
+                 f"{_RELEASES}/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
+                 482_440_461)  # what they say, in English
+KOKORO = Model("kokoro-multi-lang-v1_0",
+               f"{_RELEASES}/tts-models/kokoro-multi-lang-v1_0.tar.bz2", 349_000_000)
+# The natural voice: Chatterbox's English model, at the revision Kaden was tried with.
+CHATTERBOX_DIR = "chatterbox"
+_CHATTERBOX = ("https://huggingface.co/ResembleAI/chatterbox/resolve/"
+               "5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18")
+CHATTERBOX = tuple(
+    Model(f"{CHATTERBOX_DIR}/{file}", f"{_CHATTERBOX}/{file}", size, archive=False)
+    for file, size in (("ve.safetensors", 5_695_784), ("t3_cfg.safetensors", 2_129_653_744),
+                       ("s3gen.safetensors", 1_056_484_620), ("tokenizer.json", 25_470),
+                       ("conds.pt", 107_374)))
 
 
-def missing(folder: Path, models: Sequence[Model] = MODELS) -> list[Model]:
+# What listens with the natural voice: Whisper large-v3-turbo, on the GPU.
+WHISPER_DIR = "whisper"
+_WHISPER = ("https://huggingface.co/openai/whisper-large-v3-turbo/resolve/"
+            "41f01f3fe87f28c78e2fbf8b568835947dd65ed9")
+WHISPER = tuple(
+    Model(f"{WHISPER_DIR}/{file}", f"{_WHISPER}/{file}", size, archive=False)
+    for file, size in (("model.safetensors", 1_617_824_864), ("config.json", 1_256),
+                       ("generation_config.json", 3_772), ("preprocessor_config.json", 340),
+                       ("tokenizer.json", 2_710_337), ("tokenizer_config.json", 282_843),
+                       ("vocab.json", 1_036_558), ("merges.txt", 493_869),
+                       ("added_tokens.json", 34_648), ("special_tokens_map.json", 2_186),
+                       ("normalizer.json", 52_666)))
+
+
+def models(*, natural: bool) -> tuple[Model, ...]:
+    """What voice mode needs: with the natural voice, Whisper listens and Chatterbox
+    speaks, on the GPU; otherwise Parakeet and Kokoro, on the CPU."""
+    return (VAD, *WHISPER, *CHATTERBOX) if natural else (VAD, PARAKEET, KOKORO)
+
+
+def missing(folder: Path, models: Sequence[Model]) -> list[Model]:
     """The models not in `folder` yet. Blocking."""
     return [m for m in models if not (folder / m.name).exists()]
 
@@ -54,6 +82,7 @@ async def fetch(folder: Path, models: Sequence[Model], progress: Callable[[float
                                   timeout=httpx2.Timeout(30, read=120)) as client:
         for model in models:
             part = folder / f"{model.name}.part"
+            await asyncio.to_thread(part.parent.mkdir, parents=True, exist_ok=True)
             async with client.stream("GET", model.url) as response:
                 response.raise_for_status()
                 with await asyncio.to_thread(part.open, "wb") as out:
