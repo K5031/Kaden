@@ -29,16 +29,20 @@ last step and any that failed ("Read main.py · 1 failed"); click it to see them
 
 ### Talking with Kaden
 
-You can talk instead of typing. Click the sound-wave button in the message box:
+You can talk instead of typing, and hear the replies instead of reading them. The
+message box has a button for each; use either alone or both:
 
-- **You talk, Kaden answers aloud.** It sends what you said once you have been silent for
-  about a second, and reads the reply while it is still being written. The conversation
-  is on screen as usual, and you can type in between.
+- **The microphone button: you talk.** Kaden sends what you said once you have been
+  silent for about a second, and listens again when it is done. You can type in between.
+- **The speaker button: Kaden answers aloud.** It reads each reply while it is still
+  being written, whether you said or typed your message. The conversation is on screen
+  as usual.
+- Click a button again to turn its half off; the other goes on.
 - **Only words are read.** Code, tables, links and symbols stay on screen.
-- **Esc stops the reading** and Kaden listens again. You cannot talk over it: while it
-  speaks, it does not listen.
-- **The agent knows you are talking**, so it answers briefly, in plain sentences, without
-  emoji, kaomoji or symbols, until you type again.
+- **Esc stops the reading** of that reply, and Kaden listens again if the microphone is
+  on. You cannot talk over it: while it speaks, it does not listen.
+- **The agent knows its replies are read aloud**, so it answers briefly, in plain
+  sentences, without emoji, kaomoji or symbols, until you turn the speaker off.
 - **Speech runs on your computer.** What you say is not sent to a speech service; only
   the text goes to the model, as when you type. The first time, Kaden asks to download
   the speech models (about 830 MB) into its data folder.
@@ -48,10 +52,11 @@ You can talk instead of typing. Click the sound-wave button in the message box:
   [Desktop app](desktop-app.md#a-natural-voice)). Kaden then hears you with Whisper,
   which gets more of your words right, and speaks with Chatterbox, in its own voice
   (**Natural**) or one copied from a recording: **Settings → General → Voice → Add…**,
-  10 to 30 seconds of one person speaking clearly, as WAV, MP3, FLAC, OGG or Opus (as
-  voice messages are saved). The voice takes the file's name. A recording in another
-  language works too; Kaden still speaks English. **×** beside it removes a copied voice
-  (your own file of the recording stays). Its models are about 4.8 GB.
+  10 to 30 seconds of one person speaking clearly, as WAV, MP3, FLAC, OGG, Opus or M4A (as
+  voice messages are saved). Kaden keeps a clean copy (the first half minute of talking,
+  long pauses cut); your file is untouched. The voice takes the file's name. A recording
+  in another language works too; Kaden still speaks English. **×** beside it removes a
+  copied voice (your own file of the recording stays). Its models are about 4.8 GB.
 - **English only** for now.
 
 ### Attaching files
@@ -139,7 +144,7 @@ question gets no plan.
 - **The agent finishes its plan before it stops.** If it ends a turn with steps open, Kaden
   sends it back once to do them or close them. When the turn ends, Kaden ticks off any
   step still open. A step stays open only when it waits for a reminder's time, for
-  background work, or for its next check-in when it runs continuously.
+  background work, or for its next check-in when it has a duty.
 
 ### Reminders
 
@@ -152,8 +157,8 @@ is woken when the time comes, without a message from you. Next to the conversati
   while it was closed, or while Kaden was not running, is not sent late by itself: the
   agent sees it with your next message.
 - **Stop** puts reminders off until your next message.
-- For work that keeps going on its own, have the conversation
-  [run continuously](concepts.md#running-continuously) instead.
+- For work that keeps going on its own, give the conversation a
+  [duty](concepts.md#duties) instead.
 
 ### Questions
 
@@ -233,6 +238,14 @@ It reads public pages only, not pages on your computer or your local network. So
 refuse programs that read them (Kaden says so and looks elsewhere), and search engines
 sometimes turn searches away for a while; Kaden tries a search again before it gives up.
 
+### Bilibili
+
+The agent can watch Bilibili videos the way a visitor does, without logging in: a video's
+details and its subtitles (where they are open to visitors), its danmaku at their moments,
+its top comments, and pictures of it at moments it picks (where ffmpeg is installed). Give
+it a BV id or a link, b23.tv ones too. It finds videos through web search: Bilibili's own
+search turns programs away. It cannot comment, like or post: it is not logged in.
+
 ## Looking at your screen
 
 Ask the agent to look at your screen ("what does this error on my screen mean?") and it
@@ -280,5 +293,8 @@ has a card with **Cancel**.
 
 ## Quitting
 
-Ctrl+Q, or closing the window, quits. Tools still running are cancelled; your
-conversations are saved and can be continued later.
+Closing the window keeps Kaden running in the system tray, so duties and background
+work go on; click its icon there to open the window again. **Quit** (in ☰,
+your name's menu or the tray icon's), or Ctrl+Q, quits: tools still running are
+cancelled, and your conversations are saved and can be continued later. On a desktop
+without a system tray, closing the window quits.

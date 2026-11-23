@@ -18,8 +18,9 @@ turns what the user says into a message (`RuntimeAPI.send`) and reads the reply 
 from the events it already gets (`TextDelta`, `MessageCommitted`). The conversation in
 the archive is the same as a typed one, and stays readable on screen while it is spoken.
 
-The one thing the runtime learns is that a message was said aloud: `send(..., spoken=True)`,
-kept with the message (`Message.spoken`). When that differs from the message the user
+The one thing the runtime learns is that a message's reply is read aloud:
+`send(..., spoken=True)`, kept with the message (`Message.spoken`); see
+[microphone and speaker apart](2026-11-23-microphone-and-speaker-apart.md). When that differs from the message the user
 wrote before, the runtime appends a notice of its own after the message
 (`config.VOICE_ON_NOTICE`: write only what sounds right when
 spoken, without emoji, kaomoji, symbols or markup, whatever else its instructions say
@@ -30,7 +31,7 @@ voice agents: the model is told its words will be spoken, and what still is not 
 is taken out before the speech engine (`voice/speech.py`). A notice is part of the conversation,
 so the start of every request stays the same and a provider's prompt cache stays valid.
 It follows the message it speaks of ("from the message above on"). A reopened conversation
-finds whether the user was talking in the last message they wrote (`Runtime._was_spoken`).
+finds whether the user was listening at the last message they wrote (`Runtime._was_spoken`).
 
 ### Speech runs on the user's machine
 
@@ -60,8 +61,10 @@ espeak-ng for them.
 `voice/turns.py` is plain logic over an engine, a player and a send function; `voice/mode.py`
 connects it to the window, the controller's events, the microphone and the download.
 
-- The sound-wave button in the message box turns voice mode on and off. While it is on,
-  the message box shows what is happening: Listening, Thinking, Speaking.
+- The microphone and speaker buttons in the message box turn listening and reading
+  aloud on and off, apart ([microphone and speaker apart](2026-11-23-microphone-and-speaker-apart.md)).
+  While either is on, the message box shows what is happening: Listening, Thinking,
+  Speaking.
 - Kaden listens until the user has been silent for 0.9 s, then sends what was said. It
   listens only when it is its turn to.
 - The reply is spoken sentence by sentence while it streams (`voice/speech.py`), each
@@ -70,9 +73,10 @@ connects it to the window, the controller's events, the microphone and the downl
   the speech and stay on screen.
 - While Kaden speaks, the microphone is not listened to: without echo cancellation it
   would hear itself. Esc stops the speech and listens; what is left of that reply stays
-  unread. With nothing being read, Esc stops the agent as before.
+  unread, whoever set the agent going. With nothing being read, Esc stops the agent as
+  before.
 - Tool steps and permission prompts work as in a typed conversation; a prompt waits for
-  a click. A message typed in voice mode is answered aloud too.
+  a click. With the speaker on, a typed message is answered aloud too.
 
 ## Alternatives considered
 

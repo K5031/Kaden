@@ -17,7 +17,7 @@ from kaden.api import KEYCHAIN_SERVICE, Budget, PermissionRule, SettingsUpdate
 
 SETTINGS_FILE = "settings.toml"
 BUDGET_INTS = ("max_tokens", "max_tool_calls")  # limits counted in whole things
-BUDGET_NUMBERS = ("max_cost_usd", "max_duration_s")
+BUDGET_NUMBERS = ("max_cost_usd", "max_duration_s", "max_cost_usd_per_day")
 
 
 def bad_limit(name: str, value: object) -> str | None:

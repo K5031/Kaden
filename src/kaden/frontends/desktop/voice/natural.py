@@ -5,6 +5,7 @@ torch, chatterbox and transformers are imported only when it loads."""
 from __future__ import annotations
 
 import io
+import re
 import threading
 from importlib.util import find_spec
 from itertools import pairwise
@@ -16,7 +17,7 @@ from kaden.frontends.desktop.voice.download import CHATTERBOX_DIR, WHISPER_DIR
 
 NATURAL = "Natural"  # its own voice
 RECORDINGS_DIR = "voices"  # recordings the user added, in the voice folder, by name
-RECORDING_TYPES = (".wav", ".mp3", ".flac", ".ogg", ".opus")
+RECORDING_TYPES = (".wav", ".mp3", ".flac", ".ogg", ".opus", ".m4a")
 # A clip of voice lines leaves silence between them, which Chatterbox would copy as the
 # speaker's way of talking: a pause in a recording longer than this is cut to it.
 PAUSE_S = 0.25
@@ -49,6 +50,42 @@ def without_long_pauses(audio: np.ndarray, rate: int) -> np.ndarray:
     return audio[: steps * step].reshape(steps, step)[keep].ravel()
 
 
+# What Whisper writes on noise, with confidence: said by someone, these come with more.
+_STOCK = frozenset({"thank you", "thank you so much", "thank you very much", "thanks",
+                    "thanks for watching", "thank you for watching", "you", "bye",
+                    "bye bye"})
+_MARKS = re.compile(r"[\s.,!?;:…'\"]+")
+
+
+def stock_phrase(heard: str) -> bool:
+    """`heard` is nothing but one of Whisper's habitual inventions on noise."""
+    return _MARKS.sub(" ", heard.lower()).strip() in _STOCK
+
+
+HEARD_S = 30  # of a recording, what it hears: its first half minute of talking
+READ_S = 90  # read to find HEARD_S once pauses are out
+
+
+def start_of(path: Path) -> tuple[np.ndarray, int]:
+    """What the voice hears of the recording at `path`: its first HEARD_S of talking, long
+    pauses out (Chatterbox takes the voice's detail from its first 10 s and its overall
+    sound from all of it; minutes of a video take seconds to read and blend in whatever
+    else they hold). Blocking; needs `kaden[voice-gpu]`."""
+    import librosa
+
+    audio, rate = librosa.load(path, sr=None, mono=True, duration=READ_S)
+    return without_long_pauses(audio, rate)[: HEARD_S * rate], rate
+
+
+def prepare_recording(source: Path, target: Path) -> None:
+    """Keep at `target`, a WAV file, what the voice hears of the recording at `source`
+    (start_of): done once, when the recording is added. Blocking."""
+    import soundfile
+
+    audio, rate = start_of(source)
+    soundfile.write(target, audio, rate)
+
+
 def recording(folder: Path, name: str) -> Path | None:
     """The recording a voice named `name` is copied from. Blocking."""
     found = (folder / RECORDINGS_DIR).iterdir() if (folder / RECORDINGS_DIR).is_dir() else ()
@@ -61,11 +98,6 @@ class Chatterbox:
     seconds and blocks; RuntimeError where there is no CUDA GPU. `speak` and `warm` may
     run on different threads at once: they take turns."""
 
-    # Of a recording, only the start is heard, long pauses taken out: Chatterbox takes the
-    # voice's detail from its first 10 s and its overall sound from all of it, and a long
-    # clip (minutes of a video) takes seconds to read and blends in whatever else it holds.
-    HEARD_S = 30
-    READ_S = 90  # read to find HEARD_S once pauses are out
 
     def __init__(self, models: Path) -> None:
         import torch
@@ -107,13 +139,10 @@ class Chatterbox:
         return self._voices[key]
 
     def _start_of(self, path: Path) -> io.BytesIO:
-        """The first HEARD_S of the recording at `path`, long pauses out, as a WAV file in
-        memory."""
-        import librosa
+        """What of the recording at `path` it hears (start_of), as a WAV file in memory."""
         import soundfile
 
-        audio, rate = librosa.load(path, sr=None, mono=True, duration=self.READ_S)
-        audio = without_long_pauses(audio, rate)[: self.HEARD_S * rate]
+        audio, rate = start_of(path)
         start = io.BytesIO()
         soundfile.write(start, audio, rate, format="WAV")
         start.seek(0)
@@ -142,8 +171,11 @@ class Whisper:
         weights = models / WHISPER_DIR
         self._turn = threading.Lock()  # what the user said, and speech heard back
         self._processor = WhisperProcessor.from_pretrained(weights)
+        # Loaded at the default float32, then halved: loading at float16 sets torch's
+        # default dtype for the whole process while it runs, and Chatterbox, loading on
+        # another thread at the same time, would build layers in half precision.
         self._model = WhisperForConditionalGeneration.from_pretrained(
-            weights, dtype=torch.float16).to("cuda").eval()
+            weights, dtype=torch.float32).to("cuda", torch.float16).eval()
         self._torch = torch
 
     def transcribe(self, samples: np.ndarray, *, guarded: bool = True) -> str:
@@ -157,7 +189,8 @@ class Whisper:
                  "return_timestamps": True} if long else {}
         with self._turn, self._torch.inference_mode():
             if long:  # half a minute of noise does not get past the VAD
-                ids = self._model.generate(features, language="en", task="transcribe", **extra)
+                ids = self._model.generate(features, language="en", task="transcribe",
+                                           **extra)
             else:
                 out = self._model.generate(features, language="en", task="transcribe",
                                            return_dict_in_generate=True, output_scores=True)
@@ -166,5 +199,5 @@ class Whisper:
                     ids, out.scores, normalize_logits=True)[0, :-1].float()  # not the end
                 if guarded and (not len(sureness) or float(sureness.mean()) < self.SURE):
                     return ""
-        return self._processor.batch_decode(ids, skip_special_tokens=True)[0].strip()
-
+        text = self._processor.batch_decode(ids, skip_special_tokens=True)[0].strip()
+        return "" if guarded and stock_phrase(text) else text

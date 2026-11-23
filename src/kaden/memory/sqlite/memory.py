@@ -941,7 +941,7 @@ def _conversation_info(row: Sequence[Any], first_user_blocks: str | None = None
     if row[7] is not None:
         d = json.loads(row[7])
         duty = Duty(d["instruction"], DutyKind(d["kind"]), d["min_interval_s"],
-                    d["max_interval_s"])
+                    d["max_interval_s"], d.get("model"))
     plan = tuple(PlanItem(i["text"], PlanStatus(i["status"]), i["due"], i["note"])
                  for i in json.loads(row[8]))
     return ConversationInfo(row[0], row[1], row[2], row[3],

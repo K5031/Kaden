@@ -53,7 +53,7 @@ def _entry() -> str:
     return "\n".join((
         "[Desktop Entry]",
         "Type=Application",
-        "Name=Kaden",
+        "Name=Kaden Chat",
         "Comment=An AI agent that works for you on your computer",
         f"Exec={_quoted(sys.executable)} -m kaden.window",
         f"Icon={ICON_NAME}",

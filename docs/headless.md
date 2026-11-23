@@ -11,7 +11,7 @@ kaden --headless --data-dir ~/units/writer --goal "Draft the launch post"
 | Option | Does |
 |---|---|
 | `--headless` | Use stdin and stdout for the program, as below |
-| `--continuous "…"` | Start a new conversation that [runs continuously](concepts.md#running-continuously) on this right away |
+| `--duty "…"` | Start a new conversation with this as its [duty](concepts.md#duties), right away |
 | `--goal "…"` | The same, as a goal: it ends when the agent says it is reached |
 | `--data-dir`, `--config`, `--conversation`, `--model`, `--maintenance-model`, `--permissions` | See [Starting](using-kaden.md#starting) |
 
@@ -22,7 +22,7 @@ spending limit, if it should have one; see [config.toml](settings.md#configtoml)
 
 [JSON-RPC 2.0](https://www.jsonrpc.org/specification), one message per line, UTF-8.
 Kaden writes nothing else to stdout: anything else the process prints goes to stderr, and
-so do Kaden's own errors, such as continuous work that cannot start. Closing Kaden's stdin quits it
+so do Kaden's own errors, such as a duty that cannot start. Closing Kaden's stdin quits it
 the way closing the window does.
 
 **Requests** have the names and parameters of the runtime's commands, every one but
@@ -50,7 +50,7 @@ drives its sub-sessions this way:
 | `inspect_memory` | `conversation_id` |
 | `save_note`, `delete_note` | `title`, `description`, `text`, optional `note_id`; or `note_id` |
 
-A refusal (asking before `start`, continuous work without an instruction, an unknown
+A refusal (asking before `start`, a duty without an instruction, an unknown
 conversation) is error `-32000` with the runtime's message and `data.type`, such as
 `RuntimeStateError`. A `RuntimeStateError` also has `data.reason`, a word to act on:
 `not_started`, `busy`, `budget`, `not_pending`, `conversation_open` or `unavailable`. Missing parameters are `-32602`, unknown methods `-32601`.
@@ -86,8 +86,8 @@ with `reply` null, when it ended unanswered). The snapshot lists the open ones a
 
 A prompt with `words: true` (a question, a plan) is also answered by `send`: your
 message answers it in your own words and follows it in the conversation. A kind you do not
-know is shown by its `text`. A question the agent asks its supervisor while running
-continuously comes as `HelpNeeded`: answer it with `send`.
+know is shown by its `text`. A question the agent asks its supervisor while on a
+duty comes as `HelpNeeded`: answer it with `send`.
 
 **The wrap-up card is a tool call.** A turn that leaves a decision may end with a `wrap_up` call:
 `question`, up to three `options` with the agent's pick first, and an optional `recap` (an `ask_for_help` call

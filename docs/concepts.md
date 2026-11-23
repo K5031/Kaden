@@ -29,7 +29,7 @@ agent is woken with the results and carries on by itself, so you don't have to a
 it is done. It can check on a task or cancel it, and so can you (**Cancel** on its card). A task that runs
 over an hour (unless the tool allows longer) ends as timed out.
 
-Apart from [running continuously](#running-continuously), that is the only time the agent acts without a message from
+Apart from [duties](#duties), that is the only time the agent acts without a message from
 you. Permissions and the spending limit apply as always, and after Kaden restarts it
 waits for you before doing anything.
 
@@ -37,11 +37,11 @@ When you stop the agent or quit, running tasks are cancelled. If one does not st
 it is marked as abandoned: it may still be running, and the agent is told to check before
 assuming anything.
 
-## Running continuously
+## Duties
 
-A conversation can run continuously: you give it standing work, such as "keep my inbox
+A conversation can have a duty: you give it standing work, such as "keep my inbox
 answered", and the agent carries it on by itself: it keeps a plan of steps, works through them, and
-checks in again on its own. Any conversation can run continuously, at any time; you can
+checks in again on its own. Any conversation can have a duty, at any time; you can
 change the work or turn it off, and the conversation keeps everything said so far.
 
 - **Keep doing it** runs until you turn it off. **Until it is done** also ends when the
@@ -49,7 +49,7 @@ change the work or turn it off, and the conversation keeps everything said so fa
 - **The plan** is a list of steps, each to do, doing, done or dropped, with an optional
   due time and note. The agent always has it in view, and you can edit it. Any
   conversation can have one (see [The plan](using-kaden.md#the-plan)), and a step that
-  falls due wakes the agent, whether the conversation runs continuously or not (see
+  falls due wakes the agent, whether the conversation has a duty or not (see
   [Reminders](using-kaden.md#reminders)).
 - **When it wakes:** when a background task finishes (the first one, not all of them),
   when a step falls due, when you write, and otherwise at least every so often (an hour
@@ -57,7 +57,7 @@ change the work or turn it off, and the conversation keeps everything said so fa
   minute unless you change it); a finished task or your message wakes it at once.
   To react to the outside world, the agent starts a tool that waits for something, for
   example new mail through a tool server; when it finishes, the agent wakes.
-- **A spending limit is up to you.** Running continuously has none of its own. Since it can work for days,
+- **A spending limit is up to you.** A duty has none of its own. Since it can work for days,
   setting one in Settings caps what it can cost; your provider's own spend limit is the
   other guard.
 - **It pauses** when you press Stop, when the limit is reached, after an error, and after
@@ -73,7 +73,7 @@ change the work or turn it off, and the conversation keeps everything said so fa
 - **Continue in a new conversation** does not carry it over.
 
 Next to the conversation's title, a line says when it checks in next, or that it is
-paused (**Goal** instead of **Continuous** for work that ends).
+paused (**Goal** instead of **Duty** for work that ends).
 
 ## Sub-sessions
 

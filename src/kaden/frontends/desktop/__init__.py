@@ -58,11 +58,16 @@ class DesktopFrontend(Frontend):
 
     async def run(self, runtime: RuntimeAPI) -> None:
         """Returns when the main window closes or the runtime's event stream ends."""
-        from PySide6.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication, QSystemTrayIcon
 
         from kaden.frontends.desktop import theme
         from kaden.frontends.desktop.viewmodel import Controller, ConversationModel
-        from kaden.frontends.desktop.window import MainWindow, load_look, load_voice, save_look
+        from kaden.frontends.desktop.window import (
+            MainWindow,
+            load_look,
+            load_voice,
+            save_look,
+        )
 
         app = QApplication.instance()
         if app is None:
@@ -75,7 +80,8 @@ class DesktopFrontend(Frontend):
             theme.set_theme(app, look)
             theme.set_zoom(app, zoom)
         controller = Controller(runtime, ConversationModel())
-        window = MainWindow(runtime, controller, self.zoom_file, self.sessions)
+        window = MainWindow(runtime, controller, self.zoom_file, self.sessions,
+                            tray=QSystemTrayIcon.isSystemTrayAvailable())
         if self.zoom_file is not None:
             await window.voice.restore(await load_voice(self.zoom_file))
         server = (await single.listen(self.data_dir, window.bring_forward)
@@ -94,7 +100,7 @@ class DesktopFrontend(Frontend):
             if server is not None:
                 server.close()
                 single.socket_path(self.data_dir).unlink(missing_ok=True)
-            window.close()
+            window.quit()
             if self.zoom_file is not None:
                 await save_look(self.zoom_file, window.voice.voice)
 

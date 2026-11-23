@@ -120,7 +120,14 @@ from kaden.api import (
 from kaden.runtime import duty as duties
 from kaden.runtime import hooks
 from kaden.runtime import skills as skill_files
-from kaden.runtime.budget import BudgetTracker, calibrated, cost_of, estimate_tokens, has_prices
+from kaden.runtime.budget import (
+    BudgetTracker,
+    calibrated,
+    cost_of,
+    estimate_tokens,
+    has_prices,
+    next_day,
+)
 from kaden.runtime.config import (
     ACTIVATION_NOTICE,
     HIDDEN_NOTICE_MARK,
@@ -380,6 +387,7 @@ class Runtime:
         self._draft = False  # the open conversation is new and not stored yet
         self._models: dict[str, ModelInfo] = {}
         self._model: str | None = config.model
+        self._own_time = False  # the cycle under way was started by a duty by itself
         self._calibration: dict[str, float] = {}
 
         self._base = AgentState.NOT_STARTED  # state outside a cycle
@@ -558,7 +566,8 @@ class Runtime:
                            seed_from=conversation.seed_from, model=model)
         self._set_base(AgentState.IDLE)
         self._reminded = time.time()
-        if conversation.duty is None:  # a duty waits for the user after it was closed
+        # A duty waits for the user after it was closed; a life goes on.
+        if conversation.duty is None or conversation.duty.kind == DutyKind.LIFE:
             self._schedule_duty()
         return conversation
 
@@ -1082,6 +1091,11 @@ class Runtime:
             raise ValueError(f"a cost budget needs prices for model {model_id!r}")
 
     def _info(self) -> ModelInfo:
+        """The model of the cycle under way: in a cycle a duty started by itself, the duty's
+        (Duty.model) when the Core offers it; otherwise the conversation's."""
+        duty = self._conversation.duty if self._conversation is not None else None
+        if self._own_time and duty is not None and duty.model in self._models:
+            return self._models[duty.model]
         assert self._model is not None
         return self._models[self._model]
 
@@ -1144,7 +1158,7 @@ class Runtime:
         conversation = self._conversation
         if conversation is not None:
             specs["TodoWrite"] = DUTY_TOOLS["TodoWrite"]
-            if conversation.duty is not None:
+            if conversation.duty is not None and conversation.duty.kind != DutyKind.LIFE:
                 specs["ask_for_help"] = DUTY_TOOLS["ask_for_help"]
             if conversation.duty is not None and conversation.duty.kind == DutyKind.GOAL:
                 specs["finish_goal"] = DUTY_TOOLS["finish_goal"]
@@ -1427,6 +1441,7 @@ class Runtime:
             # Wherever the turn ended, a message queued during it starts the next one,
             # unless it could not be sent now either (send): Stop keeps it, and nothing
             # starts while an append fails or the budget is exhausted.
+            self._own_time = False
             if self._inbox and not unsaved and not (
                     self._base == AgentState.FAILED and self._budget.exhausted()):
                 self._request_cycle("queued message")
@@ -1440,6 +1455,7 @@ class Runtime:
         await self._append()  # drain any backlog first
         await self._flush_results()
         await self._deliver_inbox()
+        self._own_time = self._duty_cause is not None  # a duty's, not the user's
         if self._duty_cause is not None:
             cause, self._duty_cause = self._duty_cause, None
             duty = self._conversation.duty if self._conversation is not None else None
@@ -1525,6 +1541,8 @@ class Runtime:
         elif self._wake_set:
             running = self._wake_set & set(self._ops)
             if self._duty_running() and running != self._wake_set:
+                if self._day_spent():  # it wakes the next day
+                    return
                 self._request_cycle(f"duty: {duties.FINISHED}", duties.FINISHED)
             elif not running:
                 self._request_cycle("wake-up")
@@ -1549,7 +1567,16 @@ class Runtime:
         if self._help is not None:
             self._log.decision("duty_paused", reason="waiting for help")
             return
+        if self._day_spent():
+            self._log.decision("duty_held", reason="the day's amount is spent")
+            self._wake_in(max(0.0, next_day() - time.time()), duties.NEW_DAY)
+            return
         self._wake_in(*duties.next_wake(duty, self._conversation.plan))
+
+    def _day_spent(self) -> bool:
+        """A life has spent today's amount (Budget.max_cost_usd_per_day)."""
+        duty = self._conversation.duty if self._conversation is not None else None
+        return duty is not None and duty.kind == DutyKind.LIFE and self._budget.day_spent()
 
     def _wake_in(self, delay: float, cause: str) -> None:
         self._duty_timer = asyncio.create_task(self._duty_due(delay, cause))
@@ -1574,6 +1601,9 @@ class Runtime:
         await asyncio.sleep(delay)
         self._duty_timer = None
         if self._waiting():
+            if self._day_spent():  # spent while it waited
+                self._schedule_duty()
+                return
             self._request_cycle(f"duty: {cause}", cause)
 
     # ── Budgets ──────────────────────────────────────────────────────────
@@ -1606,7 +1636,7 @@ class Runtime:
             return
 
     def _charge(self, usage: Usage, info: ModelInfo) -> None:
-        self._budget.charge(usage, cost_of(usage, info))
+        self._budget.charge(usage, cost_of(usage, info), own_time=self._own_time)
         self._emit(UsageUpdated(self._budget.snapshot()))
 
     # ── Maintenance ──────────────────────────────────────────────────────

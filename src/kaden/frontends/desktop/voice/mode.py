@@ -1,10 +1,10 @@
-"""Voice mode in the window: gets the speech models, opens the microphone, and runs the
-conversation (turns.Voice) on the open conversation's events."""
+"""Voice in the window: gets the speech models, opens the microphone, and runs the
+conversation (turns.Voice) on the open conversation's events. The microphone and the
+speaker are switched on and off apart."""
 
 from __future__ import annotations
 
 import asyncio
-import shutil
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -21,6 +21,7 @@ from kaden.frontends.desktop.voice.natural import (
     RECORDING_TYPES,
     RECORDINGS_DIR,
     installed,
+    prepare_recording,
     recording,
 )
 from kaden.frontends.desktop.voice.turns import Engine, Player, State, Voice
@@ -59,7 +60,8 @@ def _speaker() -> Player:
 
 
 class VoiceMode(QObject):
-    """`changed` is emitted whenever `on` or `status` changes. `ask` puts a question to
+    """`listening`: the microphone is on; `speaking`: replies are read aloud. `changed`
+    is emitted whenever either or `status` changes. `ask` puts a question to
     the user and answers whether they agreed. Nothing of speech is loaded until voice
     mode is first turned on. `natural`: speak with the natural voice (installed() when
     not given)."""
@@ -73,15 +75,17 @@ class VoiceMode(QObject):
                  speaker: Callable[[], Player] = _speaker,
                  models: tuple[download.Model, ...] | None = None,
                  transport: httpx2.AsyncBaseTransport | None = None,
-                 natural: bool | None = None) -> None:
+                 natural: bool | None = None,
+                 prepare: Callable[[Path, Path], None] = prepare_recording) -> None:
         super().__init__()
         self.natural = installed() if natural is None else natural
         self.controller, self.folder, self._ask = controller, folder, ask
         self._make_engine = engine or (_chatterbox if self.natural else _kokoro)
         self._make_microphone, self._make_speaker = microphone, speaker
-        self._models = download.models(natural=self.natural) if models is None else models
+        self._given_models = models  # instead of those the voice needs
+        self._prepare = prepare  # what Kaden keeps of a recording added
         self._transport = transport
-        self.on = False
+        self.listening = self.speaking = False
         self._recordings: list[str] = []  # the names of the voices copied from recordings
         self.voice = self.voices()[0]
         self.status = ""
@@ -93,12 +97,38 @@ class VoiceMode(QObject):
         self._streamed = False  # the reply under way came as deltas
         controller.listeners.append(self._event)
 
-    def toggle(self) -> None:
-        if self.on:
+    @property
+    def on(self) -> bool:
+        return self.listening or self.speaking
+
+    def toggle_microphone(self) -> None:
+        self._switch(not self.listening, self.speaking)
+
+    def toggle_speaker(self) -> None:
+        self._switch(self.listening, not self.speaking)
+
+    def _switch(self, listening: bool, speaking: bool) -> None:
+        was_on = self.on
+        self.listening, self.speaking = listening, speaking
+        if not self.on:
             self.stop()
-        else:
-            self.on = True
+            return
+        if not was_on:
             self._starting = asyncio.ensure_future(self._start())
+        elif self._voice is not None:
+            self._voice.set_speaking(speaking)
+            self._microphone_on(listening)
+            self._voice.set_listening(listening)
+        self.changed.emit()
+
+    def _microphone_on(self, on: bool) -> None:
+        assert self._voice is not None
+        if on and self._microphone is None:
+            self._microphone = self._make_microphone(self._voice.heard)
+            self._microphone.start()  # type: ignore[attr-defined]
+        elif not on and self._microphone is not None:
+            self._microphone.stop()  # type: ignore[attr-defined]
+            self._microphone = None
 
     def stop(self) -> None:
         if self._starting is not None:
@@ -108,13 +138,31 @@ class VoiceMode(QObject):
         if self._microphone is not None:
             self._microphone.stop()  # type: ignore[attr-defined]
         self._voice = self._microphone = self._starting = None
-        self.on, self.progress = False, None
+        self.listening = self.speaking = False
+        self.progress = None
         self._say("")
 
     def voices(self) -> list[str]:
         if self.natural:
             return [NATURAL, *self._recordings]
         return list(KOKORO_VOICES)
+
+    def models(self) -> tuple[download.Model, ...]:
+        """The speech models voice mode needs, as it is set."""
+        if self._given_models is not None:
+            return self._given_models
+        return download.models(natural=self.natural)
+
+    def use(self, controller: Controller) -> None:
+        """Talk with the conversation `controller` shows from now on; a voice conversation
+        under way with another one ends."""
+        if controller is self.controller:
+            return
+        if self.on:
+            self.stop()
+        self.controller.listeners.remove(self._event)
+        self.controller = controller
+        controller.listeners.append(self._event)
 
     def set_voice(self, name: str) -> None:
         """Speak as `name` (one of voices()) from now on; any other name changes nothing."""
@@ -134,8 +182,11 @@ class VoiceMode(QObject):
             self.set_voice(name)
 
     async def add_recording(self, path: Path) -> str:
-        """Copy the recording at `path` into the voice folder as a voice named after the
-        file, and speak as it; its name. OSError when it cannot be copied."""
+        """Keep what the voice hears of the recording at `path` (natural.start_of: its
+        first half minute of talking, long pauses out) in the voice folder, as a voice
+        named after the file, and speak as it; its name. Prepared once, here, rather than
+        whenever the voice is made ready. OSError, or the audio library's error, when it
+        cannot be read or kept."""
         if self.folder is None:
             raise RuntimeError("Voice needs Kaden's data folder, and there is none.")
         folder = self.folder / RECORDINGS_DIR
@@ -144,7 +195,7 @@ class VoiceMode(QObject):
             folder.mkdir(parents=True, exist_ok=True)
             if (old := recording(self.folder, path.stem)) is not None:  # one per name
                 old.unlink()
-            shutil.copyfile(path, folder / f"{path.stem}{path.suffix.lower()}")
+            self._prepare(path, folder / f"{path.stem}.wav")
         await asyncio.to_thread(copy)
         self._recordings = sorted({*self._recordings, path.stem} - {NATURAL})
         self.set_voice(path.stem)
@@ -192,7 +243,7 @@ class VoiceMode(QObject):
         if self.folder is None:
             raise RuntimeError("Voice needs Kaden's data folder, and there is none.")
         self._say("Getting voice ready…")
-        needed = await asyncio.to_thread(download.missing, self.folder, self._models)
+        needed = await asyncio.to_thread(download.missing, self.folder, self.models())
         if needed and not await self._get(needed):
             self._say("")
             return False
@@ -221,8 +272,9 @@ class VoiceMode(QObject):
 
     @property
     def spoken(self) -> bool:
-        """Messages sent now are part of a voice conversation."""
-        return self._voice is not None
+        """Messages sent now are part of a spoken conversation: their replies are read
+        aloud."""
+        return self._voice is not None and self.speaking
 
     async def _start(self) -> None:
         try:
@@ -230,24 +282,24 @@ class VoiceMode(QObject):
                 self.stop()
                 return
             assert self._engine is not None
-            voice = Voice(self._engine, self._make_speaker(), self._said, self._moved,
-                          failed=self._failed)
-            microphone = self._make_microphone(voice.heard)
-            microphone.start()  # type: ignore[attr-defined]
+            self._voice = Voice(self._engine, self._make_speaker(), self._said, self._moved,
+                                failed=self._failed, listening=self.listening,
+                                speaking=self.speaking)
+            self._microphone_on(self.listening)
         except asyncio.CancelledError:
             raise
-        except Exception as e:  # noqa: BLE001 - shown; voice mode stays off
+        except Exception as e:  # noqa: BLE001 - shown; voice stays off
             self.stop()
             self.controller.model.notify(f"Voice could not start: {e}")
             return
-        self._voice, self._microphone, self._starting = voice, microphone, None
-        voice.start(agent_busy=self.controller.model.busy)
+        self._starting = None
+        self._voice.start(agent_busy=self.controller.model.busy)
 
     async def _get(self, needed: list[download.Model]) -> bool:
         size = download.megabytes(needed)
         if not await self._ask(
                 "Download the speech models?",
-                f"Voice conversation needs speech models ({size} MB). They run on this "
+                f"Voice needs speech models ({size} MB). They run on this "
                 "computer: what you say is not sent to a speech service."):
             return False
         assert self.folder is not None
@@ -268,7 +320,7 @@ class VoiceMode(QObject):
         self.controller.model.notify(f"Voice stopped: {error}")
 
     def _said(self, text: str) -> None:
-        self.controller.send(text, spoken=True)
+        self.controller.send(text, spoken=self.speaking)
 
     def _moved(self) -> None:
         if self._voice is not None:

@@ -301,7 +301,7 @@ def mark(widget: QWidget, name: str, value: object) -> None:
 
 def icon(kind: str, color: str, size: int = 16) -> QIcon:
     """A line icon: "send" (an up arrow), "stop" (a square), "folder", "gear", "menu" (three
-    lines), "plus", "voice" (a sound wave), "copy", "check", "folded" and "unfolded" (chevrons), a plan step's "done", "todo" or "dropped", or a
+    lines), "plus", "microphone", "speaker", "copy", "check", "folded" and "unfolded" (chevrons), a plan step's "done", "todo" or "dropped", or a
     window control:
     "minimize", "maximize", "restore", "close"."""
     scale = 2
@@ -354,11 +354,24 @@ def icon(kind: str, color: str, size: int = 16) -> QIcon:
                                 Qt.PenCapStyle.RoundCap))
             for y in (0.3, 0.5, 0.7):
                 painter.drawLine(QPointF(s * 0.2, s * y), QPointF(s * 0.8, s * y))
-        case "voice":  # a sound wave: five bars
-            painter.setPen(QPen(QColor(color), size / 9, Qt.PenStyle.SolidLine,
+        case "microphone":  # a capsule over a cradle and a stand
+            painter.setPen(QPen(QColor(color), size / 11, Qt.PenStyle.SolidLine,
                                 Qt.PenCapStyle.RoundCap))
-            for x, half in ((0.2, 0.1), (0.35, 0.24), (0.5, 0.34), (0.65, 0.18), (0.8, 0.1)):
-                painter.drawLine(QPointF(s * x, s * (0.5 - half)), QPointF(s * x, s * (0.5 + half)))
+            painter.drawRoundedRect(QRectF(s * 0.38, s * 0.12, s * 0.24, s * 0.44),
+                                    s * 0.12, s * 0.12)
+            painter.drawArc(QRectF(s * 0.26, s * 0.24, s * 0.48, s * 0.46), 180 * 16, 180 * 16)
+            painter.drawLine(QPointF(s * 0.5, s * 0.7), QPointF(s * 0.5, s * 0.86))
+        case "speaker":  # a cone and two waves
+            painter.setPen(QPen(QColor(color), size / 11, Qt.PenStyle.SolidLine,
+                                Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            path = QPainterPath(QPointF(s * 0.14, s * 0.4))
+            for x, y in ((0.3, 0.4), (0.5, 0.22), (0.5, 0.78), (0.3, 0.6), (0.14, 0.6)):
+                path.lineTo(s * x, s * y)
+            path.closeSubpath()
+            painter.drawPath(path)
+            for radius in (0.17, 0.33):  # around the cone's mouth
+                painter.drawArc(QRectF(s * (0.5 - radius), s * (0.5 - radius),
+                                       s * radius * 2, s * radius * 2), -45 * 16, 90 * 16)
         case "plus":
             painter.setPen(QPen(QColor(color), size / 11, Qt.PenStyle.SolidLine,
                                 Qt.PenCapStyle.RoundCap))

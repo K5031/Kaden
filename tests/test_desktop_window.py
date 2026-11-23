@@ -38,7 +38,12 @@ from kaden.api import (
 )
 from kaden.frontends.desktop import app_menu, theme
 from kaden.frontends.desktop import window as window_module
-from kaden.frontends.desktop.viewmodel import AssistantItem, Controller, ConversationModel
+from kaden.frontends.desktop.viewmodel import (
+    AssistantItem,
+    Controller,
+    ConversationModel,
+    NoticeItem,
+)
 from kaden.frontends.desktop.window import (
     DATE_ROLE,
     PREVIEW_ROLE,
@@ -1266,7 +1271,6 @@ async def test_settings_set_the_limit_per_sub_session(make, qapp, tmp_path):
 
 
 async def test_a_long_notice_is_folded(make, qapp):
-    from kaden.frontends.desktop.viewmodel import NoticeItem
     from kaden.frontends.desktop.window import Detail, NoticeLine
 
     h: Harness = await make()
@@ -1287,8 +1291,8 @@ async def test_the_menus_live_behind_two_buttons_and_their_shortcuts_still_work(
     window, _controller, _ = await open_window(h)
     assert not window.findChildren(QMenuBar)
     texts = [a.text() for a in window.menu_button.menu().actions() if a.text()]
-    assert texts == ["&New chat", "New chat in another &folder…", "Run &continuously…", "S&top", "&View",
-                     "&Model"]
+    assert texts == ["&New chat", "New chat in another &folder…", "Set a &duty…", "S&top",
+                     "&View", "&Model"]
     profile = window.profile_button.menu()
     window._fill_profile_header()
     texts = [a.text() for a in profile.actions() if a.text() and a.isVisible()]
@@ -2202,7 +2206,8 @@ async def test_a_voice_is_added_from_a_recording_in_settings(make, qapp, tmp_pat
     async def yes(text: str, details: str) -> bool:
         return True
 
-    voice = VoiceMode(controller, tmp_path / "voice", yes, models=(), natural=True)
+    voice = VoiceMode(controller, tmp_path / "voice", yes, models=(), natural=True,
+                      prepare=lambda source, target: target.write_bytes(source.read_bytes()))
     dialog = SettingsDialog(window, h.runtime, controller, await h.runtime.settings(), [],
                             0.0, voice=voice)
     assert not dialog.add_voice.isHidden() and dialog.voice.currentText() == NATURAL
@@ -2211,6 +2216,11 @@ async def test_a_voice_is_added_from_a_recording_in_settings(make, qapp, tmp_pat
     for button in (dialog.play_voice, dialog.add_voice, dialog.remove_voice):  # not cut off
         assert button.width() >= button.sizeHint().width(), button.text()
     dialog.close()
+    dialog._choose_recording(voice)  # the picker shows the kinds Kaden reads
+    [kinds] = dialog.recording_dialog.nameFilters()
+    for kind in ("wav", "mp3", "flac", "ogg", "opus", "m4a"):
+        assert f"*.{kind}" in kinds
+    dialog.recording_dialog.reject()
     recording = tmp_path / "Ada.mp3"
     recording.write_bytes(b"ID3")
     await dialog._add_recording(voice, recording)
@@ -2237,3 +2247,46 @@ def test_the_hint_in_the_message_box_starts_after_the_cursor(qapp):
     assert inked and min(inked) >= caret_ends + 1  # a pixel's gap
     box.setPlainText("Hi")
     assert box.placeholderText() == "Message Kaden"  # kept for when the box empties
+
+
+async def test_closing_hides_to_the_tray_and_quit_quits(make, qapp):
+    """With a system tray, closing the window leaves Kaden running (a duty, background
+    work); the tray brings it back; Quit quits."""
+    h: Harness = await make()
+    await h.start()
+    controller = Controller(h.runtime, ConversationModel())
+    window = MainWindow(h.runtime, controller, tray=True)
+    closed: list[bool] = []
+    window.closed.connect(lambda: closed.append(True))
+    window.show()
+    window.close()
+    assert window.isHidden() and closed == []  # hidden, still running
+    assert window.tray is not None and window.told_of_tray  # said once, as a tray message
+    window.tray.open_action.trigger()
+    assert not window.isHidden()
+    window.tray.quit_action.trigger()
+    assert closed == [True]
+
+
+async def test_without_a_tray_closing_quits(make, qapp):
+    h: Harness = await make()
+    await h.start()
+    window, _controller, _ = await open_window(h)
+    closed: list[bool] = []
+    window.closed.connect(lambda: closed.append(True))
+    window.close()
+    assert closed == [True] and window.tray is None
+
+
+async def test_without_the_sidebar_its_menu_and_settings_are_in_the_window(make, qapp):
+    h: Harness = await make()
+    await h.start()
+    window, _controller, _ = await open_window(h)
+    assert not window.view_menu_button.isVisibleTo(window)
+    window.show_sidebar(False)
+    assert window.sidebar.isHidden()
+    assert window.view_menu_button.isVisibleTo(window)
+    assert window.view_menu_button.menu() is window.menu_button.menu()  # the same menu
+    assert window.view_gear_button.isVisibleTo(window)  # Settings, bottom left
+    window.show_sidebar(True)
+    assert not window.sidebar.isHidden() and not window.view_gear_button.isVisibleTo(window)

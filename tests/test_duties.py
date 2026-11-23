@@ -97,7 +97,7 @@ async def test_turning_a_duty_on_starts_work_and_shows_it(make):
     assert "Keep the inbox answered" in request.system
     assert "TodoWrite" in [t.name for t in request.tools]
     assert "finish_goal" not in [t.name for t in request.tools]  # a duty, not a goal
-    assert notices(request)[0].endswith("[Runtime notice] Runs continuously: Keep the inbox answered")
+    assert notices(request)[0].endswith("[Runtime notice] New duty: Keep the inbox answered")
     [updated] = [e for e in h.rec.of(ConversationUpdated) if e.info.duty is not None]
     assert updated.info.duty == QUIET
     assert h.store.conversations[h.conversation.id].info.duty == QUIET
@@ -582,3 +582,117 @@ def test_the_agent_is_told_to_close_its_plan_when_it_finishes_a_goal():
     assert "TodoWrite" in told and "in the same message" in told
     assert "completed or left out" in told
     assert "reporting" not in told  # the runtime closes the step in progress itself
+
+
+# ── A life ──
+
+LIFE = Duty("You are Mira. You like old maps and bad puns.", DutyKind.LIFE,
+            min_interval_s=0.05, max_interval_s=0.3)
+
+
+async def test_a_life_is_framed_as_its_own_not_as_work(make):
+    """A life's time is its own: no task, no supervisor to ask, no goal to finish."""
+    h = await duty_harness(make, [Step(text="")])
+    await h.runtime.set_duty(LIFE)
+    await idle(h, 1)
+    [request] = h.core.requests
+    assert "## Your life" in request.system and "old maps" in request.system
+    assert "## Your duty" not in request.system
+    # How it comes back is a fact it is told, not a beat it is kept to: the time it
+    # chooses, the user writing, its own work finishing; the longest wait only as a net.
+    assert "you go on after" in request.system and "rest until a later time" in request.system
+    names = {t.name for t in request.tools}
+    assert "TodoWrite" in names and names.isdisjoint({"ask_for_help", "finish_goal"})
+    assert notices(request)[0].endswith(f"[Runtime notice] Your life: {LIFE.instruction}")
+
+
+def test_a_life_is_awake_unless_it_chose_to_rest():
+    """With nothing due it goes on after its shortest wait; a later time in its plan is
+    its rest, up to its longest wait; a duty with nothing due waits its longest."""
+    life = Duty("You are Mira.", DutyKind.LIFE, min_interval_s=60, max_interval_s=86_400)
+    now = 1_000_000.0
+    assert duties.next_wake(life, [], now) == (60, duties.CHECK_IN)
+    resting = [PlanItem("Read the map book", PlanStatus.TODO, now + 3 * 3600)]
+    assert duties.next_wake(life, resting, now) == (3 * 3600, duties.DUE)
+    far = [PlanItem("Visit the archive", PlanStatus.TODO, now + 3 * 86_400)]
+    assert duties.next_wake(life, far, now) == (86_400, duties.CHECK_IN)
+    duty = Duty("Watch the inbox", min_interval_s=60, max_interval_s=3600)
+    assert duties.next_wake(duty, [], now) == (3600, duties.CHECK_IN)
+
+
+async def test_time_passing_wakes_a_life(make):
+    h = await duty_harness(make, [Step(text=""), Step(text="")])
+    await h.runtime.set_duty(LIFE)
+    await idle(h, 2)
+    assert "Time has passed." in notices(h.core.requests[1])[-1]
+
+
+async def test_a_restart_does_not_pause_a_life(make):
+    """A life goes on after Kaden restarts; a duty waits for the user."""
+    h = await duty_harness(make, [Step(text="")])
+    await h.runtime.set_duty(LIFE)
+    await idle(h, 1)
+    conversation = h.conversation.id
+    await h.close()
+    again: Harness = await make(core=ScriptedCore([Step(text="")]), store=h.store, budget=LIMIT)
+    await again.start(conversation)
+    assert again.runtime.snapshot().duty_wake_at is not None
+    await idle(again, 1)
+    assert "Time has passed." in notices(again.core.requests[0])[-1]
+
+
+async def test_a_life_stops_at_the_days_amount_and_still_answers_the_user(make):
+    """The daily amount holds back what a life does by itself, not a reply."""
+    h = await duty_harness(make, [Step(text=""), Step(text="Hi!")],
+                           budget=Budget(max_cost_usd_per_day=1e-9))
+    await h.runtime.set_duty(LIFE)
+    await idle(h, 1)  # its first cycle spends the day's amount
+    wake_at = h.runtime.snapshot().duty_wake_at
+    tomorrow = datetime.now().astimezone().replace(hour=0, minute=0, second=0,
+                                                   microsecond=0).timestamp() + 86400
+    assert wake_at is not None and abs(wake_at - tomorrow) < 3700  # the next day
+    await asyncio.sleep(0.4)
+    assert len(h.core.requests) == 1
+    await h.turn("hello")
+    assert len(h.core.requests) == 2 and h.runtime.snapshot().state == AgentState.IDLE
+    assert not h.rec.of(Failure)
+
+
+async def test_only_its_own_time_counts_toward_the_days_amount(make):
+    """Talking with the user is not the life's own time: it does not spend its day."""
+    h = await duty_harness(make, [Step(text="Hi!"), Step(text="")],
+                           budget=Budget(max_cost_usd_per_day=1.0))
+    await h.turn("hello")  # before it lives: the user's
+    assert h.runtime._budget.day_cost() == 0.0
+    await h.runtime.set_duty(LIFE)
+    await idle(h, 2)  # its own cycle
+    assert h.runtime._budget.day_cost() > 0.0
+
+
+async def test_its_own_time_runs_on_the_lifes_model_and_talk_on_the_conversations(make):
+    """A cheaper model for what it does by itself; the user is answered by the one they
+    chose."""
+    h = await duty_harness(make, [Step(text=""), Step(text="Hi!")])
+    life = Duty(LIFE.instruction, DutyKind.LIFE, min_interval_s=30, max_interval_s=60,
+                model="fake-2")
+    await h.runtime.set_duty(life)
+    await idle(h, 1)
+    await h.turn("hello")
+    assert [r.model for r in h.core.requests] == ["fake-2", "fake-1"]
+    assert h.runtime.snapshot().conversation.duty.model == "fake-2"  # kept with it
+
+
+async def test_a_days_spending_starts_again_the_next_day(tmp_path):
+    from kaden.api import Usage
+    from kaden.runtime.budget import BudgetTracker
+
+    tracker = BudgetTracker(Budget(max_cost_usd_per_day=1.0))
+    tracker.load(tmp_path / "usage.json")
+    tracker.charge(Usage(1, 1), 0.6, own_time=True)
+    assert tracker.day_cost() == pytest.approx(0.6)
+    tracker.totals.day = "2000-01-01"  # as if it was spent on another day
+    assert tracker.day_cost() == 0.0
+    tracker.charge(Usage(1, 1), 0.3, own_time=True)
+    tracker.charge(Usage(1, 1), 0.2)  # not its own time
+    assert tracker.day_cost() == pytest.approx(0.3)
+    assert tracker.totals.cost_usd == pytest.approx(1.1)  # the lifetime total goes on

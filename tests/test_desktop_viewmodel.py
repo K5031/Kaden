@@ -834,11 +834,11 @@ async def test_a_runtime_notice_is_shown_as_a_notice_not_as_the_users_words(make
     info = await h.start()
     model, _controller, _ = await attach(h)
     await h.runtime.set_duty(Duty("Watch the inbox"))
-    await eventually(lambda: any("Runs continuously: Watch the inbox" in n.text
+    await eventually(lambda: any("New duty: Watch the inbox" in n.text
                                  for n in of(model, NoticeItem)))
-    assert not any("Runs continuously" in u.text for u in of(model, UserItem))
-    [notice] = [n for n in of(model, NoticeItem) if "Runs continuously" in n.text]
-    assert notice.text == "Runs continuously: Watch the inbox"
+    assert not any("New duty" in u.text for u in of(model, UserItem))
+    [notice] = [n for n in of(model, NoticeItem) if "New duty" in n.text]
+    assert notice.text == "New duty: Watch the inbox"
     [stored] = await h.runtime.list_conversations()
     assert stored.id == info.id and conversation_label(stored) == "New chat"
 

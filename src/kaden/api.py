@@ -284,7 +284,7 @@ class Message:
     created_at: float  # unix seconds
     author: Author = Author.USER  # of a USER message; see from_user
     hidden: bool = False  # one of Kaden's that only tells the model how to behave
-    spoken: bool = False  # the user said it aloud (RuntimeAPI.send)
+    spoken: bool = False  # its reply is read aloud to the user (RuntimeAPI.send)
 
     @property
     def from_user(self) -> bool:
@@ -497,6 +497,10 @@ class ConversationInfo:
 class DutyKind(StrEnum):
     DUTY = "duty"  # runs until a person turns it off
     GOAL = "goal"  # also ends when the agent declares it reached (finish_goal)
+    # The agent's own time, not work: someone's life, as Kaden (the app) lives one. No ask_for_help or finish_goal;
+    # woken again when its conversation is resumed (a restart does not pause it); held to
+    # Budget.max_cost_usd_per_day.
+    LIFE = "life"
 
 
 @dataclass(frozen=True, slots=True)
@@ -505,12 +509,16 @@ class Duty:
     one (RuntimeAPI.set_duty). While the agent is idle it wakes on the first operation to
     finish (not the whole batch), on a message, and at the earliest due open plan item,
     held between min_interval_s and max_interval_s after the cycle ends; with nothing due,
-    at max_interval_s."""
+    at max_interval_s, or a life (DutyKind.LIFE) at min_interval_s."""
 
     instruction: str
     kind: DutyKind = DutyKind.DUTY
     min_interval_s: float = 60.0
     max_interval_s: float = 3600.0
+    # The model of the cycles the duty starts by itself (None: the conversation's); a
+    # message from the user is answered with the conversation's model. One the Core does
+    # not offer is not used.
+    model: str | None = None
 
 
 class PlanStatus(StrEnum):
@@ -1358,12 +1366,18 @@ class Budget:
     check refuses. When a budget cuts inference off mid-stream, the streamed text is
     committed (text only, as with Stop) and the agent fails with Failure(BUDGET). An
     abandoned call stops counting toward max_duration_s when it is abandoned.
+
+    max_cost_usd_per_day holds back only the cycles a life (DutyKind.LIFE) starts by
+    itself, and counts only theirs: once the day's cost of what the duty started (local
+    calendar day) reaches it, the life wakes again the next day. It exhausts nothing: a
+    message from the user is answered, within the other dimensions.
     """
 
     max_tokens: int | None = None
     max_cost_usd: float | None = None
     max_duration_s: float | None = None
     max_tool_calls: int | None = None
+    max_cost_usd_per_day: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1573,7 +1587,7 @@ class MessageQueued:
     message_id: str
     text: str
     attachments: Sequence[Attachment] = ()  # what the user attached to it
-    spoken: bool = False  # said aloud (RuntimeAPI.send)
+    spoken: bool = False  # its reply is read aloud (RuntimeAPI.send)
     author: Author = Author.USER  # KADEN: a notice (RuntimeAPI.notify)
 
 
@@ -1662,8 +1676,8 @@ class MemoriesChanged:
 class DutyScheduled:
     """When the open conversation's agent is next woken by itself (Unix time): by its duty,
     or without one for a step of its plan that falls due. None: it is not, because the
-    agent is working, nothing is due, or the duty is paused (Stop, a failure, a restart)
-    until a person sends a message or activates it."""
+    agent is working, nothing is due, or the duty is paused (Stop, a failure, a restart
+    other than a life's) until a person sends a message or activates it."""
 
     wake_at: float | None
 
@@ -1842,7 +1856,8 @@ class RuntimeAPI(Protocol):
     module does not support them; frontends then hide those controls.
 
     start() leaves the agent IDLE. A resumed conversation has no pending
-    wake-up, so it never runs before the user sends a message or activates it. The
+    wake-up, so it never runs before the user sends a message or activates it; one whose
+    duty is a life (DutyKind.LIFE) is woken again on its schedule. The
     runtime is built holding the data dir lock, taken before any module is built and held
     until shutdown; where another process holds it (InstanceLockedError), the frontend
     runs on a runtime that only shows why. send() in IDLE authorizes a
@@ -1940,8 +1955,8 @@ class RuntimeAPI(Protocol):
         cannot be read; nothing is sent then. `text` may
         be empty when there are files.
 
-        `spoken`: the user said this aloud and hears the reply read (a voice
-        conversation), kept as Message.spoken. When it differs from the message the user
+        `spoken`: the user hears the reply read aloud, whether they said this or typed
+        it, kept as Message.spoken. When it differs from the message the user
         wrote before, the runtime puts a hidden notice after this one that tells the
         agent, so that it answers in a way that can be listened to; the system prompt
         does not change."""

@@ -93,14 +93,14 @@ line-length = 100
 
 # Desktop bundles (`briefcase build`); see docs/development.md.
 [tool.briefcase]
-project_name = "Kaden"
+project_name = "Kaden Chat"
 bundle = "io.github.k5031"
 version = "0.0.0"
 url = "https://github.com/K5031/Kaden"
 author = "K5031"
 
 [tool.briefcase.app.kaden-desktop]
-formal_name = "Kaden"
+formal_name = "Kaden Chat"
 description = "An AI agent that works for you on your computer."
 sources = ["src/kaden_desktop"]
 # Kaden itself, installed with its metadata: its modules are found through entry points.

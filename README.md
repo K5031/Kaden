@@ -1,4 +1,4 @@
-# Kaden
+# Kaden Chat
 
 An AI agent for your computer, in a desktop app. It runs commands, works with
 files and searches the web, decides on its own only what is safe and asks you about the
@@ -7,7 +7,7 @@ OpenAI-compatible models.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/empty-dark.png">
-  <img src="docs/images/empty-light.png" alt="The Kaden desktop app on a new chat">
+  <img src="docs/images/empty-light.png" alt="The Kaden Chat desktop app on a new chat">
 </picture>
 
 The [desktop app](docs/desktop-app.md), ready for a new chat.

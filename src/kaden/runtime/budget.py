@@ -9,6 +9,7 @@ import os
 import time
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -112,6 +113,8 @@ class Totals:
     cost_usd: float = 0.0
     tool_calls: int = 0
     elapsed_s: float = 0.0
+    day: str = ""  # the local calendar day day_cost_usd is for (ISO date)
+    day_cost_usd: float = 0.0  # of what a duty started by itself, that day
 
 
 def _read_totals(path: Path) -> Totals:
@@ -124,6 +127,17 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data))
     os.replace(tmp, path)
+
+
+def _today() -> str:
+    return datetime.now().astimezone().date().isoformat()
+
+
+def next_day() -> float:
+    """When the next local calendar day begins (Unix time)."""
+    now = datetime.now().astimezone()
+    return (now.replace(hour=0, minute=0, second=0, microsecond=0)
+            + timedelta(days=1)).timestamp()
 
 
 class BudgetTracker:
@@ -214,12 +228,26 @@ class BudgetTracker:
         self.save()
         return None
 
-    def charge(self, usage: Usage, cost: float) -> None:
+    def charge(self, usage: Usage, cost: float, *, own_time: bool = False) -> None:
+        """Count what a request used; `own_time`: of a cycle a duty started by itself,
+        which alone counts toward the day's cost (Budget.max_cost_usd_per_day)."""
         self.totals.input_tokens += usage.input_tokens
         self.totals.output_tokens += usage.output_tokens
         self.totals.cached_tokens += usage.cached_tokens
         self.totals.cost_usd += cost
+        if own_time:
+            self.totals.day_cost_usd = self.day_cost() + cost
+            self.totals.day = _today()
         self.save()
+
+    def day_cost(self) -> float:
+        """What a duty's own cycles have cost today (the local calendar day)."""
+        return self.totals.day_cost_usd if self.totals.day == _today() else 0.0
+
+    def day_spent(self) -> bool:
+        """Today's cost has reached Budget.max_cost_usd_per_day."""
+        limit = self.budget.max_cost_usd_per_day
+        return limit is not None and self.day_cost() >= limit
 
     def snapshot(self) -> UsageSnapshot:
         t, b = self.totals, self.budget
@@ -229,6 +257,7 @@ class BudgetTracker:
             "max_cost_usd": t.cost_usd,
             "max_duration_s": elapsed,
             "max_tool_calls": t.tool_calls,
+            "max_cost_usd_per_day": self.day_cost(),
         }
         remaining = {
             name: max(0.0, limit - used[name])

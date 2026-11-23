@@ -18,9 +18,8 @@ models at speaking speed.
   hands speaking to a `Speech` (`Kokoro` or `Chatterbox`) and transcribing to a
   `Listener` (`Parakeet`, or [Whisper on the GPU](2026-11-23-whisper-listens-on-the-gpu.md)
   with the natural voice).
-- **Its full English model**, so Kaden speaks English only: the multilingual model was
-  [tried for Chinese and dropped](../rejected/2026-11-22-talking-in-chinese.md), its
-  English sounding worse to the user.
+- **Its English model,** so Kaden speaks English only: the multilingual model was
+  [tried for Chinese twice and dropped](../rejected/2026-11-22-talking-in-chinese.md).
 - **Python 3.14.** RTX 50 GPUs need PyTorch 2.7 or later, which `chatterbox-tts` allows on
   Python 3.14 only (it holds PyTorch at 2.6 below that). The extra installs nothing on
   older Pythons, so there Kaden speaks with Kokoro.

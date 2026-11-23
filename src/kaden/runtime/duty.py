@@ -14,6 +14,7 @@ TURNED_ON = "the duty was turned on"
 DUE = "a plan item is due"
 CHECK_IN = "scheduled check-in"
 FINISHED = "background work finished"
+NEW_DAY = "a new day"  # a life held back by its daily amount wakes again
 OPEN = (PlanStatus.TODO, PlanStatus.DOING)
 CLOSE_PLAN = (
     "Steps are still open. Before you end your turn, bring the todo list up to date with "
@@ -63,7 +64,19 @@ def prompt(duty: Duty | None, plan: Sequence[PlanItem], *, in_view: bool = False
     conversation itself shows (`in_view`: the agent's TodoWrite call is among the
     messages) is left out, so that updating it does not change the prompt."""
     parts = []
-    if duty is not None:
+    if duty is not None and duty.kind == DutyKind.LIFE:
+        parts.append(
+            f"## Your life\n{duty.instruction}\n\n"
+            "Your time is your own: no one is waiting on you, and nothing has to be done. "
+            "You have your tools, a folder of your own, the web, and memory to keep what "
+            "you want to remember. When you end your turn, you go on after "
+            f"{_span(duty.min_interval_s)}, unless you rest until a later time you choose "
+            "(a step of your plan given a due time with TodoWrite, at most "
+            f"{_span(duty.max_interval_s)} ahead). The user writing, or background work of "
+            "yours finishing, wakes you sooner. When the user writes, you answer them. Text you "
+            "write in a turn the user did not start reaches them as a message; a turn that "
+            "ends without text reaches no one.")
+    elif duty is not None:
         until = (" until the goal is reached; then call finish_goal with a short report"
                  if duty.kind == DutyKind.GOAL else "")
         parts.append(
@@ -99,8 +112,12 @@ def notice(cause: str, duty: Duty | None) -> str:
     """The message that starts a cycle a duty started. The one that turns it on states the
     task, so the transcript keeps it after the duty ends (a goal reached mid-cycle)."""
     goal = duty is not None and duty.kind == DutyKind.GOAL
+    if duty is not None and duty.kind == DutyKind.LIFE:
+        return {TURNED_ON: f"Your life: {duty.instruction}", NEW_DAY: "A new day began.",
+                DUE: "A step in your plan is due.", FINISHED: "Background work finished.",
+                }.get(cause, "Time has passed.")
     if cause == TURNED_ON and duty is not None:
-        return f"{'New goal' if goal else 'Runs continuously'}: {duty.instruction}"
+        return f"{'New goal' if goal else 'New duty'}: {duty.instruction}"
     says = _SAYS.get(cause, "{cause}").format(kind="goal" if goal else "work", cause=cause)
     return f"{says} Carry on, or end your turn if there is nothing to do now."
 
@@ -156,11 +173,14 @@ def parse_plan(items: Sequence[dict[str, Any]], now: float) -> list[PlanItem]:
 def next_wake(duty: Duty, plan: Sequence[PlanItem], now: float | None = None
               ) -> tuple[float, str]:
     """(seconds from now, cause): the earliest open item due, held between the duty's
-    intervals; with nothing due, the maximum interval."""
+    intervals; with nothing due, the maximum interval, or for a life the minimum: it is
+    awake unless it chose to rest until a later time."""
     now = time.time() if now is None else now
     due = [i.due for i in plan if i.due is not None and i.status in OPEN]
     if due and min(due) - now < duty.max_interval_s:
         return max(duty.min_interval_s, min(due) - now), DUE
+    if not due and duty.kind == DutyKind.LIFE:
+        return duty.min_interval_s, CHECK_IN
     return duty.max_interval_s, CHECK_IN
 
 
@@ -171,4 +191,5 @@ def check(duty: Duty) -> Duty:
         raise ValueError("a duty needs an instruction")
     if not 0 < duty.min_interval_s <= duty.max_interval_s:
         raise ValueError("a duty's intervals must be 0 < minimum <= maximum")
-    return Duty(instruction, DutyKind(duty.kind), duty.min_interval_s, duty.max_interval_s)
+    return Duty(instruction, DutyKind(duty.kind), duty.min_interval_s, duty.max_interval_s,
+                duty.model)

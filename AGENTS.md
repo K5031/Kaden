@@ -1,7 +1,7 @@
-# Kaden
+# Kaden Chat
 
-Modular AI agent application. It is built to work without supervision, also headless and
-driven by another program. Read before coding:
+Modular AI agent application (package and command `kaden`). It is built to work without
+supervision, also headless and driven by another program. Read before coding:
 - `SPEC.md`: product requirements: what Kaden does.
 - `src/kaden/api.py`: normative module contracts (Core, Memory, Tools, Frontend, RuntimeAPI). Spec section 16 summarizes the behavior it cannot express.
 

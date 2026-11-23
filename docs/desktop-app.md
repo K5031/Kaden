@@ -77,10 +77,10 @@ another reason, the Settings window opens with the message.
 | To | Do this |
 |---|---|
 | Move, resize or maximize the window | Drag the conversation's title bar or the top of the sidebar; double-click it to maximize. Drag any edge to resize. Minimize, maximize and close are at the top right. |
-| Find the menus | **☰** at the top of the sidebar: new chat, run continuously, stop, view (zoom, theme, archived conversations) and model. Your name at the bottom left: settings, memory, tool servers, help and quit; the gear next to it opens Settings. Shortcuts work without opening a menu. |
+| Find the menus | **☰** at the top of the sidebar: new chat, set a duty, stop, view (zoom, theme, archived conversations) and model. Your name at the bottom left: settings, memory, tool servers, help and quit; the gear next to it opens Settings. Shortcuts work without opening a menu. |
 | Send a message | Type it and press **Enter**. **Shift+Enter** starts a new line. |
 | Attach a file | Click **+** in the message box, drop it anywhere on the window, or paste it (a copied picture or screenshot works too). It waits above the message box, a picture with a small preview, until you send; ✕ takes it off. See [Attaching files](using-kaden.md#attaching-files). |
-| Talk instead of typing | Click the sound-wave button in the message box. Kaden listens, sends what you said when you stop talking, and reads the reply aloud; the message box shows whether it is listening, thinking or speaking. **Esc** stops the reading. Click the button again to end. See [Talking with Kaden](using-kaden.md#talking-with-kaden). |
+| Talk instead of typing, or hear the replies | Click the microphone button in the message box to talk: Kaden sends what you said when you stop talking. Click the speaker button to hear each reply read aloud. Use either or both; the message box shows whether it is listening, thinking or speaking. **Esc** stops the reading. Click a button again to turn it off. See [Talking with Kaden](using-kaden.md#talking-with-kaden). |
 | Run a skill | Send its name as a message: `/consolidate-memory`. See [Skills](concepts.md#skills). |
 | Stop Kaden | Press the round button in the message box (it shows a square while Kaden works) or **Esc**. |
 | Answer a permission request | Choose **Allow once**, **Allow for this conversation** or **Deny** on the card above the message box. |
@@ -100,7 +100,7 @@ another reason, the Settings window opens with the message.
 | Give Kaden more tools | **Settings → Tool servers**: add GitHub, a database and the like. See [More tools](using-kaden.md#more-tools-mcp). |
 | Open work Kaden handed off | Its sub-sessions are listed under the conversation, with a dot while they work: click one to open it there, talk to it, approve its steps or stop it. Click the conversation to go back. Right-click one to resume, change its spending limit, rename, archive or delete it; the limit for new ones is in **Settings**. See [Sub-sessions](concepts.md#sub-sessions). |
 | Fold a project | Conversations are grouped by their folder; click a folder's name to fold or unfold it. |
-| Give a conversation standing work | **☰ → Run continuously…**: what to keep doing, for how long, how often to check in, and the plan; **Turn off** ends it. See [Running continuously](concepts.md#running-continuously). |
+| Give a conversation standing work | **☰ → Set a duty…**: what to keep doing, for how long, how often to check in, and the plan; **Turn off** ends it. See [Duties](concepts.md#duties). |
 | Change the model | Click the model's name under the message box, or **☰ → Model**. |
 | Change what Kaden may do on its own | Click the mode under the message box (Auto, Work folder, Read only, Ask first, No tools). Letting it do more asks you first. See [Permissions](settings.md#permissions). |
 | Change settings | The gear at the bottom left, or **Ctrl+,**. Settings has sections down the left: General, Spending, Permissions, Instructions, Memory and Tool servers. |
@@ -122,7 +122,7 @@ deletion does not reach.
 
 Hover the conversation's title to see its folder. What Kaden has spent, across all
 conversations, is at the top of the menu under your name; when you pass 80% of your
-spending limit, a notice in the conversation says so. Under the message box are the permission mode and the model. A conversation that runs continuously shows when it checks in next, next to its title.
+spending limit, a notice in the conversation says so. Under the message box are the permission mode and the model. A conversation with a duty shows when it checks in next, next to its title.
 
 At start the app opens maximized and reopens your most recent conversation, or the one
 named with `kaden --conversation ID`.

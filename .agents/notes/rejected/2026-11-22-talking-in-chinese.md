@@ -1,6 +1,6 @@
 # Agent Note: Talking in Chinese
 
-Status: rejected — Chatterbox's multilingual model speaks Chinese, but its English sounded worse to the user than the English model's, and they chose English
+Status: rejected — tried twice: the multilingual model's English sounded worse to the user than the English model's, and, chosen as a setting beside it, its Chinese did not sound good enough to them to keep
 
 ## Problem
 
@@ -27,6 +27,22 @@ On an RTX 5060, with Kaden's own download and engine code:
   time) stopped in every run; about 1 s per sentence, 18 s to load, 4.3 GB of GPU memory.
   SenseVoice transcribed its Chinese and English back almost word for word.
 - Played side by side, the user found the English model's English better than V3's.
+
+## The second try
+
+Asked again, with the options laid out (Kokoro for Chinese sentences in another voice,
+the multilingual model for everything, or both models swapped with a pause at each change
+of language), the user first chose the multilingual model for everything, then a setting
+(Settings → General → Languages): English with the English model, or English and Chinese
+with the multilingual V3 model, Whisper choosing between the two languages by its own
+first guess. It worked on the user's GPU (Chinese spoken in Chinese and heard back as
+Chinese, about 1.5 s a sentence); used, its Chinese did not sound good enough to the user,
+and it was removed.
+
+What the try left that stays: Whisper is loaded at float32 and halved, as loading it at
+float16 set torch's default dtype for the whole process while Chatterbox loaded on the
+other thread; and a transcript that is only one of Whisper's stock inventions on noise
+("Thank you.") is dropped.
 
 ## Alternatives considered
 

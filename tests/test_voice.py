@@ -8,6 +8,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import asyncio
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -32,6 +33,17 @@ def test_only_words_are_read_aloud():
         "It costs $3.50 (about 20% more), café prices."
 
 
+
+
+def test_whispers_stock_phrases_alone_are_not_taken_as_speech():
+    """On noise Whisper writes "Thank you." and the like with confidence; said by someone,
+    they come with other words."""
+    from kaden.frontends.desktop.voice.natural import stock_phrase
+
+    for heard in ("Thank you.", "thank you!", "Thanks for watching!", "you", "Bye."):
+        assert stock_phrase(heard), heard
+    for heard in ("Thank you, that fixed it.", "Can you commit it?"):
+        assert not stock_phrase(heard), heard
 
 def test_a_reply_is_cut_into_sentences_while_it_streams():
     sentences = Sentences()
@@ -288,6 +300,90 @@ async def test_turned_on_while_the_agent_works_it_waits_for_its_turn():
     assert voice.state is State.LISTENING
 
 
+async def test_with_the_microphone_alone_what_is_said_is_sent_and_the_reply_not_read():
+    engine, speaker, sent = ScriptedEngine("what time is it"), Speaker(), []
+    voice = Voice(engine, speaker, sent.append, lambda: None, speaking=False)
+    voice.start()
+    voice.heard(TALK)
+    await eventually(lambda: sent == ["what time is it"])
+    voice.reply("It is noon. ")
+    voice.reply_ended()
+    voice.agent_idle()
+    assert voice.state is State.LISTENING
+    assert engine.spoke == [] and speaker.played == 0
+    voice.stop()
+
+
+async def test_with_the_speaker_alone_replies_are_read_and_nothing_is_heard():
+    engine, speaker, sent = ScriptedEngine("hello"), Speaker(), []
+    voice = Voice(engine, speaker, sent.append, lambda: None, listening=False)
+    voice.start()
+    assert voice.state is State.QUIET
+    voice.heard(TALK)
+    await asyncio.sleep(0.02)
+    assert sent == []
+    voice.reply("It is noon. ")  # the answer to a typed message
+    voice.reply_ended()
+    await eventually(lambda: speaker.said == ["It is noon."])
+    await eventually(lambda: voice.state is State.QUIET)
+    assert sent == []
+    voice.stop()
+
+
+async def test_esc_stops_the_rest_of_a_reply_to_a_typed_message():
+    """The agent was not set going by something said, yet the reply interrupted is over
+    only when it ends."""
+    speaker = Speaker()
+    voice = Voice(ScriptedEngine(), speaker, lambda _text: None, lambda: None,
+                  listening=False)
+    speaker.hold = asyncio.Event()
+    voice.start()
+    voice.reply("Once upon a time, in a wood. There was a fox. ")
+    await eventually(lambda: voice.state is State.SPEAKING)
+    voice.interrupt()
+    assert voice.state is State.QUIET
+    speaker.hold = None
+    voice.reply("It lived in a den. ")
+    voice.reply_ended()
+    await asyncio.sleep(0.05)
+    assert speaker.said == ["Once upon a time, in a wood."]
+    voice.reply("The next one. ")
+    voice.reply_ended()
+    await eventually(lambda: speaker.said[-1] == "The next one.")
+    voice.stop()
+
+
+async def test_each_half_is_turned_off_and_on_while_the_other_goes_on():
+    voice, _engine, speaker, sent, _states = make("tell me a story", "and then")
+    speaker.hold = asyncio.Event()
+    voice.start()
+    voice.heard(TALK)
+    await eventually(lambda: sent == ["tell me a story"])
+    voice.reply("Once upon a time, in a wood. There was a fox. ")
+    await eventually(lambda: voice.state is State.SPEAKING)
+    voice.set_speaking(False)  # stops at once; the rest is not read
+    assert speaker.stopped == 1 and voice.state is State.THINKING
+    speaker.hold = None
+    voice.reply("It lived in a den. ")
+    voice.reply_ended()
+    voice.agent_idle()
+    assert voice.state is State.LISTENING
+    assert speaker.said == ["Once upon a time, in a wood."]
+    voice.set_listening(False)
+    assert voice.state is State.QUIET
+    voice.heard(TALK)
+    await asyncio.sleep(0.02)
+    assert sent == ["tell me a story"]
+    voice.set_listening(True)
+    assert voice.state is State.LISTENING
+    voice.set_speaking(True)
+    voice.heard(TALK)
+    await eventually(lambda: sent == ["tell me a story", "and then"])
+    voice.reply("A fox came by. ")
+    await eventually(lambda: speaker.said[-1] == "A fox came by.")
+    voice.stop()
+
+
 async def test_the_speech_models_are_downloaded_whole_or_not_at_all(tmp_path):
     import io
     import tarfile
@@ -406,25 +502,29 @@ async def test_the_voice_button_starts_a_spoken_conversation(
     window = MainWindow(h.runtime, controller, voice=voice)
     task = asyncio.create_task(controller.run())
     await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
-    assert window.voice_button.toolTip() == "Talk with Kaden"
+    assert window.microphone_button.toolTip() == "Talk to Kaden"
+    assert window.speaker_button.toolTip() == "Read replies aloud"
 
-    window.voice_button.click()
+    window.microphone_button.click()
     await eventually(lambda: asked and not voice.on)  # declined: off, nothing fetched
     assert "0 MB" in asked[0] and not folder.exists() and not microphones
 
     assert window.voice_progress.isHidden()
-    window.voice_button.click()
+    window.microphone_button.click()
     await eventually(lambda: voice.progress is not None and voice.progress > 0.5)
     assert not window.voice_progress.isHidden()  # a bar and how far it is, while it runs
     assert window.voice_progress_bar.value() == 667
     assert window.voice_progress_label.text().startswith("Downloading speech models: ")
+    window.speaker_button.click()  # while it downloads
     release.set()
     await eventually(lambda: voice.spoken)
     assert window.voice_progress.isHidden()
     assert (folder / "vad.onnx").read_bytes() == b"vad"
     assert window.input.placeholderText() == "Listening…"
-    assert window.voice_button.property("active") is True
-    assert window.voice_button.toolTip() == "End the voice conversation"
+    for button in (window.microphone_button, window.speaker_button):
+        assert button.property("active") is True
+    assert window.microphone_button.toolTip() == "Stop listening"
+    assert window.speaker_button.toolTip() == "Stop reading aloud"
     [mic] = microphones
     assert mic.open
     mic.heard(TALK)
@@ -434,15 +534,86 @@ async def test_the_voice_button_starts_a_spoken_conversation(
             for b in m.blocks if isinstance(b, Text)]
     assert said == ["what time is it", VOICE_ON_NOTICE]
 
-    window.voice_button.click()
-    assert not voice.on and not mic.open
+    window.microphone_button.click()  # the speaker goes on
+    assert voice.on and voice.spoken and not mic.open
+    assert window.microphone_button.property("active") is False
     assert window.input.placeholderText() == "Message Kaden"
-    assert window.voice_button.property("active") is False
-    window.voice_button.click()  # on again: no question, the models are there
+    window.speaker_button.click()
+    assert not voice.on
+    assert window.speaker_button.property("active") is False
+    window.speaker_button.click()  # on again: no question, the models are there
     await eventually(lambda: voice.spoken)
-    assert len(asked) == 2
+    assert len(asked) == 2 and len(microphones) == 1
     window.close()
     assert not voice.on
+    task.cancel()
+
+
+async def test_the_microphone_alone_is_not_a_spoken_conversation(make, qapp, tmp_path):
+    """What is said is sent, and the reply is read on screen: the agent writes as for
+    reading."""
+    from kaden.api import Role
+    from kaden.frontends.desktop.viewmodel import Controller, ConversationModel
+    from kaden.frontends.desktop.voice.mode import VoiceMode
+    from kaden.frontends.desktop.window import MainWindow
+    from tests.fakes.core import Step
+
+    h = await make()
+    h.core.add(Step(text="It is noon."))
+    await h.start()
+    controller = Controller(h.runtime, ConversationModel())
+    engine, speaker, microphones = ScriptedEngine("what time is it"), Speaker(), []
+
+    def microphone(heard) -> FakeMicrophone:
+        microphones.append(FakeMicrophone(heard))
+        return microphones[-1]
+
+    voice = VoiceMode(controller, tmp_path / "voice", yes, engine=lambda _folder: engine,
+                      microphone=microphone, speaker=lambda: speaker, models=(),
+                      natural=False)
+    window = MainWindow(h.runtime, controller, voice=voice)
+    task = asyncio.create_task(controller.run())
+    await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
+    window.microphone_button.click()
+    await eventually(lambda: microphones and voice.on)
+    assert not voice.spoken
+    microphones[0].heard(TALK)
+    assert window.input.placeholderText() == "Thinking…"
+    await eventually(lambda: window.input.placeholderText() == "Listening…")
+    users = [m for m in await h.transcript() if m.role is Role.USER]
+    assert len(users) == 1 and not users[0].spoken
+    assert engine.spoke == []
+    window.close()
+    task.cancel()
+
+
+async def test_the_speaker_alone_reads_the_reply_to_a_typed_message(make, qapp, tmp_path):
+    from kaden.api import Role
+    from kaden.frontends.desktop.viewmodel import Controller, ConversationModel
+    from kaden.frontends.desktop.voice.mode import VoiceMode
+    from kaden.frontends.desktop.window import MainWindow
+    from tests.fakes.core import Step
+
+    h = await make()
+    h.core.add(Step(text="It is noon."))
+    await h.start()
+    controller = Controller(h.runtime, ConversationModel())
+    engine, speaker, microphones = ScriptedEngine(), Speaker(), []
+    voice = VoiceMode(controller, tmp_path / "voice", yes, engine=lambda _folder: engine,
+                      microphone=lambda heard: microphones.append(heard), speaker=lambda: speaker,
+                      models=(), natural=False)
+    window = MainWindow(h.runtime, controller, voice=voice)
+    task = asyncio.create_task(controller.run())
+    await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
+    window.speaker_button.click()
+    await eventually(lambda: voice.spoken)
+    assert window.input.placeholderText() == "Message Kaden"  # nothing listens
+    window.input.setPlainText("what time is it")
+    window.send_button.click()
+    await eventually(lambda: speaker.said == ["It is noon."])
+    users = [m for m in await h.transcript() if m.role is Role.USER and not m.hidden]
+    assert users[0].spoken and microphones == []
+    window.close()
     task.cancel()
 
 
@@ -527,6 +698,11 @@ async def yes(text: str, details: str) -> bool:
     return True
 
 
+def prepared(source: Path, target: Path) -> None:
+    """What preparing a recording does to it, without the audio libraries: marked."""
+    target.write_bytes(b"prepared:" + source.read_bytes())
+
+
 async def test_with_the_natural_voice_installed_it_speaks_as_itself_or_a_recording(tmp_path):
     """Chatterbox: its own voice, and any copied from a recording the user adds; the
     recording is kept in the voice folder and listed the next time."""
@@ -538,29 +714,34 @@ async def test_with_the_natural_voice_installed_it_speaks_as_itself_or_a_recordi
     def natural() -> VoiceMode:
         return VoiceMode(Controller(), folder, yes, engine=lambda _folder: engine,
                          microphone=lambda heard: None, speaker=lambda: speaker,
-                         models=(), natural=True)
+                         models=(), natural=True, prepare=prepared)
 
     mode = natural()
     assert mode.voices() == [NATURAL] and mode.voice == NATURAL
     recording = tmp_path / "Grandpa.wav"
     recording.write_bytes(b"RIFF")
     assert await mode.add_recording(recording) == "Grandpa"
-    assert (folder / "voices" / "Grandpa.wav").read_bytes() == b"RIFF"
+    # Prepared once, as it is added: Kaden keeps the clean clip, a WAV.
+    assert (folder / "voices" / "Grandpa.wav").read_bytes() == b"prepared:RIFF"
     assert mode.voices() == [NATURAL, "Grandpa"] and mode.voice == "Grandpa"
     await mode.preview()
     assert engine.voice == "Grandpa" and speaker.played == 1
     message = tmp_path / "Mei.OPUS"  # a voice message, as chat apps save them
     message.write_bytes(b"OggS")
     assert await mode.add_recording(message) == "Mei"
+    assert (folder / "voices" / "Mei.wav").read_bytes() == b"prepared:OggS"
+    phone = tmp_path / "Lin.m4a"  # as phones record
+    phone.write_bytes(b"ftyp")
+    assert await mode.add_recording(phone) == "Lin"
 
     again = natural()
     await again.restore("Grandpa")
-    assert again.voices() == [NATURAL, "Grandpa", "Mei"] and again.voice == "Grandpa"
+    assert again.voices() == [NATURAL, "Grandpa", "Lin", "Mei"] and again.voice == "Grandpa"
     await again.remove_recording("Grandpa")  # its copy goes; the user's file stays
-    assert again.voices() == [NATURAL, "Mei"] and again.voice == NATURAL
+    assert again.voices() == [NATURAL, "Lin", "Mei"] and again.voice == NATURAL
     assert not (folder / "voices" / "Grandpa.wav").exists() and recording.exists()
     await again.remove_recording(NATURAL)  # its own voice cannot be removed
-    assert again.voices() == [NATURAL, "Mei"]
+    assert again.voices() == [NATURAL, "Lin", "Mei"]
     await again.restore("Heart")  # a Kokoro voice: not one of these
     assert again.voice == NATURAL
 
@@ -593,13 +774,13 @@ async def test_a_recording_is_found_by_its_whole_name_whatever_it_holds(tmp_path
     from kaden.frontends.desktop.voice.natural import recording
 
     name = "Voice - Gwen [SUBBED] - English [DCbHTjR-jp4]"
-    mode = VoiceMode(Controller(), tmp_path, yes, models=(), natural=True)
+    mode = VoiceMode(Controller(), tmp_path, yes, models=(), natural=True, prepare=prepared)
     for content in (b"first", b"second"):  # the same name again replaces it
         source = tmp_path / f"{name}.opus"
         source.write_bytes(content)
         assert await mode.add_recording(source) == name
     found = recording(tmp_path, name)
-    assert found is not None and found.read_bytes() == b"second"
+    assert found is not None and found.read_bytes() == b"prepared:second"
     assert recording(tmp_path, "Voice - Gwen S - English D") is None
 
 
@@ -617,7 +798,7 @@ async def test_voice_mode_ends_and_says_why_when_speech_fails(tmp_path):
         busy=False, notify=notices.append))
     mode = VoiceMode(controller, tmp_path, yes, engine=lambda _folder: Broken(),
                      microphone=FakeMicrophone, speaker=Speaker, models=(), natural=False)
-    mode.toggle()
+    mode.toggle_speaker()
     await eventually(lambda: mode.spoken)
     assert mode._voice is not None
     mode._voice.reply("Hello. ")

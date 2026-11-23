@@ -478,7 +478,11 @@ def duty_status(duty: Duty | None, wake_at: float | None, state: AgentState,
     for a due step, else None."""
     if duty is None:
         return f"Reminder at {_when(wake_at)}" if wake_at is not None else None
-    what = "Goal" if duty.kind == DutyKind.GOAL else "Continuous"
+    if duty.kind == DutyKind.LIFE:
+        if state not in (AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED):
+            return "Busy"
+        return f"Next at {_when(wake_at)}" if wake_at is not None else "Resting"
+    what = "Goal" if duty.kind == DutyKind.GOAL else "Duty"
     if help_needed is not None and state in (AgentState.IDLE, AgentState.STOPPED):
         return f"{what}: waiting for your answer"
     if wake_at is not None:

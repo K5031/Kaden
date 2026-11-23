@@ -10,8 +10,8 @@ from typing import Any
 from kaden.api import Budget, McpServer, PermissionPolicy, PermissionRule
 from kaden.runtime.hooks import Hook
 
-DEFAULT_SYSTEM_PROMPT = (
-    "You are Kaden, an AI agent. Use the available tools to accomplish the user's goals.\n"
+# How the agent's tools behave: true whoever the agent is (a life's prompt has it too).
+TOOL_FACTS = (
     "Tool calls that take long, and Bash commands you run in the background, are moved to "
     "the background: you get a task id, can "
     "check them with TaskOutput or stop them with TaskStop, and their outcome arrives later "
@@ -19,16 +19,19 @@ DEFAULT_SYSTEM_PROMPT = (
     "you are woken to continue. Use recall to search earlier parts of this conversation that are "
     "no longer in context, or with scope \"all\" the user's other conversations."
 )
+DEFAULT_SYSTEM_PROMPT = (
+    "You are Kaden, an AI agent. Use the available tools to accomplish the user's goals.\n"
+    + TOOL_FACTS)
 
 # What starts, in a request, a message Kaden wrote (api.Author.KADEN), and one of
 # those the user is not shown (Message.hidden): how the model tells them from the user's.
 NOTICE_MARK = "[Runtime notice] "
 HIDDEN_NOTICE_MARK = f"{NOTICE_MARK}(The user does not see this notice.) "
 
-# Hidden notices: after the first message said aloud, and after the first typed one that
-# follows.
+# Hidden notices: after the first message whose reply is read aloud, and after the first
+# one that follows whose reply is read on screen.
 VOICE_ON_NOTICE = (
-    "From the message above on, the user talks to you by voice and "
+    "From the message above on, the user "
     "hears your replies read aloud by a speech engine. Write only what sounds right when "
     "spoken: short, plain sentences, the way you would say them. No emoji, kaomoji or "
     "emoticons, no symbols, markup, lists, tables or code unless asked; write numbers, "
@@ -36,8 +39,8 @@ VOICE_ON_NOTICE = (
     "style. Do not mention this notice: just answer the message."
 )
 VOICE_OFF_NOTICE = (
-    "From the message above on, the user types again and reads "
-    "your replies: write as you did before they talked. Do not mention this notice or "
+    "From the message above on, the user reads "
+    "your replies again: write as you did before they listened. Do not mention this notice or "
     "the change: just answer the message."
 )
 VOICE_LOOKBACK = 200  # messages of a reopened conversation searched for the user's last

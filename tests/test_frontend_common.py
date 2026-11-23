@@ -223,17 +223,20 @@ def test_a_tool_result_names_what_it_returned_to_look_at():
 def test_duty_status_says_when_it_wakes_or_that_it_is_paused():
     import time
 
-    from kaden.api import AgentState, Duty
+    from kaden.api import AgentState, Duty, DutyKind
     from kaden.frontends.common import duty_status
 
     duty = Duty("x")
     assert duty_status(None, None, AgentState.IDLE) is None
     assert duty_status(None, 4102480800.0, AgentState.IDLE) == "Reminder at 2100-01-01 03:00" \
         or duty_status(None, 4102480800.0, AgentState.IDLE).startswith("Reminder at 2")
-    assert duty_status(duty, None, AgentState.STOPPED) == "Continuous: paused, send a message to resume"
-    assert duty_status(duty, None, AgentState.THINKING) == "Continuous: working"
+    assert duty_status(duty, None, AgentState.STOPPED) == "Duty: paused, send a message to resume"
+    assert duty_status(duty, None, AgentState.THINKING) == "Duty: working"
     assert duty_status(duty, time.time() + 60, AgentState.IDLE).startswith(
-        "Continuous: next check-in ")
+        "Duty: next check-in ")
+    life = Duty("x", DutyKind.LIFE)  # its own time, not work
+    assert duty_status(life, None, AgentState.THINKING) == "Busy"
+    assert duty_status(life, time.time() + 60, AgentState.IDLE).startswith("Next at ")
 
 
 def test_delete_details_name_the_sub_sessions():

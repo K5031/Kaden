@@ -18,6 +18,7 @@ class State(StrEnum):
     LISTENING = "listening"  # the microphone is heard
     THINKING = "thinking"  # what was said is being understood, or the agent works
     SPEAKING = "speaking"  # the reply is read aloud
+    QUIET = "quiet"  # the microphone is off, and nothing is read
 
 
 class Engine(Protocol):
@@ -59,12 +60,16 @@ class Voice:
     """One voice conversation. The owner feeds it the microphone (`heard`), the agent's
     reply as it streams (`reply`, `reply_ended`) and when the agent stops (`agent_idle`).
     `failed` is told when what was said cannot be understood or a sentence cannot be
-    made into sound; the conversation is then over."""
+    made into sound; the conversation is then over. `listening`: what the microphone
+    hears is taken in its turn; `speaking`: replies are read aloud. Either can change
+    while it goes on (set_listening, set_speaking)."""
 
     def __init__(self, engine: Engine, player: Player, send: Callable[[str], object],
                  on_change: Callable[[], object], *,
-                 failed: Callable[[Exception], object] = lambda _error: None) -> None:
+                 failed: Callable[[Exception], object] = lambda _error: None,
+                 listening: bool = True, speaking: bool = True) -> None:
         self.engine, self.player = engine, player
+        self.listening, self.speaking = listening, speaking
         self._send, self._on_change, self._failed = send, on_change, failed
         self.state = State.OFF
         self._sentences = Sentences()
@@ -80,6 +85,7 @@ class Voice:
         self._speaker: asyncio.Task[None] | None = None
         self._maker: asyncio.Task[None] | None = None
         self._agent_busy = False
+        self._replying = False  # a reply streams and has not ended
         self._muted = False  # interrupted: the rest of this reply is not read
 
     @property
@@ -113,13 +119,28 @@ class Voice:
             task.add_done_callback(self._tasks.discard)
             return  # one turn: what follows is heard when listening again
 
+    def set_listening(self, on: bool) -> None:
+        self.listening = on
+        if self.state in (State.LISTENING, State.QUIET):
+            self._listen()
+
+    def set_speaking(self, on: bool) -> None:
+        """Off: what is being read stops at once, and the rest of the reply stays unread."""
+        self.speaking = on
+        if not on and self.state is not State.OFF:
+            self._drop_speech()
+            if self.state is State.SPEAKING:
+                self._done_speaking()
+
     def reply(self, text: str) -> None:
-        if self.state is State.OFF or self._muted:
+        self._replying = True
+        if self.state is State.OFF or self._muted or not self.speaking:
             return
         for sentence in self._sentences.feed(text):
             self._to_say.put_nowait(sentence)
 
     def reply_ended(self) -> None:
+        self._replying = False
         if self._muted:  # the reply that was interrupted is over: the next one is read
             self._muted = False
             return
@@ -137,7 +158,7 @@ class Voice:
         """Stop reading and listen; what is left of the reply stays unread."""
         if self.state is State.OFF:
             return
-        self._muted = self._agent_busy
+        self._muted = self._replying
         self._drop_speech()
         self._listen()
 
@@ -157,7 +178,7 @@ class Voice:
 
     def _listen(self) -> None:
         self.engine.reset()
-        self._set(State.LISTENING)
+        self._set(State.LISTENING if self.listening else State.QUIET)
 
     def _set(self, state: State) -> None:
         if state is not self.state:

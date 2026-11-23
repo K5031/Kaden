@@ -48,6 +48,7 @@ from PySide6.QtGui import (
     QEnterEvent,
     QFont,
     QFontMetrics,
+    QIcon,
     QImage,
     QKeyEvent,
     QKeySequence,
@@ -154,6 +155,7 @@ from kaden.frontends.common import (
     tool_sentence,
 )
 from kaden.frontends.desktop import app_menu, syntax, theme
+from kaden.frontends.desktop.tray import Tray
 from kaden.frontends.desktop.viewmodel import (
     BUDGET_MESSAGE,
     AssistantItem,
@@ -2106,21 +2108,28 @@ class ConversationView(QScrollArea):
 
 class MainWindow(QMainWindow):
     closed = Signal()
+    app_name = "Kaden Chat"  # the window's title, and the tray's
 
     def __init__(self, runtime: RuntimeAPI, controller: Controller,
                  zoom_file: Path | None = None, sessions: SubSessions | None = None,
-                 voice: VoiceMode | None = None) -> None:
+                 voice: VoiceMode | None = None, *, tray: bool = False,
+                 voice_folder: Path | None = None) -> None:
+        """`voice_folder`: where the speech models are; beside `zoom_file` when not given."""
         super().__init__()
         self.runtime = runtime
         self.home = controller  # this window's own conversation
+        # With a system tray, closing the window hides it and Kaden runs on; quit() quits.
+        self.tray = Tray(self, self.bring_forward, self.quit, self.app_name) if tray else None
+        self.told_of_tray = False  # the first close in a run says Kaden runs on
+        self._quitting = False
         self._viewing: Viewing | None = None  # the sub-session on screen instead of it
         self._needs_folder = False  # a new chat the user has not given a folder
         self._target = Target()
         # Talking with Kaden; its speech models are kept beside the zoom's file, which
         # the frontend reads before the window opens and writes when it has closed.
-        self.voice = voice or VoiceMode(
-            controller, zoom_file.parent / VOICE_DIR if zoom_file is not None else None,
-            self._ask)
+        if voice_folder is None and zoom_file is not None:
+            voice_folder = zoom_file.parent / VOICE_DIR
+        self.voice = voice or VoiceMode(controller, voice_folder, self._ask)
         self.voice.changed.connect(self._show_voice)
         self.sessions = sessions  # the sub-sessions this window hosts
         controller.sessions = sessions
@@ -2131,7 +2140,7 @@ class MainWindow(QMainWindow):
         self.mcp_dialog: McpDialog | None = None
         self._conversations: dict[str, ConversationInfo] = {}
         self._models: Sequence[ModelInfo] | str | None = None  # a str says why there are none
-        self.setWindowTitle("Kaden")
+        self.setWindowTitle(self.app_name)
         # No title bar from the desktop: the header and the sidebar's top row move the
         # window, the header has its controls, and the edges resize it (WindowEdges).
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
@@ -2156,7 +2165,7 @@ class MainWindow(QMainWindow):
     # ── layout ────────────────────────────────────────────────────────────
 
     def _build(self) -> None:
-        sidebar = QWidget(objectName="sidebar")
+        sidebar = self.sidebar = QWidget(objectName="sidebar")
         side = QVBoxLayout(sidebar)
         side.setContentsMargins(8, 8, 8, 10)
         side.setSpacing(2)
@@ -2241,10 +2250,19 @@ class MainWindow(QMainWindow):
         self.title_label.setProperty("role", "header")
         self.duty_label = _label(wrap=False, selectable=False, role="small")
         self.duty_label.hide()  # only with a duty: when it checks in next, or paused
-        titles = QHBoxLayout()
+        titles = self.title_row = QHBoxLayout()
         titles.setContentsMargins(0, 14, 0, 14)  # the header's height
         titles.setSpacing(4)
-        titles.addWidget(self.title_label, 1)
+        # With the sidebar hidden (show_sidebar), its ☰ is here.
+        self.view_menu_button = QToolButton(objectName="menu")
+        self.view_menu_button.setIconSize(QSize(18, 18))
+        self.view_menu_button.setToolTip("Menu")
+        self.view_menu_button.setAccessibleName("Menu")
+        self.view_menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.view_menu_button.hide()
+        titles.addWidget(self.view_menu_button)
+        titles.addWidget(self.title_label)
+        titles.addStretch(1)
         titles.addWidget(self.duty_label)
         head.addLayout(titles, 1)
         head.addSpacing(8)
@@ -2341,13 +2359,17 @@ class MainWindow(QMainWindow):
         self.file_dialog: QFileDialog | None = None
         composer.addWidget(self.attach_button, 0, Qt.AlignmentFlag.AlignBottom)
         composer.addWidget(self.input, 1, Qt.AlignmentFlag.AlignVCenter)
-        self.voice_button = QToolButton(objectName="send")
-        self.voice_button.setFixedSize(32, 32)
-        self.voice_button.setIconSize(QSize(16, 16))
-        self.voice_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.voice_button.setAccessibleName("Voice conversation")
-        self.voice_button.clicked.connect(self.voice.toggle)
-        composer.addWidget(self.voice_button, 0, Qt.AlignmentFlag.AlignBottom)
+        self.microphone_button = QToolButton(objectName="send")
+        self.microphone_button.setAccessibleName("Microphone")
+        self.microphone_button.clicked.connect(self.voice.toggle_microphone)
+        self.speaker_button = QToolButton(objectName="send")
+        self.speaker_button.setAccessibleName("Read aloud")
+        self.speaker_button.clicked.connect(self.voice.toggle_speaker)
+        for button in (self.microphone_button, self.speaker_button):
+            button.setFixedSize(32, 32)
+            button.setIconSize(QSize(16, 16))
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            composer.addWidget(button, 0, Qt.AlignmentFlag.AlignBottom)
         composer.addWidget(self.send_button, 0, Qt.AlignmentFlag.AlignBottom)
         self.model_button = QToolButton(objectName="modelPicker")
         self.model_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -2384,7 +2406,22 @@ class MainWindow(QMainWindow):
         bottom.addLayout(footer)
         bottom_row = QHBoxLayout()
         bottom_row.setContentsMargins(24, 0, 24, 10)
-        bottom_row.addWidget(bottom_column)
+        # With the sidebar hidden: Settings, bottom left as there, and as much room on the
+        # right, so the message box stays centred.
+        self.view_gear_button = QToolButton(objectName="gear")
+        self.view_gear_button.setToolTip("Settings (Ctrl+,)")
+        self.view_gear_button.setAccessibleName("Settings")
+        self.view_gear_button.setIconSize(QSize(18, 18))
+        self.view_gear_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.view_gear_button.clicked.connect(lambda: self.open_settings())
+        self.view_gear_button.hide()
+        self._gear_balance = QWidget()
+        self._gear_balance.hide()
+        bottom_row.addWidget(self.view_gear_button, 0, Qt.AlignmentFlag.AlignBottom)
+        bottom_row.addStretch(1)  # the gear in the corner, the message box centred
+        bottom_row.addWidget(bottom_column, 4)
+        bottom_row.addStretch(1)
+        bottom_row.addWidget(self._gear_balance)
 
         column.addWidget(header)
         banner_row = QVBoxLayout()
@@ -2409,11 +2446,15 @@ class MainWindow(QMainWindow):
         self.send_button.setIcon(theme.icon("stop" if self.model.busy else "send",
                                             colors.text))
         self.gear_button.setIcon(theme.icon("gear", colors.muted, 18))
+        self.view_gear_button.setIcon(theme.icon("gear", colors.muted, 18))
         self.menu_button.setIcon(theme.icon("menu", colors.muted, 18))
+        self.view_menu_button.setIcon(theme.icon("menu", colors.muted, 18))
         self.new_button.setIcon(theme.icon("plus", colors.text, 16))
         self.attach_button.setIcon(theme.icon("plus", colors.muted, 16))
-        self.voice_button.setIcon(theme.icon(
-            "voice", colors.on_accent if self.voice.on else colors.muted, 16))
+        self.microphone_button.setIcon(theme.icon(
+            "microphone", colors.on_accent if self.voice.listening else colors.muted, 16))
+        self.speaker_button.setIcon(theme.icon(
+            "speaker", colors.on_accent if self.voice.speaking else colors.muted, 16))
         self.folder_button.setIcon(theme.icon("folder", colors.text, 18))
         maximized = self.isMaximized()
         for name, button in self.window_buttons.items():
@@ -2511,10 +2552,10 @@ class MainWindow(QMainWindow):
         stop = QAction("S&top", self, shortcut=QKeySequence("Esc"))
         stop.triggered.connect(self._stop)
         quit_action = QAction("&Quit", self, shortcut=QKeySequence.StandardKey.Quit)
-        quit_action.triggered.connect(self.close)
+        quit_action.triggered.connect(self.quit)
         self.memory_action = QAction("&Memory…", self)
         self.memory_action.triggered.connect(self.open_memory)
-        self.duty_action = QAction("Run &continuously…", self)
+        self.duty_action = QAction("Set a &duty…", self)
         self.duty_action.setStatusTip("Give this conversation standing work it carries on "
                                       "by itself.")
         self.duty_action.triggered.connect(self.open_duty)
@@ -2531,6 +2572,8 @@ class MainWindow(QMainWindow):
         self.folder_action.triggered.connect(self._choose_folder)
         main_menu = QMenu(self)
         self.menu_button.setMenu(main_menu)
+        self.view_menu_button.setMenu(main_menu)
+        self.main_menu = main_menu
         main_menu.addActions([self.new_action, self.folder_action, self.duty_action, stop])
         main_menu.addSeparator()
         view_menu = main_menu.addMenu("&View")
@@ -2687,8 +2730,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_status(self) -> None:
         model = self.model
-        duty = (duty_status(model.conversation.duty, model.duty_wake_at, model.state,
-                            model.help_needed) if model.conversation is not None else None)
+        duty = self._status_line()
         self.duty_label.setText(duty or "")
         self.duty_label.setVisible(duty is not None)
         known = () if self._models is None or isinstance(self._models, str) else self._models
@@ -2706,9 +2748,8 @@ class MainWindow(QMainWindow):
         self.plan_action.setChecked(model.plan_mode)
         self.plan_action.setEnabled(model.conversation is not None)
         conversation = model.conversation
-        if conversation is not None:
-            self.title_label.setText(conversation_label(
-                self._conversations.get(conversation.id, conversation)))
+        if (title := self._title()) is not None:
+            self.title_label.setText(title)
         folder = conversation.folder if conversation is not None else None
         self.folder_action.setVisible(folder is not None)
         new_chat = (self._viewing is None and folder is not None and not model.items
@@ -2882,10 +2923,19 @@ class MainWindow(QMainWindow):
             self.open_memory()
 
     def bring_forward(self) -> None:
-        """Another launch of Kaden asked for this window."""
-        self.showNormal()
+        """Another launch of Kaden, or its tray icon, asked for this window: shown as it
+        was before it was hidden or minimized."""
+        if self.isMinimized():
+            self.showNormal()
+        else:
+            self.show()
         self.raise_()
         self.activateWindow()
+
+    def quit(self) -> None:
+        """Close the window and end Kaden, tray or not."""
+        self._quitting = True
+        self.close()
 
     def _sessions_changed(self) -> None:
         self._refresh_status()
@@ -3017,6 +3067,7 @@ class MainWindow(QMainWindow):
         self._viewing = viewing
         if viewing is not None:
             viewing.controller.model.on_change = self._pane_changed
+        self.voice.use(self.controller)  # voice talks with what is on screen
         self.conversation.rebuild()
         self._refresh_status()
 
@@ -3074,20 +3125,52 @@ class MainWindow(QMainWindow):
             self.controller.stop()
 
     def _show_voice(self) -> None:
-        """The voice button and what voice mode is doing, where the message is typed."""
-        on = self.voice.on
-        theme.mark(self.voice_button, "active", on)
-        self.voice_button.setToolTip("End the voice conversation" if on
-                                     else "Talk with Kaden")
+        """The microphone and speaker buttons, and what voice is doing, where the message
+        is typed."""
+        theme.mark(self.microphone_button, "active", self.voice.listening)
+        self.microphone_button.setToolTip(
+            "Stop listening" if self.voice.listening else f"Talk to {self._whom()}")
+        theme.mark(self.speaker_button, "active", self.voice.speaking)
+        self.speaker_button.setToolTip(
+            "Stop reading aloud" if self.voice.speaking else "Read replies aloud")
         fetching = self.voice.progress is not None
         self.voice_progress.setVisible(fetching)
         if fetching:
-            self.voice_progress_label.setText(f"{self.voice.status}. Click the voice button "
-                                              "to cancel.")
+            self.voice_progress_label.setText(f"{self.voice.status}. Turn voice off to "
+                                              "cancel.")
             self.voice_progress_bar.setValue(round((self.voice.progress or 0.0) * 1000))
         self.input.setPlaceholderText(
-            "Message Kaden" if fetching or not self.voice.status else self.voice.status)
+            self._hint() if fetching or not self.voice.status else self.voice.status)
         self._paint_icons()
+
+    def show_sidebar(self, on: bool) -> None:
+        """The chat list, or none: then its ☰ is in the header and Settings bottom left."""
+        self.sidebar.setVisible(on)
+        for widget in (self.view_menu_button, self.view_gear_button, self._gear_balance):
+            widget.setVisible(not on)
+        self._gear_balance.setFixedWidth(self.view_gear_button.sizeHint().width())
+
+    def _status_line(self) -> str | None:
+        """The line at the right of the header: the duty's state, if there is one."""
+        model = self.model
+        if model.conversation is None:
+            return None
+        return duty_status(model.conversation.duty, model.duty_wake_at, model.state,
+                           model.help_needed)
+
+    def _title(self) -> str | None:
+        """The header's title: the open conversation's."""
+        conversation = self.model.conversation
+        if conversation is None:
+            return None
+        return conversation_label(self._conversations.get(conversation.id, conversation))
+
+    def _whom(self) -> str:
+        """Whom the message box talks to."""
+        return "Kaden"
+
+    def _hint(self) -> str:
+        return f"Message {self._whom()}"
 
     def _ask(self, text: str, details: str) -> asyncio.Future[bool]:
         """A question to the user; the future says whether they agreed."""
@@ -3150,6 +3233,16 @@ class MainWindow(QMainWindow):
         self.controller.command(load())
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self.tray is not None and not self._quitting:  # Kaden runs on in the tray
+            event.ignore()
+            self.hide()
+            if not self.told_of_tray:
+                self.tray.showMessage(self.app_name, "Still running. Quit from this icon.",
+                                      QIcon(str(app_menu.ICON)), 4000)
+                self.told_of_tray = True
+            return
+        if self.tray is not None:
+            self.tray.hide()
         self.voice.stop()
         if self._pasted is not None:
             shutil.rmtree(self._pasted, ignore_errors=True)
@@ -3292,11 +3385,11 @@ class DutyDialog(QDialog):
         super().__init__(parent)
         self.controller = controller
         duty = info.duty or Duty("")
-        self.setWindowTitle("Run continuously")
+        self.setWindowTitle("Duty")
         self.setMinimumSize(600, 520)
         form = QFormLayout(self)
         form.setContentsMargins(20, 18, 20, 16)
-        form.addRow(_label("Run continuously", selectable=False, role="heading"))
+        form.addRow(_label("Duty", selectable=False, role="heading"))
         form.addRow(_label(DUTY_HINT, tone="muted"))
         self.instruction = QPlainTextEdit(duty.instruction)
         self.instruction.setPlaceholderText("e.g. Keep my inbox answered")

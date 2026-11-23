@@ -32,14 +32,15 @@ PARAKEET = Model("sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
 KOKORO = Model("kokoro-multi-lang-v1_0",
                f"{_RELEASES}/tts-models/kokoro-multi-lang-v1_0.tar.bz2", 349_000_000)
 # The natural voice: Chatterbox's English model, at the revision Kaden was tried with.
-CHATTERBOX_DIR = "chatterbox"
 _CHATTERBOX = ("https://huggingface.co/ResembleAI/chatterbox/resolve/"
                "5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18")
+CHATTERBOX_DIR = "chatterbox"
 CHATTERBOX = tuple(
     Model(f"{CHATTERBOX_DIR}/{file}", f"{_CHATTERBOX}/{file}", size, archive=False)
     for file, size in (("ve.safetensors", 5_695_784), ("t3_cfg.safetensors", 2_129_653_744),
                        ("s3gen.safetensors", 1_056_484_620), ("tokenizer.json", 25_470),
                        ("conds.pt", 107_374)))
+
 
 
 # What listens with the natural voice: Whisper large-v3-turbo, on the GPU.

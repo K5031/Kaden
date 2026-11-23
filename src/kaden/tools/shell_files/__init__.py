@@ -54,7 +54,7 @@ from kaden.api import (
     ToolSpec,
     foreground_timeout,
 )
-from kaden.tools.shell_files import attachments, office, screen, web
+from kaden.tools.shell_files import attachments, bilibili, office, screen, web
 
 SHELL_STALL_TIMEOUT = 600.0  # seconds without output before the runtime may stall-kill
 HEARTBEAT_INTERVAL = 0.5  # min seconds between silent heartbeats from file walks
@@ -315,6 +315,7 @@ class ShellFilesTools(Tools):
         shell_timeout: float | None = None,
         shell_stall_timeout: float | None = SHELL_STALL_TIMEOUT,
         web_tools: web.Web | None = None,
+        bilibili_tools: bilibili.Bilibili | None = None,
         screen_tools: screen.Screen | None = None,
     ) -> None:
         self._default = Path(root).expanduser().resolve()
@@ -322,6 +323,7 @@ class ShellFilesTools(Tools):
         self._shell_spec = replace(SHELL, timeout=shell_timeout,
                                    stall_timeout=shell_stall_timeout)
         self._web = web_tools or web.Web()
+        self._bili = bilibili_tools or bilibili.Bilibili()
         self._screen = screen_tools or screen.Screen.found()
         # Each conversation's files as it last read or wrote them: (conversation, file)
         # to what _version says of it.
@@ -339,6 +341,7 @@ class ShellFilesTools(Tools):
             "Grep": self._search_files,
             "NotebookEdit": self._notebook_edit,
             **{name: self._web_call(name) for name in web.NAMES},
+            **{name: self._bili_call(name) for name in bilibili.NAMES},
             screen.NAME: self._screenshot,
         }
 
@@ -352,11 +355,15 @@ class ShellFilesTools(Tools):
         shell = self._shell_spec
         if self._sandbox is not None:
             shell = replace(shell, description=shell.description + SANDBOX_NOTE)
-        self._spec_list = (shell, *FILE_SPECS, *web.SPECS, *self._screen.specs)
+        self._spec_list = (shell, *FILE_SPECS, *web.SPECS, *self._bili.specs,
+                           *self._screen.specs)
         self._specs = {spec.name: spec for spec in self._spec_list}
 
     async def list_tools(self) -> Sequence[ToolSpec]:
         return self._spec_list
+
+    async def aclose(self) -> None:
+        await self._bili.aclose()
 
     async def use_folder(self, folder: Path | None) -> None:
         root = self._default if folder is None else Path(folder).expanduser().resolve()
@@ -364,7 +371,7 @@ class ShellFilesTools(Tools):
         self._set_root(root)
 
     async def confined(self, call: ToolCall) -> bool:
-        if call.name in web.NAMES:
+        if call.name in web.NAMES or call.name in bilibili.NAMES:
             return True
         if not self._bounded or call.name not in self._handlers or call.name == screen.NAME:
             return False
@@ -395,7 +402,7 @@ class ShellFilesTools(Tools):
         try:
             result = await self._handlers[call.name](call.arguments, ctx)
             return result if isinstance(result, ToolOutput) else ToolOutput(result)
-        except (ToolError, web.WebError, screen.ScreenError) as e:
+        except (ToolError, web.WebError, screen.ScreenError, bilibili.BiliError) as e:
             return ToolOutput(str(e), is_error=True)
         except httpx2.HTTPError as e:
             return ToolOutput(f"The page could not be read: {type(e).__name__}: {e}",
@@ -405,6 +412,13 @@ class ShellFilesTools(Tools):
 
     async def _screenshot(self, args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
         return await self._screen.run()
+
+    def _bili_call(self, name: str
+                   ) -> Callable[[dict[str, Any], ToolContext], Awaitable[str | ToolOutput]]:
+        async def call(args: dict[str, Any], ctx: ToolContext) -> str | ToolOutput:
+            return await self._bili.run(name, args)
+
+        return call
 
     def _web_call(self, name: str) -> Callable[[dict[str, Any], ToolContext], Awaitable[str]]:
         async def call(args: dict[str, Any], ctx: ToolContext) -> str:

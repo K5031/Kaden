@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from kaden.api import InstancePaths, ToolCall
-from kaden.tools.shell_files import MAX_OUTPUT_CHARS, ShellFilesTools, factory
+from kaden.tools.shell_files import MAX_OUTPUT_CHARS, ShellFilesTools, bilibili, factory
 from tests.conformance.tools_suite import RecordingContext, ToolCases, ToolsConformance
 
 # Two background children plus a ticking loop: cancellation must reach all of them.
@@ -440,6 +440,7 @@ async def test_a_work_folder_that_holds_the_home_folder_confines_nothing(tmp_pat
 async def test_read_only_flags(tools):
     flags = {spec.name: spec.read_only for spec in await tools.list_tools()}
     flags.pop("screenshot", None)  # offered where Spectacle is installed (test_tools_screen)
+    assert all(flags.pop(name, True) for name in bilibili.NAMES)  # Kaden's own: reading
     assert flags == {
         "Bash": False,
         "Read": True,
@@ -457,7 +458,8 @@ async def test_read_only_flags(tools):
 
 
 async def test_the_tools_take_claude_codes_parameters(tools):
-    params = {spec.name: set(spec.parameters["properties"]) for spec in await tools.list_tools()}
+    params = {spec.name: set(spec.parameters["properties"]) for spec in await tools.list_tools()
+              if spec.name not in bilibili.NAMES}  # Kaden's own (test_bilibili)
     params.pop("screenshot", None)
     assert params == {
         "Bash": {"command", "timeout", "run_in_background", "dangerouslyDisableSandbox"},
