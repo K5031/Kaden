@@ -191,6 +191,7 @@ from kaden.frontends.desktop.viewmodel import (
 )
 from kaden.frontends.desktop.voice.mode import DEFAULT_VOICE, KOKORO_VOICES, VoiceMode
 from kaden.frontends.desktop.voice.natural import RECORDING_TYPES
+from kaden.frontends.life import NAME, Life
 from kaden.frontends.remote import RemoteRuntime
 from kaden.frontends.sessions import SubSession, SubSessions
 
@@ -247,10 +248,28 @@ async def load_look(path: Path) -> tuple[float, str]:
     return await asyncio.to_thread(read)
 
 
-async def save_look(path: Path, voice: str = DEFAULT_VOICE) -> None:
-    """Remember the zoom and the theme in use, and the voice chosen."""
-    look = json.dumps({"zoom": theme.zoom(), "theme": theme.choice(), "voice": voice})
+async def save_look(path: Path, voice: str = DEFAULT_VOICE, *, life: bool = False
+                    ) -> None:
+    """Remember the zoom and the theme in use, the voice chosen, and whether the
+    life's view was open (so the app opens on it again)."""
+    look = json.dumps({"zoom": theme.zoom(), "theme": theme.choice(), "voice": voice,
+                       "life": life})
     await asyncio.to_thread(path.write_text, look, encoding="utf-8")
+
+
+async def _saved(path: Path, key: str) -> bool:
+    def read() -> bool:
+        try:
+            return json.loads(path.read_text(encoding="utf-8")).get(key) is True
+        except (OSError, ValueError, AttributeError):
+            return False
+    return await asyncio.to_thread(read)
+
+
+async def load_view(path: Path) -> bool:
+    """Whether the life's view was open when the app last closed."""
+    return await _saved(path, "life")
+
 
 
 async def load_voice(path: Path) -> str:
@@ -1706,9 +1725,10 @@ class Target:
 
 @dataclass(frozen=True, slots=True)
 class Viewing:
-    """A sub-session on screen: what shows it, and what is given back when it leaves."""
+    """A sub-session on screen, or (no session) the life: what shows it, and what is
+    given back when it leaves."""
 
-    session: SubSession
+    session: SubSession | None
     remote: RemoteRuntime
     controller: Controller
     pump: asyncio.Task[None]
@@ -2108,28 +2128,30 @@ class ConversationView(QScrollArea):
 
 class MainWindow(QMainWindow):
     closed = Signal()
-    app_name = "Kaden Chat"  # the window's title, and the tray's
 
     def __init__(self, runtime: RuntimeAPI, controller: Controller,
                  zoom_file: Path | None = None, sessions: SubSessions | None = None,
-                 voice: VoiceMode | None = None, *, tray: bool = False,
-                 voice_folder: Path | None = None) -> None:
-        """`voice_folder`: where the speech models are; beside `zoom_file` when not given."""
+                 voice: VoiceMode | None = None, *,
+                 life: Life | None = None, tray: bool = False) -> None:
         super().__init__()
         self.runtime = runtime
         self.home = controller  # this window's own conversation
+        self.life = life  # the one who lives on, hosted by the app
+        self.life_dialog: LifeDialog | None = None
+        self.journal_dialog: JournalDialog | None = None
         # With a system tray, closing the window hides it and Kaden runs on; quit() quits.
-        self.tray = Tray(self, self.bring_forward, self.quit, self.app_name) if tray else None
+        self.tray = Tray(self, self.bring_forward, self.quit) if tray else None
         self.told_of_tray = False  # the first close in a run says Kaden runs on
         self._quitting = False
+        self._life_on = False  # its view is up, or coming up while it starts
         self._viewing: Viewing | None = None  # the sub-session on screen instead of it
         self._needs_folder = False  # a new chat the user has not given a folder
         self._target = Target()
         # Talking with Kaden; its speech models are kept beside the zoom's file, which
         # the frontend reads before the window opens and writes when it has closed.
-        if voice_folder is None and zoom_file is not None:
-            voice_folder = zoom_file.parent / VOICE_DIR
-        self.voice = voice or VoiceMode(controller, voice_folder, self._ask)
+        self.voice = voice or VoiceMode(
+            controller, zoom_file.parent / VOICE_DIR if zoom_file is not None else None,
+            self._ask)
         self.voice.changed.connect(self._show_voice)
         self.sessions = sessions  # the sub-sessions this window hosts
         controller.sessions = sessions
@@ -2140,7 +2162,7 @@ class MainWindow(QMainWindow):
         self.mcp_dialog: McpDialog | None = None
         self._conversations: dict[str, ConversationInfo] = {}
         self._models: Sequence[ModelInfo] | str | None = None  # a str says why there are none
-        self.setWindowTitle(self.app_name)
+        self.setWindowTitle("Kaden")
         # No title bar from the desktop: the header and the sidebar's top row move the
         # window, the header has its controls, and the edges resize it (WindowEdges).
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
@@ -2152,6 +2174,8 @@ class MainWindow(QMainWindow):
         self._corners = RoundedCorners(self)
         if sessions is not None:
             sessions.listeners.append(self._sessions_changed)
+        if life is not None:
+            life.listeners.append(self._life_said)
 
     @property
     def controller(self) -> Controller:
@@ -2163,6 +2187,10 @@ class MainWindow(QMainWindow):
         return self.controller.model
 
     # ── layout ────────────────────────────────────────────────────────────
+
+    @property
+    def showing_life(self) -> bool:
+        return self._viewing is not None and self._viewing.session is None
 
     def _build(self) -> None:
         sidebar = self.sidebar = QWidget(objectName="sidebar")
@@ -2250,18 +2278,37 @@ class MainWindow(QMainWindow):
         self.title_label.setProperty("role", "header")
         self.duty_label = _label(wrap=False, selectable=False, role="small")
         self.duty_label.hide()  # only with a duty: when it checks in next, or paused
-        titles = self.title_row = QHBoxLayout()
+        titles = QHBoxLayout()
         titles.setContentsMargins(0, 14, 0, 14)  # the header's height
         titles.setSpacing(4)
-        # With the sidebar hidden (show_sidebar), its ☰ is here.
+        # The life's view has no sidebar: its ☰ and the way back are here.
         self.view_menu_button = QToolButton(objectName="menu")
         self.view_menu_button.setIconSize(QSize(18, 18))
         self.view_menu_button.setToolTip("Menu")
         self.view_menu_button.setAccessibleName("Menu")
         self.view_menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.view_menu_button.hide()
+        self.back_button = QToolButton(text="‹ Chats")
+        self.back_button.setToolTip("Back to your chats")
+        self.back_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.back_button.clicked.connect(lambda: self.life_action.setChecked(False))
+        self.back_button.hide()
+        self.identity_button = QToolButton(text="✎")
+        self.identity_button.setToolTip("Who they are")
+        self.identity_button.setAccessibleName("Who they are")
+        self.identity_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.identity_button.clicked.connect(lambda: self._ask_identity(starting=False))
+        self.identity_button.hide()
+        self.journal_button = QToolButton(text="Journal")
+        self.journal_button.setToolTip("What they wrote of their days")
+        self.journal_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.journal_button.clicked.connect(self.open_journal)
+        self.journal_button.hide()
         titles.addWidget(self.view_menu_button)
+        titles.addWidget(self.back_button)
         titles.addWidget(self.title_label)
+        titles.addWidget(self.identity_button)  # right after the life's name
+        titles.addWidget(self.journal_button)
         titles.addStretch(1)
         titles.addWidget(self.duty_label)
         head.addLayout(titles, 1)
@@ -2406,8 +2453,8 @@ class MainWindow(QMainWindow):
         bottom.addLayout(footer)
         bottom_row = QHBoxLayout()
         bottom_row.setContentsMargins(24, 0, 24, 10)
-        # With the sidebar hidden: Settings, bottom left as there, and as much room on the
-        # right, so the message box stays centred.
+        # The life's view has no sidebar: Settings, bottom left as there, and as much
+        # room on the right, so the message box stays centred.
         self.view_gear_button = QToolButton(objectName="gear")
         self.view_gear_button.setToolTip("Settings (Ctrl+,)")
         self.view_gear_button.setAccessibleName("Settings")
@@ -2429,6 +2476,11 @@ class MainWindow(QMainWindow):
         banner_row.addWidget(self.banner)
         column.addLayout(banner_row)
         column.addWidget(self.scroll, 1)
+        # Where the life's conversation comes while its process starts.
+        self.waking = _label("Waking up…", selectable=False, tone="muted")
+        self.waking.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.waking.hide()
+        column.addWidget(self.waking, 1)
         column.addLayout(bottom_row)
 
         splitter = self.splitter = QSplitter()
@@ -2573,8 +2625,14 @@ class MainWindow(QMainWindow):
         main_menu = QMenu(self)
         self.menu_button.setMenu(main_menu)
         self.view_menu_button.setMenu(main_menu)
-        self.main_menu = main_menu
-        main_menu.addActions([self.new_action, self.folder_action, self.duty_action, stop])
+        self.life_action = QAction("&Continuous", self, checkable=True)
+        self.life_action.setVisible(self.life is not None)
+        self.life_action.toggled.connect(self.show_life)
+        self.identity_action = QAction("Who they &are…", self)
+        self.identity_action.setVisible(False)  # in the life's view
+        self.identity_action.triggered.connect(lambda: self._ask_identity(starting=False))
+        main_menu.addActions([self.new_action, self.folder_action, self.duty_action, stop,
+                              self.life_action, self.identity_action])
         main_menu.addSeparator()
         view_menu = main_menu.addMenu("&View")
         for text, keys, steps in (
@@ -2715,6 +2773,12 @@ class MainWindow(QMainWindow):
         elif isinstance(change, StatusChanged):
             self._refresh_status()  # the permissions shown, and whether a chat can start
 
+    def _doing(self) -> str | None:
+        """The step under way in the conversation on screen, in words."""
+        step = next((item for item in reversed(self.model.items)
+                     if isinstance(item, ToolItem)), None)
+        return step.sentence if step is not None and step.status is None else None
+
     def _pane_changed(self, change: Change) -> None:
         """A change in the conversation the conversation area shows."""
         match change:
@@ -2727,10 +2791,15 @@ class MainWindow(QMainWindow):
                 pass  # a sub-session's own: the window lists the home's
             case _:
                 self.conversation.changed(change)
+                if self._life_on:  # its status line says what it is doing
+                    self._refresh_status()
 
     def _refresh_status(self) -> None:
         model = self.model
-        duty = self._status_line()
+        duty = (duty_status(model.conversation.duty, model.duty_wake_at, model.state,
+                            model.help_needed) if model.conversation is not None else None)
+        if self._life_on and model.busy and (doing := self._doing()):
+            duty = doing  # its life: what it does now, not just that it is busy
         self.duty_label.setText(duty or "")
         self.duty_label.setVisible(duty is not None)
         known = () if self._models is None or isinstance(self._models, str) else self._models
@@ -2748,8 +2817,11 @@ class MainWindow(QMainWindow):
         self.plan_action.setChecked(model.plan_mode)
         self.plan_action.setEnabled(model.conversation is not None)
         conversation = model.conversation
-        if (title := self._title()) is not None:
-            self.title_label.setText(title)
+        if self._life_on and self.life is not None:
+            self.title_label.setText(self.life.name)
+        elif conversation is not None:
+            self.title_label.setText(conversation_label(
+                self._conversations.get(conversation.id, conversation)))
         folder = conversation.folder if conversation is not None else None
         self.folder_action.setVisible(folder is not None)
         new_chat = (self._viewing is None and folder is not None and not model.items
@@ -3057,8 +3129,9 @@ class MainWindow(QMainWindow):
         if (viewing := self._viewing) is not None:
             self._show(None)
             viewing.pump.cancel()
-            assert self.sessions is not None
-            self.sessions.release(viewing.session, viewing.remote)
+            if viewing.session is not None:  # the life goes on as it is
+                assert self.sessions is not None
+                self.sessions.release(viewing.session, viewing.remote)
 
     def _show(self, viewing: Viewing | None) -> None:
         """Put a sub-session on screen, or (None) the window's own conversation."""
@@ -3070,6 +3143,99 @@ class MainWindow(QMainWindow):
         self.voice.use(self.controller)  # voice talks with what is on screen
         self.conversation.rebuild()
         self._refresh_status()
+
+    def show_life(self, on: bool) -> None:
+        """The whole window is the life's (its life, and no chat list), or back to
+        the user's chats; it lives on either way. It starts living the first time."""
+        if on == self._life_on:
+            return
+        if on and self.life is not None and not self.life.has_lived:
+            self._ask_identity(starting=True)  # its name and who it is, first
+            return
+        self._life_frame(on, waking=on)  # at once, before its process answers
+        _spawn(self._show_life(on))
+
+    def _life_frame(self, on: bool, *, waking: bool = False) -> None:
+        """The window around the life's conversation (no sidebar; its ☰, the way
+        back and who it is in the title bar), or the chats'. While it wakes, a line
+        stands where its conversation will be."""
+        self._life_on = on
+        self.sidebar.setVisible(not on)
+        for widget in (self.back_button, self.view_menu_button, self.identity_button,
+                       self.journal_button, self.view_gear_button, self._gear_balance):
+            widget.setVisible(on)
+        self._gear_balance.setFixedWidth(self.view_gear_button.sizeHint().width())
+        self.identity_action.setVisible(on)
+        self.waking.setVisible(waking)
+        self.scroll.setVisible(not waking)
+        self.composer.setVisible(not waking)
+        self._refresh_status()
+        self._show_voice()  # the message box's hint names whom it talks to
+
+    def _ask_identity(self, *, starting: bool) -> None:
+        life = self.life
+        assert life is not None
+        dialog = self.life_dialog = LifeDialog(self, life.name, life.about,
+                                                         starting=starting)
+
+        def chosen() -> None:
+            async def apply() -> None:
+                await life.set_identity(dialog.name.text(), dialog.about.toPlainText())
+                if starting:
+                    self._life_frame(True, waking=True)
+                    await self._show_life(True)
+                else:
+                    self._refresh_status()
+                    self._show_voice()
+            _spawn(apply())
+
+        dialog.accepted.connect(chosen)
+        if starting:  # not chosen: no life
+            dialog.rejected.connect(lambda: self.life_action.setChecked(False))
+        dialog.open()
+
+    async def _show_life(self, on: bool) -> None:
+        life = self.life
+        assert life is not None
+        if not on:
+            self._leave_session()
+            self._open()
+            self._life_frame(False)
+            return
+        try:
+            if not life.running:
+                await life.start()
+        except Exception as e:  # noqa: BLE001 - shown, never fatal
+            self._life_frame(False)
+            self.life_action.setChecked(False)
+            self.model.notify(f"Continuous could not start: {user_message(e)}")
+            return
+        if not self._life_on:  # the user went back meanwhile
+            return
+        self._leave_session()
+        self._open()
+        controller = Controller(life.runtime, ConversationModel())
+        self._show(Viewing(None, life.runtime, controller,
+                           asyncio.create_task(controller.run())))
+        self._life_frame(True)
+
+    def open_journal(self) -> None:
+        life = self.life
+        assert life is not None
+        dialog = self.journal_dialog = JournalDialog(self, life.name)
+        dialog.open()
+
+        async def fill() -> None:
+            dialog.show_text(await life.read_journal())
+        _spawn(fill())
+
+    def _life_said(self) -> None:
+        """What the life said by itself: in its own view it is in the conversation;
+        elsewhere a notice in the chat on screen."""
+        if self.life is None or self.showing_life:
+            return
+        for text in self.life.take_messages():
+            self.model.notify(f"{self.life.name}: {text}")
 
     def open_duty(self) -> None:
         if self.model.conversation is None:
@@ -3143,30 +3309,10 @@ class MainWindow(QMainWindow):
             self._hint() if fetching or not self.voice.status else self.voice.status)
         self._paint_icons()
 
-    def show_sidebar(self, on: bool) -> None:
-        """The chat list, or none: then its ☰ is in the header and Settings bottom left."""
-        self.sidebar.setVisible(on)
-        for widget in (self.view_menu_button, self.view_gear_button, self._gear_balance):
-            widget.setVisible(not on)
-        self._gear_balance.setFixedWidth(self.view_gear_button.sizeHint().width())
-
-    def _status_line(self) -> str | None:
-        """The line at the right of the header: the duty's state, if there is one."""
-        model = self.model
-        if model.conversation is None:
-            return None
-        return duty_status(model.conversation.duty, model.duty_wake_at, model.state,
-                           model.help_needed)
-
-    def _title(self) -> str | None:
-        """The header's title: the open conversation's."""
-        conversation = self.model.conversation
-        if conversation is None:
-            return None
-        return conversation_label(self._conversations.get(conversation.id, conversation))
-
     def _whom(self) -> str:
         """Whom the message box talks to."""
+        if self._life_on and self.life is not None:
+            return self.life.name
         return "Kaden"
 
     def _hint(self) -> str:
@@ -3237,7 +3383,7 @@ class MainWindow(QMainWindow):
             event.ignore()
             self.hide()
             if not self.told_of_tray:
-                self.tray.showMessage(self.app_name, "Still running. Quit from this icon.",
+                self.tray.showMessage("Kaden", "Still running. Quit from this icon.",
                                       QIcon(str(app_menu.ICON)), 4000)
                 self.told_of_tray = True
             return
@@ -3376,6 +3522,56 @@ class NoteDialog(QDialog):
             self.title.text(), self.description.text(), self.text.toPlainText(),
             self.note.id if self.note else None, failed=failed,
             done=lambda _: self.accept())
+
+
+class JournalDialog(QDialog):
+    """The life's journal, as it is when opened: what it wrote of its days."""
+
+    def __init__(self, parent: QWidget, name: str) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"{name}'s journal")
+        self.resize(640, 560)
+        column = QVBoxLayout(self)
+        column.setContentsMargins(20, 18, 20, 16)
+        column.addWidget(_label(f"{name}'s journal", selectable=False, role="heading"))
+        self.page = QTextBrowser()
+        self.page.setOpenExternalLinks(True)
+        column.addWidget(self.page, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        column.addWidget(buttons)
+
+    def show_text(self, text: str) -> None:
+        if text.strip():
+            self.page.setMarkdown(text)
+        else:
+            self.page.setPlainText("Nothing written yet.")
+
+
+class LifeDialog(QDialog):
+    """The life's name and who it is, in the user's words: before it first lives,
+    and to change later."""
+
+    def __init__(self, parent: QWidget, name: str, about: str, *, starting: bool) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Who they are")
+        self.setMinimumWidth(520)
+        form = QFormLayout(self)
+        form.setContentsMargins(20, 18, 20, 16)
+        form.addRow(_label("Who they are", selectable=False, role="heading"))
+        self.name = QLineEdit(name)
+        self.name.setPlaceholderText(NAME)
+        self.about = QPlainTextEdit(about)
+        self.about.setPlaceholderText("Personality, interests, how they talk… or leave it to them")
+        self.about.setMaximumHeight(140)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        _primary(buttons.addButton("Start" if starting else "Save",
+                                   QDialogButtonBox.ButtonRole.AcceptRole))
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow("Name", self.name)
+        form.addRow("Who they are", self.about)
+        form.addRow(buttons)
 
 
 class DutyDialog(QDialog):

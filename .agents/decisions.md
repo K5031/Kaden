@@ -675,7 +675,7 @@ Design: [Agent Note](notes/implemented/2026-11-11-duties.md).
 | Store | SQLite schema 8: `conversations.duty` (JSON or NULL) and `conversations.plan` (JSON list, default `[]`) |
 | Plan text | The desktop app edits the plan as lines: `[status] step \| due YYYY-MM-DD HH:MM \| note` (`frontends.common.plan_text`, `parse_plan_text`) |
 | Commands | **☰ → Set a duty…** in the desktop app |
-| The word | The user sees "duty" and "Duty" ("Goal" for work that ends): the menu (**Set a duty…**), the dialog, the status line, the notice that turns it on ("New duty: …"), the docs and `--duty` (the user, 2026-11-23: what the app called "Continuous" is a duty, and what is continuous is a life of its own, now Kaden, `../Kaden`). The code, the API (`Duty`, `set_duty`) and what the agent is told say "duty" too |
+| The word | The user sees "duty" and "Duty" ("Goal" for work that ends): the menu (**Set a duty…**), the dialog, the status line, the notice that turns it on ("New duty: …"), the docs and `--duty` (the user, 2026-11-23: what the app called "Continuous" is a duty, and "continuous" is kept for [a life of its own](notes/implemented/2026-11-23-continuous.md)). The code, the API (`Duty`, `set_duty`) and what the agent is told say "duty" too |
 
 ## Message times
 
@@ -989,17 +989,24 @@ Design: [Agent Note](notes/implemented/2026-11-12-seeing-the-screen.md).
 | Refusal | NOT_STARTED: `send`, `notify`, `activate`, `set_duty`, `set_plan` before `start`. BUSY: `start` or `activate` during a cycle, while stopping, or with operations outstanding. BUDGET: `send`, `notify`, `activate` on an exhausted budget. NOT_PENDING: an unknown or finished call, prompt or proposal. CONVERSATION_OPEN: deleting the open conversation. UNAVAILABLE: any command after shutdown, every command the setup runtime cannot serve, a sub-session whose process ended, `restart` of a sub-session |
 | On the channel | `error.data` is `{"type": "RuntimeStateError", "reason": "<refusal>"}`; other exceptions have `type` only |
 
-## A life (`DutyKind.LIFE`)
+## Continuous
 
-A duty that is someone's own time, not work, for Kaden (`../Kaden`), the app that lives
-one. The design is in that repository's note; the runtime's choices:
+The design is in [the note](notes/implemented/2026-11-23-continuous.md); the choices it leaves open:
 
 | Choice | Decision |
 |---|---|
-| Pace | Awake by default: with nothing due it goes on after `min_interval_s` (`duty.next_wake`); a due time in its plan is its rest, held to `max_interval_s`. Asleep by default (its own alarm, a 24 h net) was tried: the model set no alarm, and it slept a day |
-| Its own time's model | `Duty.model`: cycles the life starts itself use it, the user's messages are answered with the conversation's. At Opus prices US$1 a day bought a couple dozen turns |
-| Daily amount | `Budget.max_cost_usd_per_day`, counting only the cycles it starts itself (`BudgetTracker.charge(own_time=True)`): talking with the user spent it at first, and then it could not live |
-| Its prompt section | "## Your life": its instruction, that its time is its own, how it comes back (after the shortest wait unless it rests until a time it chooses; the user and its own work wake it), and that text in a turn the user did not start reaches them |
+| Where it lives | `<data dir>/life/`, a headless Kaden the desktop app starts (`frontends.life.Life`), with the app's `config.toml` and `settings.toml` copied in on every start, its own budget, work folder (`life/home`) and prompt; `life.json` holds its conversation, name and what the user said of who it is |
+| When it starts | The first time the user opens its view, once they have named it (`LifeDialog`, Cancel leaves it unstarted); after that with the app. `Life.start()` is idempotent: a second call while it starts waits for the first |
+| Who it is | `Life.who`: "You are <name>.", that it lives on the user's computer and is not their assistant, then what the user said, or that the rest is its to find out |
+| Pace | Awake by default: with nothing due it goes on after its shortest wait, 60 s (`life.PACE_S`, `duty.next_wake` for `DutyKind.LIFE`); a due time it gives a step of its plan is its rest, held to 24 h. The user's message and its own background work finishing wake it at once. Asleep by default (its own alarm, a 24 h net) was tried: the model set no alarm, and it slept a day. The daily amount bounds it: on Haiku a turn a minute spends US$1 within the day |
+| Its own time's model | The user's maintenance model, as `Duty.model`: cycles the life starts itself use it, the user's messages are answered with the conversation's. At Opus prices US$1 a day bought a couple dozen turns |
+| Daily amount | US$1 a day (`life.DAILY_USD`), as `Budget.max_cost_usd_per_day` in its settings, counting only the cycles it starts itself (`BudgetTracker.charge(own_time=True)`): talking with the user spent it at first, and then it could not live; no UI yet |
+| Its life on every start | `set_duty` with its life as the app has it (pace, model, who it is), a resumed one too |
+| Its prompt | Its own (`life.PROMPT`): that it has a life of its own and tools to live it, that the user can read `journal.md` in its folder, then `config.TOOL_FACTS`; "## Your life" in the system prompt says how it comes back |
+| What reaches the user | Text of an assistant message in a turn the user did not start: a notice "<name>: …" in the chat on screen, unless its view is open |
+| Its view | No sidebar; ‹ Chats, ☰ (the sidebar's menu), its name, ✎ and Journal in the title bar, the gear bottom left; its current step (`ToolItem.sentence`) as the status line while it works; "Message <name>" as the message box's hint; "Waking up…" while its process starts |
+| Opening where the user left off | The look file (`desktop.json`) keeps `life`: whether its view was open on close |
+| Voice | Follows what is on screen (`VoiceMode.use`) |
 
 ## Close to tray
 
@@ -1008,7 +1015,7 @@ The design is in [the note](notes/implemented/2026-11-23-close-to-tray.md); the 
 | Choice | Decision |
 |---|---|
 | When | Whenever `QSystemTrayIcon.isSystemTrayAvailable()` at start; otherwise closing quits |
-| The icon | Kaden's app icon (`app_menu.ICON`), tooltip "Kaden Chat" (`MainWindow.app_name`); a click or **Open Kaden Chat** shows the window as it was (maximized stays maximized), **Quit** quits |
+| The icon | Kaden's app icon (`app_menu.ICON`), tooltip "Kaden"; a click or **Open Kaden** shows the window as it was (maximized stays maximized), **Quit** quits |
 | The message | Once per run, at the first close: "Still running. Quit from this icon." for 4 s |
 | Quitting | `MainWindow.quit()`: the Quit actions, Ctrl+Q, and the app's own shutdown; `close()` alone only hides while there is a tray |
 

@@ -865,3 +865,43 @@ def test_a_flawed_sentence_is_made_again_and_the_best_one_kept():
     takes, made[:] = iter(["hi hi there", "hi hi hi there", "hi hi hi hi there"]), []
     samples, _ = checked(speak, hear, "Hi there.", attempts=3)
     assert samples[0] == 1 and len(made) == 3  # none right: the least wrong
+
+
+async def test_talking_in_the_lifes_view_talks_with_the_life(make, qapp, tmp_path):
+    """Voice follows the view: said to the life, and its reply read aloud."""
+    from kaden.api import Role, Text
+    from kaden.frontends.desktop.viewmodel import Controller, ConversationModel
+    from kaden.frontends.desktop.voice.mode import VoiceMode
+    from kaden.frontends.desktop.window import MainWindow
+    from tests.fakes.core import Step
+    from tests.test_desktop_window import FakeLife
+
+    h = await make()
+    await h.start()
+    them = await make()
+    them.core.add(Step(text="Hi! I was just reading about maps."))
+    await them.start()
+    controller = Controller(h.runtime, ConversationModel())
+    engine, speaker, microphones = ScriptedEngine("hello there"), Speaker(), []
+
+    def microphone(heard) -> FakeMicrophone:
+        microphones.append(FakeMicrophone(heard))
+        return microphones[-1]
+
+    voice = VoiceMode(controller, tmp_path / "voice", yes, engine=lambda _folder: engine,
+                      microphone=microphone, speaker=lambda: speaker, models=(),
+                      natural=False)
+    window = MainWindow(h.runtime, controller, voice=voice, life=FakeLife(them.runtime))
+    asyncio.create_task(controller.run())
+    await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
+    window.life_action.trigger()
+    await eventually(lambda: window.showing_life)
+    window.microphone_button.click()
+    window.speaker_button.click()
+    await eventually(lambda: voice.spoken and microphones)
+    [mic] = microphones
+    mic.heard(TALK)
+    await eventually(lambda: "Hi!" in engine.spoke, timeout=5)
+    said = [b.text for m in await them.transcript() if m.role is Role.USER
+            for b in m.blocks if isinstance(b, Text)]
+    assert said[0] == "hello there"  # it went to the life, not the user's chat

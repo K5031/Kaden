@@ -4,7 +4,7 @@ Status: implemented — Kaden's built-in tools read Bilibili as a viewer does, w
 
 ## Problem
 
-A life (`DutyKind.LIFE`, which Kaden, `../Kaden`, lives) has its own time and
+[Continuous](2026-11-23-continuous.md) has its own time and
 little to do with it: the web search and a page reader. The user wants it to watch videos,
 as people on Bilibili set agents to ("养鱼", raising a fish), and to have that ability, not
 a routine for using it.

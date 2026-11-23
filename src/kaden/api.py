@@ -497,7 +497,7 @@ class ConversationInfo:
 class DutyKind(StrEnum):
     DUTY = "duty"  # runs until a person turns it off
     GOAL = "goal"  # also ends when the agent declares it reached (finish_goal)
-    # The agent's own time, not work: someone's life, as Kaden (the app) lives one. No ask_for_help or finish_goal;
+    # The agent's own time, not work: someone's life (Continuous). No ask_for_help or finish_goal;
     # woken again when its conversation is resumed (a restart does not pause it); held to
     # Budget.max_cost_usd_per_day.
     LIFE = "life"

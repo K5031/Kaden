@@ -5,14 +5,14 @@ Status: implemented — closing the window keeps Kaden running in the system tra
 ## Problem
 
 Closing the desktop window quits Kaden, and with it everything that goes on by itself:
-a conversation's duty and background work. The user wants them to go on with the
-window closed.
+[Continuous](2026-11-23-continuous.md), a conversation's duty, background work. The
+user wants them to go on with the window closed.
 
 ## Decision
 
 - Where the desktop has a system tray (`desktop/tray.py`), closing the window hides it:
   Kaden keeps running. A tray icon (Kaden's) brings it back with a click, and its menu
-  has **Open Kaden Chat** and **Quit**.
+  has **Open Kaden** and **Quit**.
 - **Quit** (☰ and the profile menu, Ctrl+Q, the tray menu) quits, as closing did.
 - The first close in a run says so once, as a tray message: Kaden is still running.
 - Without a system tray, closing quits as before.
@@ -26,7 +26,7 @@ window closed.
 
 ## Consequences
 
-- Duties and background work go on with the window closed, which is what
+- Continuous, duties and background work go on with the window closed, which is what
   closing to the tray is for.
 - A user who expects closing to quit finds Kaden still running: the one-time message and
   the icon say so.

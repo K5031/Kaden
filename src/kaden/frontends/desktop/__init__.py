@@ -25,6 +25,7 @@ from PySide6 import QtWidgets  # noqa: F401
 
 from kaden.frontends.desktop import single
 from kaden.frontends.desktop.loop import run_on_qt
+from kaden.frontends.life import Life
 from kaden.frontends.sessions import SubSessions
 
 
@@ -48,6 +49,7 @@ class DesktopFrontend(Frontend):
         self.data_dir = data_dir  # None: no zoom or theme remembered, no single window
         self.zoom_file = data_dir / ZOOM_FILE if data_dir is not None else None
         self.sessions = SubSessions(data_dir) if data_dir is not None else None
+        self.life = Life(data_dir) if data_dir is not None else None
 
     def tools(self) -> Sequence[Tools]:
         return [self.sessions] if self.sessions is not None else []
@@ -65,6 +67,7 @@ class DesktopFrontend(Frontend):
         from kaden.frontends.desktop.window import (
             MainWindow,
             load_look,
+            load_view,
             load_voice,
             save_look,
         )
@@ -81,7 +84,12 @@ class DesktopFrontend(Frontend):
             theme.set_zoom(app, zoom)
         controller = Controller(runtime, ConversationModel())
         window = MainWindow(runtime, controller, self.zoom_file, self.sessions,
+                            life=self.life,
                             tray=QSystemTrayIcon.isSystemTrayAvailable())
+        if self.life is not None and self.life.has_lived:  # it lives on
+            controller.command(self.life.start())
+            if self.zoom_file is not None and await load_view(self.zoom_file):
+                window.life_action.setChecked(True)  # where the user left off
         if self.zoom_file is not None:
             await window.voice.restore(await load_voice(self.zoom_file))
         server = (await single.listen(self.data_dir, window.bring_forward)
@@ -101,8 +109,11 @@ class DesktopFrontend(Frontend):
                 server.close()
                 single.socket_path(self.data_dir).unlink(missing_ok=True)
             window.quit()
+            if self.life is not None:
+                await self.life.aclose()
             if self.zoom_file is not None:
-                await save_look(self.zoom_file, window.voice.voice)
+                await save_look(self.zoom_file, window.voice.voice,
+                                life=window.showing_life)
 
     async def _hand_over(self, data_dir: Path) -> None:
         """Another Kaden has the data folder: bring its window forward, or, when none

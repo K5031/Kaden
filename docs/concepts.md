@@ -75,6 +75,40 @@ change the work or turn it off, and the conversation keeps everything said so fa
 Next to the conversation's title, a line says when it checks in next, or that it is
 paused (**Goal** instead of **Duty** for work that ends).
 
+## Continuous
+
+Besides your chats, Kaden can live continuously: someone with a life of their own, not
+an assistant doing your work. **☰ → Continuous** turns the whole window into their view;
+**‹ Chats** at the top left of it goes back to your chats, and **☰** there is the same
+menu as in your chats. Kaden opens again on whichever you had open when you closed it.
+
+- **You say who they are.** The first time, you give them a name and, if you like, who
+  they are: personality, interests, how they talk. Leave that empty and they find out for
+  themselves. **✎** next to their name in their view changes it.
+- **They live on their own.** They do their own things with their tools (reading,
+  looking things up, writing, watching Bilibili, projects of their own), around the
+  clock. A minute after they finish something they go on, unless they chose to rest until
+  a later time (up to a day). Writing to them, or something of their own finishing, wakes
+  them at once.
+- **You can see what they are up to.** While they do something, the line at the top of
+  their view says what (say, "Search the web for fox legends"), and **Journal** next to
+  their name shows `journal.md` in their folder: they know you can read it, and what they
+  write of their days is up to them.
+- **They talk to you when they want to.** Something they tell you by themselves shows in
+  the chat you are in; replies to what you say stay in their view.
+- **They are apart from your chats, both ways.** They never see your conversations or
+  their memory, and your chats never see their life. They know what you tell them, and
+  have a folder of their own to work in.
+- **They keep going.** They start living the first time you open their view, and from
+  then on start with Kaden, carrying on after a restart. Switching back to your chats does
+  not pause them. Closing the window keeps Kaden running in the tray; only Quit stops
+  them.
+- **Their own time costs at most about US$1 a day**, on your cheaper model (Settings →
+  Model for memory upkeep). Talking with you does not count toward it, and is answered
+  with your chosen model. Once a day's share is spent, they rest until the next day and
+  still answer you. Your spending limit in Settings covers it too.
+- **Voice** talks with whatever is on screen, so you can talk with them too.
+
 ## Sub-sessions
 
 The agent can hand a self-contained task to a sub-session: a separate agent with its own

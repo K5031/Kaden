@@ -30,7 +30,7 @@ def test_install_adds_a_launcher_that_starts_the_desktop_app(data_home: Path) ->
     assert app_menu.supported() and not app_menu.is_current()
     app_menu.install()
     e = entry(data_home)
-    assert (e["Type"], e["Name"], e["Terminal"]) == ("Application", "Kaden Chat", "false")
+    assert (e["Type"], e["Name"], e["Terminal"]) == ("Application", "Kaden", "false")
     # The window launcher, not `kaden`: a menu has no terminal for the terminal app.
     assert e["Exec"] == f"{sys.executable} -m kaden.window"
     assert e["StartupWMClass"] == "io.github.k5031.kaden"

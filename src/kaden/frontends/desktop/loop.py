@@ -95,7 +95,7 @@ def run_on_qt(main: Coroutine[Any, Any, Any]) -> Any:
     app = QApplication.instance()
     if not isinstance(app, QApplication):
         app = QApplication(sys.argv[:1])
-        app.setApplicationName("Kaden Chat")
+        app.setApplicationName("Kaden")
         app.setDesktopFileName(app_menu.APP_ID)
         app.setWindowIcon(QIcon(str(app_menu.ICON)))
         app.setQuitOnLastWindowClosed(False)  # the runtime shuts down first, then the loop

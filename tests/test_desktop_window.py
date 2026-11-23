@@ -1292,7 +1292,7 @@ async def test_the_menus_live_behind_two_buttons_and_their_shortcuts_still_work(
     assert not window.findChildren(QMenuBar)
     texts = [a.text() for a in window.menu_button.menu().actions() if a.text()]
     assert texts == ["&New chat", "New chat in another &folder…", "Set a &duty…", "S&top",
-                     "&View", "&Model"]
+                     "&Continuous", "Who they &are…", "&View", "&Model"]
     profile = window.profile_button.menu()
     window._fill_profile_header()
     texts = [a.text() for a in profile.actions() if a.text() and a.isVisible()]
@@ -2178,6 +2178,10 @@ async def test_the_chosen_voice_is_kept_with_the_look(tmp_path):
     assert await window_module.load_look(saved) == (theme.zoom(), theme.choice())
     saved.write_text('{"voice": 3}')
     assert await window_module.load_voice(saved) == "Heart"
+    # Which view was open: Continuous, or the user's chats (the default).
+    assert await window_module.load_view(saved) is False
+    await window_module.save_look(saved, voice="Bella", life=True)
+    assert await window_module.load_view(saved) is True
 
 
 async def test_the_voice_is_chosen_in_settings(make, qapp):
@@ -2249,9 +2253,198 @@ def test_the_hint_in_the_message_box_starts_after_the_cursor(qapp):
     assert box.placeholderText() == "Message Kaden"  # kept for when the box empties
 
 
+class FakeLife:
+    """A life whose life runs on a harness's runtime instead of its own process."""
+
+    def __init__(self, runtime: Any, *, has_lived: bool = True) -> None:
+        self.runtime, self.listeners, self.started = runtime, [], 0
+        self.said: list[str] = []
+        self.has_lived, self.name, self.about = has_lived, "Kaden", ""
+
+    async def set_identity(self, name: str, about: str) -> None:
+        self.name, self.about = name, about
+
+    async def read_journal(self) -> str:
+        return self.journal
+
+    journal = ""
+
+    @property
+    def running(self) -> bool:
+        return self.started > 0
+
+    async def start(self) -> None:
+        self.started += 1
+
+    def take_messages(self) -> list[str]:
+        said, self.said = self.said, []
+        return said
+
+
+async def test_the_life_takes_over_the_window_and_gives_it_back(make, qapp):
+    """☰ → Continuous: the whole window is the life's, its life in the conversation
+    area and no chat list; switching back leaves it living."""
+    h: Harness = await make()
+    h.core.add(Step(text="Hi there."))
+    await h.start()
+    them: Harness = await make()
+    them.core.add(Step(text="Oh, hello!"))
+    await them.start()
+    life = FakeLife(them.runtime)
+    controller = Controller(h.runtime, ConversationModel())
+    window = MainWindow(h.runtime, controller, life=life)
+    asyncio.create_task(controller.run())
+    await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
+    window.life_action.trigger()
+    await eventually(lambda: window.showing_life)
+    assert life.started == 1 and window.sidebar.isHidden()
+    assert window.controller is not window.home  # the message box talks to it
+    assert window.voice.controller is window.controller  # and so does voice
+    window.input.setPlainText("hey")
+    window._send()
+    await eventually(lambda: any(isinstance(m, AssistantItem) for m in window.model.items))
+    # Its view has no sidebar: ☰ and the way back are in its title bar.
+    assert window.back_button.isVisibleTo(window)
+    assert window.view_menu_button.isVisibleTo(window)
+    assert window.view_menu_button.menu() is window.menu_button.menu()  # the same menu
+    assert window.view_gear_button.isVisibleTo(window)  # and Settings, bottom left
+    opened: list[bool] = []
+    window.open_settings = lambda *args, **kwargs: opened.append(True)  # type: ignore[method-assign]
+    window.view_gear_button.click()
+    assert opened == [True]
+    window.back_button.click()
+    await eventually(lambda: not window.showing_life)
+    assert not window.sidebar.isHidden() and window.controller is window.home
+    assert not window.back_button.isVisibleTo(window)
+    assert not window.view_menu_button.isVisibleTo(window)  # the sidebar's ☰ is back
+    assert not window.view_gear_button.isVisibleTo(window)  # and its gear
+    assert not window.life_action.isChecked()
+    assert window.voice.controller is window.home
+    assert them.runtime.snapshot().state != AgentState.STOPPED  # it lives on
+
+
+async def test_what_the_life_says_by_itself_shows_in_the_chat_on_screen(make, qapp):
+    h: Harness = await make()
+    await h.start()
+    them: Harness = await make()
+    await them.start()
+    life = FakeLife(them.runtime)
+    controller = Controller(h.runtime, ConversationModel())
+    window = MainWindow(h.runtime, controller, life=life)
+    asyncio.create_task(controller.run())
+    await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
+    life.said.append("I found an old map of Kyoto!")
+    for listener in life.listeners:
+        listener()
+    await eventually(lambda: any("I found an old map of Kyoto!" in n.text
+                                 for n in window.model.items if isinstance(n, NoticeItem)))
+
+
+async def test_the_user_names_the_life_before_it_first_lives(make, qapp):
+    h: Harness = await make()
+    await h.start()
+    them: Harness = await make()
+    await them.start()
+    life = FakeLife(them.runtime, has_lived=False)
+    controller = Controller(h.runtime, ConversationModel())
+    window = MainWindow(h.runtime, controller, life=life)
+    asyncio.create_task(controller.run())
+    await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
+    window.life_action.trigger()
+    dialog = await eventually(lambda: window.life_dialog)
+    assert life.started == 0  # not before it has a name
+    dialog.name.setText("Mira")
+    dialog.about.setPlainText("Curious, loves old maps.")
+    dialog.accept()
+    await eventually(lambda: window.showing_life)
+    assert (life.name, life.about) == ("Mira", "Curious, loves old maps.")
+    assert life.started == 1 and window.title_label.text() == "Mira"
+    assert window.input.placeholderText() == "Message Mira"  # whom the box talks to
+    window.identity_button.click()  # in its title bar: who they are, to change
+    again = await eventually(lambda: window.life_dialog is not dialog
+                             and window.life_dialog)
+    assert again.name.text() == "Mira"
+    again.reject()
+    life.said.append("Look at this map!")  # by itself, while its view is on screen
+    window.life_action.trigger()
+    await eventually(lambda: not window.showing_life)
+    assert window.input.placeholderText() == "Message Kaden"
+    for listener in life.listeners:
+        listener()
+    await eventually(lambda: any(n.text == "Mira: Look at this map!"
+                                 for n in window.model.items if isinstance(n, NoticeItem)))
+
+
+async def test_its_view_is_on_screen_at_once_while_it_wakes(make, qapp):
+    """Opening on the life shows its view before its process has started: never the
+    user's chats in between."""
+    h: Harness = await make()
+    await h.start()
+    them: Harness = await make()
+    await them.start()
+    life = FakeLife(them.runtime)
+    awake = asyncio.Event()
+
+    async def slow_start() -> None:
+        life.started += 1
+        await awake.wait()
+
+    life.start = slow_start  # type: ignore[method-assign]
+    controller = Controller(h.runtime, ConversationModel())
+    window = MainWindow(h.runtime, controller, life=life)
+    asyncio.create_task(controller.run())
+    window.life_action.setChecked(True)  # as the app does before showing the window
+    assert window.sidebar.isHidden() and not window.waking.isHidden()  # at once
+    assert window.scroll.isHidden() and window.composer.isHidden()
+    assert window.title_label.text() == "Kaden" and window.back_button.isVisibleTo(window)
+    awake.set()
+    await eventually(lambda: window.showing_life)
+    assert window.waking.isHidden() and not window.scroll.isHidden()
+    assert not window.composer.isHidden()
+    window.back_button.click()  # and back, then again: going back while it wakes works
+    await eventually(lambda: not window.showing_life)
+    awake.clear()
+    window.life_action.setChecked(True)
+    window.back_button.click()
+    assert not window.sidebar.isHidden() and window.waking.isHidden()
+    awake.set()
+    await asyncio.sleep(0.05)
+    assert not window.showing_life  # it woke after the user had gone back
+
+
+
+
+async def test_the_lifes_view_shows_what_it_is_doing_and_its_journal(make, qapp):
+    h: Harness = await make()
+    await h.start()
+    them: Harness = await make()
+    them.tools.slow("look", 0.5)
+    them.core.add(Step(calls=[call("look", {"step_summary": "Reading about fox legends"})]),
+                  Step(text=""))
+    await them.start()
+    life = FakeLife(them.runtime)
+    life.journal = "# Monday\n\nFound an old map of Kyoto."
+    controller = Controller(h.runtime, ConversationModel())
+    window = MainWindow(h.runtime, controller, life=life)
+    asyncio.create_task(controller.run())
+    await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
+    window.life_action.trigger()
+    await eventually(lambda: window.showing_life)
+    await them.runtime.activate()  # it does something by itself
+    await eventually(lambda: window.duty_label.text() == "Reading about fox legends")
+    assert window.journal_button.isVisibleTo(window)
+    window.journal_button.click()
+    journal = await eventually(lambda: window.journal_dialog)
+    await eventually(lambda: "old map of Kyoto" in journal.page.toPlainText())
+    journal.reject()
+    window.back_button.click()
+    await eventually(lambda: not window.showing_life)
+    assert not window.journal_button.isVisibleTo(window)
+
+
 async def test_closing_hides_to_the_tray_and_quit_quits(make, qapp):
-    """With a system tray, closing the window leaves Kaden running (a duty, background
-    work); the tray brings it back; Quit quits."""
+    """With a system tray, closing the window leaves Kaden running (a life, a duty,
+    background work); the tray brings it back; Quit quits."""
     h: Harness = await make()
     await h.start()
     controller = Controller(h.runtime, ConversationModel())
@@ -2276,17 +2469,3 @@ async def test_without_a_tray_closing_quits(make, qapp):
     window.closed.connect(lambda: closed.append(True))
     window.close()
     assert closed == [True] and window.tray is None
-
-
-async def test_without_the_sidebar_its_menu_and_settings_are_in_the_window(make, qapp):
-    h: Harness = await make()
-    await h.start()
-    window, _controller, _ = await open_window(h)
-    assert not window.view_menu_button.isVisibleTo(window)
-    window.show_sidebar(False)
-    assert window.sidebar.isHidden()
-    assert window.view_menu_button.isVisibleTo(window)
-    assert window.view_menu_button.menu() is window.menu_button.menu()  # the same menu
-    assert window.view_gear_button.isVisibleTo(window)  # Settings, bottom left
-    window.show_sidebar(True)
-    assert not window.sidebar.isHidden() and not window.view_gear_button.isVisibleTo(window)

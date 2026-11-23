@@ -293,8 +293,8 @@ has a card with **Cancel**.
 
 ## Quitting
 
-Closing the window keeps Kaden running in the system tray, so duties and background
-work go on; click its icon there to open the window again. **Quit** (in ☰,
+Closing the window keeps Kaden running in the system tray, so Continuous, duties and
+background work go on; click its icon there to open the window again. **Quit** (in ☰,
 your name's menu or the tray icon's), or Ctrl+Q, quits: tools still running are
 cancelled, and your conversations are saved and can be continued later. On a desktop
 without a system tray, closing the window quits.

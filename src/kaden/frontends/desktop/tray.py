@@ -1,5 +1,5 @@
-"""The app's icon in the system tray, while its window is closed: Kaden goes on running
-(duties, background work) until the user quits."""
+"""Kaden's icon in the system tray, while its window is closed: Kaden goes on running
+(a life, duties, background work) until the user quits."""
 
 from __future__ import annotations
 
@@ -12,14 +12,14 @@ from kaden.frontends.desktop import app_menu
 
 
 class Tray(QSystemTrayIcon):
-    """A click, or Open `name`, calls `open`; Quit calls `quit`."""
+    """A click, or Open Kaden, calls `open`; Quit calls `quit`."""
 
     def __init__(self, parent: QWidget, open: Callable[[], None],
-                 quit: Callable[[], None], name: str) -> None:
+                 quit: Callable[[], None]) -> None:
         super().__init__(QIcon(str(app_menu.ICON)), parent)
-        self.setToolTip(name)
+        self.setToolTip("Kaden")
         menu = QMenu(parent)
-        self.open_action = QAction(f"Open {name}", menu)
+        self.open_action = QAction("Open Kaden", menu)
         self.open_action.triggered.connect(open)
         self.quit_action = QAction("Quit", menu)
         self.quit_action.triggered.connect(quit)
