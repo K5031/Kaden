@@ -374,3 +374,32 @@ async def test_the_runtime_runs_on_it_unchanged(make, tmp_path: Path):
     await h.turn("and what do I drink?")
     system = h.core.requests[-1].system
     assert "- [Tea](user-tea.md) — tea" in system and "Only green tea." not in system
+
+
+async def test_an_argument_of_another_tool_is_named_back(make, tmp_path: Path):
+    """The Edit tool's old_string and new_string, given to the memory tool, are refused by
+    name before the call runs, so the next try can fix just that."""
+    from kaden.api import PermissionPolicy
+    from tests.fakes.core import ScriptedCore, Step, call
+    from tests.fakes.tools import FakeTools
+
+    tools = FakeTools()
+    tools.folders = []
+    memory = FilesMemory(tmp_path / "m.db", CONFIG, projects=tmp_path / "p")
+    h = await make(memory=memory, tools=tools, permissions=PermissionPolicy.DENY,
+                   core=ScriptedCore([
+                       Step(calls=[call("memory", {"command": "str_replace", "path": "a.md",
+                                                   "old_string": "x", "new_string": "y"},
+                                        id="e"),
+                                   call("memory", {"command": "view", "path": "",
+                                                   "step_summary": "List my memories"},
+                                        id="v")]),
+                       Step(text="Oops.")], maintenance=Step(text="Notes")))
+    project = tmp_path / "project"
+    project.mkdir()
+    await h.start(folder=str(project))
+    await h.turn("remember this")
+    results = await h.results()
+    assert results["e"].status is ToolStatus.ERROR
+    assert "'old_string'" in results["e"].content and "unexpected" in results["e"].content
+    assert results["v"].status is ToolStatus.OK  # every tool's step_summary is still taken

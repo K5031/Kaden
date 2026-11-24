@@ -41,6 +41,8 @@ MEMORY = ToolSpec(
             "new_path": {"type": "string"},
         },
         "required": ["command"],
+        # Another tool's argument (Edit's old_string) is named back, not passed through.
+        "additionalProperties": False,
     },
 )
 
