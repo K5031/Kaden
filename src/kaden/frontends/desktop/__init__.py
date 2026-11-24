@@ -89,7 +89,7 @@ class DesktopFrontend(Frontend):
         if self.life is not None and self.life.has_lived:  # it lives on
             controller.command(self.life.start())
             if self.zoom_file is not None and await load_view(self.zoom_file):
-                window.life_action.setChecked(True)  # where the user left off
+                window.continuous_switch.setChecked(True)  # where the user left off
         if self.zoom_file is not None:
             await window.voice.restore(await load_voice(self.zoom_file))
         server = (await single.listen(self.data_dir, window.bring_forward)

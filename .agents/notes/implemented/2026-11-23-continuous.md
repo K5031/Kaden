@@ -20,8 +20,9 @@ have to hold.
 
 ### One app, two views
 
-**☰ → Continuous** switches the whole window between the user's chats and the life's
-view. It changes what is shown, not what runs: the life goes on while the chats are up,
+The **Continuous** switch in the title bar, in the same place in both views, turns the
+whole window between the user's chats and the life's view; it is the one way between
+them. It changes what is shown, not what runs: the life goes on while the chats are up,
 and what it says by itself shows there as a notice. Someone who wants an agent to talk
 with wants both: the one who is always there, and fresh sessions for work.
 

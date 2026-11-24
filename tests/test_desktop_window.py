@@ -1292,7 +1292,7 @@ async def test_the_menus_live_behind_two_buttons_and_their_shortcuts_still_work(
     assert not window.findChildren(QMenuBar)
     texts = [a.text() for a in window.menu_button.menu().actions() if a.text()]
     assert texts == ["&New chat", "New chat in another &folder…", "Set a &duty…", "S&top",
-                     "&Continuous", "Who they &are…", "&View", "&Model"]
+                     "Who they &are…", "&View", "&Model"]
     profile = window.profile_button.menu()
     window._fill_profile_header()
     texts = [a.text() for a in profile.actions() if a.text() and a.isVisible()]
@@ -2282,8 +2282,9 @@ class FakeLife:
 
 
 async def test_the_life_takes_over_the_window_and_gives_it_back(make, qapp):
-    """☰ → Continuous: the whole window is the life's, its life in the conversation
-    area and no chat list; switching back leaves it living."""
+    """The Continuous switch in the title bar, the one way between the views: the whole
+    window is the life's, its life in the conversation area and no chat list; switching
+    back leaves it living."""
     h: Harness = await make()
     h.core.add(Step(text="Hi there."))
     await h.start()
@@ -2295,16 +2296,37 @@ async def test_the_life_takes_over_the_window_and_gives_it_back(make, qapp):
     window = MainWindow(h.runtime, controller, life=life)
     asyncio.create_task(controller.run())
     await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
-    window.life_action.trigger()
+    switch = window.continuous_switch
+    assert switch.isVisibleTo(window) and not switch.isChecked()
+    menu = [a.text() for a in window.menu_button.menu().actions()]
+    assert "&Continuous" not in menu  # the switch is the only way
+    window.show()
+    window.title_label.setText("A long title about the trip to Kyoto and the old maps")
+    switch_at = switch.mapTo(window, switch.rect().center())
+    switch.click()
     await eventually(lambda: window.showing_life)
     assert life.started == 1 and window.sidebar.isHidden()
+    assert switch.isVisibleTo(window) and switch.isChecked()
+    def laid_out(check):  # Qt lays a window out from its own events: let it
+        return lambda: (qapp.processEvents(), check())[1]
+    await eventually(laid_out(
+        lambda: switch.mapTo(window, switch.rect().center()).y() == switch_at.y()))
+    # Its name is the title, whole, with ✎ and Journal after it.
+    name = window.life_name
+    assert window.title_label.isHidden()
+    await eventually(laid_out(lambda: name.text() == "Kaden" and name.width()
+                              >= name.fontMetrics().horizontalAdvance("Kaden")))
+    def gap() -> int:  # from its name to ✎
+        pencil = window.identity_button
+        return (pencil.mapTo(window, pencil.rect().topLeft()).x()
+                - name.mapTo(window, name.rect().topRight()).x())
+    await eventually(laid_out(lambda: gap() < 20))
     assert window.controller is not window.home  # the message box talks to it
     assert window.voice.controller is window.controller  # and so does voice
     window.input.setPlainText("hey")
     window._send()
     await eventually(lambda: any(isinstance(m, AssistantItem) for m in window.model.items))
-    # Its view has no sidebar: ☰ and the way back are in its title bar.
-    assert window.back_button.isVisibleTo(window)
+    # Its view has no sidebar: ☰ is in its title bar.
     assert window.view_menu_button.isVisibleTo(window)
     assert window.view_menu_button.menu() is window.menu_button.menu()  # the same menu
     assert window.view_gear_button.isVisibleTo(window)  # and Settings, bottom left
@@ -2312,15 +2334,19 @@ async def test_the_life_takes_over_the_window_and_gives_it_back(make, qapp):
     window.open_settings = lambda *args, **kwargs: opened.append(True)  # type: ignore[method-assign]
     window.view_gear_button.click()
     assert opened == [True]
-    window.back_button.click()
+    switch.click()
     await eventually(lambda: not window.showing_life)
     assert not window.sidebar.isHidden() and window.controller is window.home
-    assert not window.back_button.isVisibleTo(window)
+    title = window.title_label
+    assert not title.isHidden() and name.isHidden()
+    title.setText("A long title about the trip to Kyoto and the old maps of the city")
+    await eventually(laid_out(lambda: title.width() > window.title_row.geometry().width() // 2))
     assert not window.view_menu_button.isVisibleTo(window)  # the sidebar's ☰ is back
     assert not window.view_gear_button.isVisibleTo(window)  # and its gear
-    assert not window.life_action.isChecked()
+    assert not switch.isChecked()
     assert window.voice.controller is window.home
     assert them.runtime.snapshot().state != AgentState.STOPPED  # it lives on
+    window.hide()
 
 
 async def test_what_the_life_says_by_itself_shows_in_the_chat_on_screen(make, qapp):
@@ -2350,7 +2376,7 @@ async def test_the_user_names_the_life_before_it_first_lives(make, qapp):
     window = MainWindow(h.runtime, controller, life=life)
     asyncio.create_task(controller.run())
     await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
-    window.life_action.trigger()
+    window.continuous_switch.click()
     dialog = await eventually(lambda: window.life_dialog)
     assert life.started == 0  # not before it has a name
     dialog.name.setText("Mira")
@@ -2358,7 +2384,7 @@ async def test_the_user_names_the_life_before_it_first_lives(make, qapp):
     dialog.accept()
     await eventually(lambda: window.showing_life)
     assert (life.name, life.about) == ("Mira", "Curious, loves old maps.")
-    assert life.started == 1 and window.title_label.text() == "Mira"
+    assert life.started == 1 and window.life_name.text() == "Mira"
     assert window.input.placeholderText() == "Message Mira"  # whom the box talks to
     window.identity_button.click()  # in its title bar: who they are, to change
     again = await eventually(lambda: window.life_dialog is not dialog
@@ -2366,7 +2392,7 @@ async def test_the_user_names_the_life_before_it_first_lives(make, qapp):
     assert again.name.text() == "Mira"
     again.reject()
     life.said.append("Look at this map!")  # by itself, while its view is on screen
-    window.life_action.trigger()
+    window.continuous_switch.click()
     await eventually(lambda: not window.showing_life)
     assert window.input.placeholderText() == "Message Kaden"
     for listener in life.listeners:
@@ -2393,19 +2419,19 @@ async def test_its_view_is_on_screen_at_once_while_it_wakes(make, qapp):
     controller = Controller(h.runtime, ConversationModel())
     window = MainWindow(h.runtime, controller, life=life)
     asyncio.create_task(controller.run())
-    window.life_action.setChecked(True)  # as the app does before showing the window
+    window.continuous_switch.setChecked(True)  # as the app does before showing the window
     assert window.sidebar.isHidden() and not window.waking.isHidden()  # at once
     assert window.scroll.isHidden() and window.composer.isHidden()
-    assert window.title_label.text() == "Kaden" and window.back_button.isVisibleTo(window)
+    assert window.life_name.text() == "Kaden" and window.continuous_switch.isChecked()
     awake.set()
     await eventually(lambda: window.showing_life)
     assert window.waking.isHidden() and not window.scroll.isHidden()
     assert not window.composer.isHidden()
-    window.back_button.click()  # and back, then again: going back while it wakes works
+    window.continuous_switch.click()  # and back, then again: going back while it wakes works
     await eventually(lambda: not window.showing_life)
     awake.clear()
-    window.life_action.setChecked(True)
-    window.back_button.click()
+    window.continuous_switch.setChecked(True)
+    window.continuous_switch.click()
     assert not window.sidebar.isHidden() and window.waking.isHidden()
     awake.set()
     await asyncio.sleep(0.05)
@@ -2428,7 +2454,7 @@ async def test_the_lifes_view_shows_what_it_is_doing_and_its_journal(make, qapp)
     window = MainWindow(h.runtime, controller, life=life)
     asyncio.create_task(controller.run())
     await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
-    window.life_action.trigger()
+    window.continuous_switch.click()
     await eventually(lambda: window.showing_life)
     await them.runtime.activate()  # it does something by itself
     await eventually(lambda: window.duty_label.text() == "Reading about fox legends")
@@ -2437,7 +2463,7 @@ async def test_the_lifes_view_shows_what_it_is_doing_and_its_journal(make, qapp)
     journal = await eventually(lambda: window.journal_dialog)
     await eventually(lambda: "old map of Kyoto" in journal.page.toPlainText())
     journal.reject()
-    window.back_button.click()
+    window.continuous_switch.click()
     await eventually(lambda: not window.showing_life)
     assert not window.journal_button.isVisibleTo(window)
 

@@ -2278,7 +2278,7 @@ class MainWindow(QMainWindow):
         self.title_label.setProperty("role", "header")
         self.duty_label = _label(wrap=False, selectable=False, role="small")
         self.duty_label.hide()  # only with a duty: when it checks in next, or paused
-        titles = QHBoxLayout()
+        titles = self.title_row = QHBoxLayout()
         titles.setContentsMargins(0, 14, 0, 14)  # the header's height
         titles.setSpacing(4)
         # The life's view has no sidebar: its ☰ and the way back are here.
@@ -2288,11 +2288,6 @@ class MainWindow(QMainWindow):
         self.view_menu_button.setAccessibleName("Menu")
         self.view_menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.view_menu_button.hide()
-        self.back_button = QToolButton(text="‹ Chats")
-        self.back_button.setToolTip("Back to your chats")
-        self.back_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.back_button.clicked.connect(lambda: self.life_action.setChecked(False))
-        self.back_button.hide()
         self.identity_button = QToolButton(text="✎")
         self.identity_button.setToolTip("Who they are")
         self.identity_button.setAccessibleName("Who they are")
@@ -2305,14 +2300,27 @@ class MainWindow(QMainWindow):
         self.journal_button.clicked.connect(self.open_journal)
         self.journal_button.hide()
         titles.addWidget(self.view_menu_button)
-        titles.addWidget(self.back_button)
-        titles.addWidget(self.title_label)
+        titles.addWidget(self.title_label, 100)  # a chat's title takes the room there is
+        # The life's name in its view, as wide as it is, so ✎ and Journal follow it.
+        self.life_name = QLabel()
+        self.life_name.setProperty("role", "header")
+        self.life_name.hide()
+        titles.addWidget(self.life_name)
+        # As tall in both views, so the Continuous switch keeps its place.
+        self.title_label.setMinimumHeight(self.view_menu_button.sizeHint().height())
         titles.addWidget(self.identity_button)  # right after the life's name
         titles.addWidget(self.journal_button)
         titles.addStretch(1)
         titles.addWidget(self.duty_label)
         head.addLayout(titles, 1)
         head.addSpacing(8)
+        # The one way between the user's chats and Continuous, in the same place in both.
+        self.continuous_switch = Switch("Continuous")
+        self.continuous_switch.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.continuous_switch.setVisible(self.life is not None)
+        self.continuous_switch.toggled.connect(self.show_life)
+        head.addWidget(self.continuous_switch)
+        head.addSpacing(12)
         self.window_buttons: dict[str, QToolButton] = {}
         for name, tip, command in (("minimize", "Minimize", self.showMinimized),
                                    ("maximize", "Maximize", self._toggle_maximized),
@@ -2625,14 +2633,11 @@ class MainWindow(QMainWindow):
         main_menu = QMenu(self)
         self.menu_button.setMenu(main_menu)
         self.view_menu_button.setMenu(main_menu)
-        self.life_action = QAction("&Continuous", self, checkable=True)
-        self.life_action.setVisible(self.life is not None)
-        self.life_action.toggled.connect(self.show_life)
         self.identity_action = QAction("Who they &are…", self)
         self.identity_action.setVisible(False)  # in the life's view
         self.identity_action.triggered.connect(lambda: self._ask_identity(starting=False))
         main_menu.addActions([self.new_action, self.folder_action, self.duty_action, stop,
-                              self.life_action, self.identity_action])
+                              self.identity_action])
         main_menu.addSeparator()
         view_menu = main_menu.addMenu("&View")
         for text, keys, steps in (
@@ -2817,9 +2822,9 @@ class MainWindow(QMainWindow):
         self.plan_action.setChecked(model.plan_mode)
         self.plan_action.setEnabled(model.conversation is not None)
         conversation = model.conversation
-        if self._life_on and self.life is not None:
-            self.title_label.setText(self.life.name)
-        elif conversation is not None:
+        if self.life is not None:
+            self.life_name.setText(self.life.name)
+        if conversation is not None and not self._life_on:
             self.title_label.setText(conversation_label(
                 self._conversations.get(conversation.id, conversation)))
         folder = conversation.folder if conversation is not None else None
@@ -3156,12 +3161,13 @@ class MainWindow(QMainWindow):
         _spawn(self._show_life(on))
 
     def _life_frame(self, on: bool, *, waking: bool = False) -> None:
-        """The window around the life's conversation (no sidebar; its ☰, the way
-        back and who it is in the title bar), or the chats'. While it wakes, a line
+        """The window around the life's conversation (no sidebar; its ☰ and who it is
+        in the title bar), or the chats'. While it wakes, a line
         stands where its conversation will be."""
         self._life_on = on
         self.sidebar.setVisible(not on)
-        for widget in (self.back_button, self.view_menu_button, self.identity_button,
+        self.title_label.setVisible(not on)
+        for widget in (self.life_name, self.view_menu_button, self.identity_button,
                        self.journal_button, self.view_gear_button, self._gear_balance):
             widget.setVisible(on)
         self._gear_balance.setFixedWidth(self.view_gear_button.sizeHint().width())
@@ -3191,7 +3197,7 @@ class MainWindow(QMainWindow):
 
         dialog.accepted.connect(chosen)
         if starting:  # not chosen: no life
-            dialog.rejected.connect(lambda: self.life_action.setChecked(False))
+            dialog.rejected.connect(lambda: self.continuous_switch.setChecked(False))
         dialog.open()
 
     async def _show_life(self, on: bool) -> None:
@@ -3207,7 +3213,7 @@ class MainWindow(QMainWindow):
                 await life.start()
         except Exception as e:  # noqa: BLE001 - shown, never fatal
             self._life_frame(False)
-            self.life_action.setChecked(False)
+            self.continuous_switch.setChecked(False)
             self.model.notify(f"Continuous could not start: {user_message(e)}")
             return
         if not self._life_on:  # the user went back meanwhile

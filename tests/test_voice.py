@@ -894,7 +894,7 @@ async def test_talking_in_the_lifes_view_talks_with_the_life(make, qapp, tmp_pat
     window = MainWindow(h.runtime, controller, voice=voice, life=FakeLife(them.runtime))
     asyncio.create_task(controller.run())
     await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
-    window.life_action.trigger()
+    window.continuous_switch.click()
     await eventually(lambda: window.showing_life)
     window.microphone_button.click()
     window.speaker_button.click()

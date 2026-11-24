@@ -1004,7 +1004,8 @@ The design is in [the note](notes/implemented/2026-11-23-continuous.md); the cho
 | Its life on every start | `set_duty` with its life as the app has it (pace, model, who it is), a resumed one too |
 | Its prompt | Its own (`life.PROMPT`): that it has a life of its own and tools to live it, that the user can read `journal.md` in its folder, then `config.TOOL_FACTS`; "## Your life" in the system prompt says how it comes back |
 | What reaches the user | Text of an assistant message in a turn the user did not start: a notice "<name>: …" in the chat on screen, unless its view is open |
-| Its view | No sidebar; ‹ Chats, ☰ (the sidebar's menu), its name, ✎ and Journal in the title bar, the gear bottom left; its current step (`ToolItem.sentence`) as the status line while it works; "Message <name>" as the message box's hint; "Waking up…" while its process starts |
+| Switching views | The **Continuous** switch in the title bar (`MainWindow.continuous_switch`), before the window buttons, in the same place in both views: the one way between them, no menu item and no back button. The title row keeps one height in both, so the switch does not move |
+| Its view | No sidebar; ☰ (the sidebar's menu), its name (`life_name`, as wide as it is, in place of the chat title), ✎ and Journal in the title bar, the gear bottom left; its current step (`ToolItem.sentence`) as the status line while it works; "Message <name>" as the message box's hint; "Waking up…" while its process starts |
 | Opening where the user left off | The look file (`desktop.json`) keeps `life`: whether its view was open on close |
 | Voice | Follows what is on screen (`VoiceMode.use`) |
 

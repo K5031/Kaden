@@ -78,9 +78,10 @@ paused (**Goal** instead of **Duty** for work that ends).
 ## Continuous
 
 Besides your chats, Kaden can live continuously: someone with a life of their own, not
-an assistant doing your work. **☰ → Continuous** turns the whole window into their view;
-**‹ Chats** at the top left of it goes back to your chats, and **☰** there is the same
-menu as in your chats. Kaden opens again on whichever you had open when you closed it.
+an assistant doing your work. The **Continuous** switch at the top right of the window
+turns the whole window into their view, and back to your chats; **☰** in their view is
+the same menu as in your chats. Kaden opens again on whichever you had open when you
+closed it.
 
 - **You say who they are.** The first time, you give them a name and, if you like, who
   they are: personality, interests, how they talk. Leave that empty and they find out for

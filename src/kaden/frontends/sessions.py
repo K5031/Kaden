@@ -23,8 +23,10 @@ import functools
 import json
 import logging
 import math
+import os
 import shutil
 import sys
+import tempfile
 import tomllib
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field, replace
@@ -376,7 +378,7 @@ class SubSessions(Tools):
         settings = tomllib.loads(settings_file.read_text()) if settings_file.exists() else {}
         budget = {k: v for k, v in settings.get("budget", {}).items() if k != "max_cost_usd"}
         settings["budget"] = budget if usd is None else {**budget, "max_cost_usd": usd}
-        settings_file.write_text(tomli_w.dumps(settings))
+        _write_settings(settings_file, settings)
 
     async def use_folder(self, folder: Path | None) -> None:
         self._folder = folder
@@ -477,7 +479,7 @@ class SubSessions(Tools):
         settings["budget"] = {} if budget is None else {"max_cost_usd": budget}
         if (work_folder := self._work_folder(session)) is not None:
             settings["work_folder"] = str(work_folder)
-        (folder / "settings.toml").write_text(tomli_w.dumps(settings))
+        _write_settings(folder / "settings.toml", settings)
 
     async def _running(self, session: SubSession) -> RemoteRuntime:
         """Its runtime, starting it again on its conversation when it is not running."""
@@ -695,3 +697,12 @@ class SubSessions(Tools):
     def _notify(self) -> None:
         for listener in list(self.listeners):
             listener()
+
+
+def _write_settings(path: Path, settings: dict[str, Any]) -> None:
+    """Whole: never seen half written. Its own temporary file, as the child may be saving
+    its settings at the same time."""
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    with os.fdopen(fd, "w", encoding="utf-8") as file:
+        file.write(tomli_w.dumps(settings))
+    os.replace(tmp, path)
