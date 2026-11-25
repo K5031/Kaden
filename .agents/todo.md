@@ -28,3 +28,13 @@ Agent Note (`notes/proposed/`) and leaves this list.
   setting), and from the "thinking mode" idea that led here, forced topic switches, drives
   and injected random memories (they steer what it thinks). Maybe: an ability to give one
   thought to the main model when it seems worth it.
+- **macOS** (2026-11-25), after the first Linux release. A contained port: the shell
+  sandbox moves from bubblewrap to Seatbelt (`sandbox-exec`, as Claude Code does on a Mac);
+  screenshots, the app menu and the single-window check need Mac versions; the shell,
+  process groups and the data folder lock work as they are. Packages: Briefcase's `.dmg`,
+  built on GitHub's Mac runners, signed and notarized (an Apple Developer account,
+  US$99 a year). No GPU voice (NVIDIA only).
+- **Windows** (2026-11-25), after macOS. Bigger: no POSIX shell (Git Bash, as Claude Code
+  requires there), and stopping commands, the folder lock (`fcntl`), the sandbox (nothing
+  like bubblewrap), screenshots and paths all need Windows versions. Packages: Briefcase's
+  `.msi`, signed against SmartScreen warnings (e.g. Azure's signing service).
