@@ -41,4 +41,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT; see `LICENSE`.
+GNU Affero General Public License, version 3 or later; see `LICENSE`. Contributions
+need a signed [Contributor License Agreement](CLA.md).

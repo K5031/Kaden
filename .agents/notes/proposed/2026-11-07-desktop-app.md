@@ -39,7 +39,7 @@ main thread.
   with releases every few weeks and Python 3.10 to 3.15 supported. Qt widgets look native
   on Windows and macOS and adopt the platform style on Linux. They expose UI Automation,
   NSAccessibility and AT-SPI to screen readers.
-- **Licensing.** PySide6 is LGPL-3.0, which is compatible with Kaden's MIT license when Qt
+- **Licensing.** PySide6 is LGPL-3.0, which is compatible with Kaden's AGPL license when Qt
   is linked dynamically. Bundles ship Qt as separate shared libraries plus its license
   notices, never as one static file. qasync is BSD-2-Clause.
 

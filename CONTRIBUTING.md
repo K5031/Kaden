@@ -41,8 +41,11 @@ request you open.
 
 ## License
 
-Kaden is MIT licensed. By contributing, you agree that your contribution is released under
-the same license.
+Kaden is licensed under the GNU Affero General Public License, version 3 or later. Before
+your first pull request can be merged, you sign the [Contributor License Agreement](CLA.md):
+a check on the pull request asks you to, by a comment, once. It lets the maintainer keep
+Kaden under the AGPL and also offer it under other terms; you keep the copyright to your
+work.
 
 ## Be kind
 
