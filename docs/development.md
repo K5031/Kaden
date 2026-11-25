@@ -147,7 +147,7 @@ git tag v0.1.0 && git push origin v0.1.0
 ```
 
 The Release workflow (`.github/workflows/release.yml`) builds a `.deb` for Ubuntu 24.04
-and 26.04, an `.rpm` for Fedora 44 and 45, and the Arch package (each runs on its
+and 26.04, an `.rpm` for Fedora 44 (not 45: its Python 3.15 has no sherpa-onnx yet), and the Arch package (each runs on its
 system's own Python), and makes the GitHub release with them. It
 fails before building when the tag and the version differ. Run it by hand (Actions →
 Release → Run workflow) to only build, without a release.

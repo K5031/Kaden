@@ -8,14 +8,14 @@
 
 ## Install
 
-On Ubuntu 24.04 and 26.04, Fedora 44 and 45 and Arch, download the package for your
+On Ubuntu 24.04 and 26.04, Fedora 44 and Arch, download the package for your
 system from the [latest release](https://github.com/K5031/Kaden/releases/latest) and
 install it:
 
 | Your system | Download | Install |
 |---|---|---|
 | Ubuntu 24.04 or 26.04 | the `.deb` named for it (`noble`, `resolute`) | open it, or `sudo apt install ./kaden-desktop_*.deb` |
-| Fedora 44 or 45 | the `.rpm` named for it (`fc44`, `fc45`) | open it, or `sudo dnf install ./kaden-desktop-*.rpm` |
+| Fedora 44 | the `.rpm` | open it, or `sudo dnf install ./kaden-desktop-*.rpm` |
 | Arch | the `.pkg.tar.zst` | `sudo pacman -U kaden-desktop-*.pkg.tar.zst` |
 
 Kaden is then in your apps, and `kaden` (or `kd`) starts it from a terminal. A new

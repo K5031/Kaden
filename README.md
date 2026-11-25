@@ -23,7 +23,7 @@ for Linux:
 | Your system | Download | Install |
 |---|---|---|
 | Ubuntu 24.04 or 26.04 | the `.deb` named for it (`noble`, `resolute`) | open it, or `sudo apt install ./kaden-desktop_*.deb` |
-| Fedora 44 or 45 | the `.rpm` named for it (`fc44`, `fc45`) | open it, or `sudo dnf install ./kaden-desktop-*.rpm` |
+| Fedora 44 | the `.rpm` | open it, or `sudo dnf install ./kaden-desktop-*.rpm` |
 | Arch | the `.pkg.tar.zst` | `sudo pacman -U kaden-desktop-*.pkg.tar.zst` |
 
 Then start **Kaden** from your apps. The first time, it asks which AI provider you use

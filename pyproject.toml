@@ -103,6 +103,10 @@ author = "K5031"
 [tool.briefcase.app.kaden-desktop]
 formal_name = "Kaden"
 description = "An AI agent that works for you on your computer."
+long_description = """An AI agent for your computer, in a desktop app. It runs commands, works
+with files and searches the web, decides on its own only what is safe and asks you about the
+rest, and stops at hard spending limits. Works with Anthropic, DeepSeek and
+OpenAI-compatible models."""
 sources = ["src/kaden_desktop"]
 # Kaden itself, installed with its metadata: its modules are found through entry points.
 # Written as a path ("/"), so a build in Docker makes a wheel of it to install there.

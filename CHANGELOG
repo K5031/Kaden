@@ -2,8 +2,8 @@
 
 ## 0.1.0
 
-The first release with packages to download: Ubuntu 24.04 and 26.04, Fedora 44 and 45,
-and Arch. Kaden is now licensed under the AGPL, version 3 or later.
+The first release with packages to download: Ubuntu 24.04 and 26.04, Fedora 44 and
+Arch. Kaden is now licensed under the AGPL, version 3 or later.
 
 - **Continuous:** one Kaden with a life of its own beside your chats, behind the switch at
   the top right: their own memory, journal, daily amount and settings.
