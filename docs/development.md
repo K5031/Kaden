@@ -147,10 +147,12 @@ git tag v0.1.0 && git push origin v0.1.0
 ```
 
 The Release workflow (`.github/workflows/release.yml`) builds a `.deb` for Ubuntu 24.04
-and 26.04, an `.rpm` for Fedora 44 (not 45: its Python 3.15 has no sherpa-onnx yet), and the Arch package (each runs on its
-system's own Python), and makes the GitHub release with them. It
-fails before building when the tag and the version differ. Run it by hand (Actions →
-Release → Run workflow) to only build, without a release.
+and 26.04, an `.rpm` for Fedora 44 (not 45: its Python 3.15 has no sherpa-onnx yet) and
+the Arch package, each of which runs on its system's own Python. It installs each on a
+fresh copy of its system and starts it (`packaging/try-linux.sh`: `kaden --help`, and the
+desktop app drawn off screen for 30 s), then makes the GitHub release with them. It fails
+before building when the tag and the version differ. Run it by hand (Actions → Release →
+Run workflow) to build and check only, without a release.
 
 A Flatpak needs `flatpak-builder`; a macOS `.dmg` must be built on a Mac:
 
