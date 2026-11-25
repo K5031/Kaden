@@ -48,6 +48,8 @@ jobs:
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
       - name: Build
         run: packaging/build-linux.sh "${{ matrix.target }}"
+      - name: Install it on a fresh system and start it
+        run: packaging/try-linux.sh "${{ matrix.target }}"
       - name: Name the package for its system
         id: name
         run: echo "name=$(echo '${{ matrix.target }}' | tr ':' '-')" >> "$GITHUB_OUTPUT"
