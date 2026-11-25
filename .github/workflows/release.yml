@@ -1,0 +1,80 @@
+# Builds the desktop app's packages. A tag v<version> also makes the GitHub release with
+# them; run by hand (Actions → Release → Run workflow), it only builds, to try a change.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: version
+        name: The tag matches the version
+        run: |
+          version=$(python3 - <<'PY'
+          import tomllib
+          d = tomllib.load(open("pyproject.toml", "rb"))
+          v = d["project"]["version"]
+          assert d["tool"]["briefcase"]["version"] == v, "pyproject.toml has two versions"
+          print(v)
+          PY
+          )
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::The tag $GITHUB_REF_NAME does not match the version $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  package:
+    needs: version
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # One package per release: a system package runs on that release's own Python.
+        target: ["ubuntu:24.04", "ubuntu:26.04", "fedora:44", "fedora:45",
+                 "archlinux:latest"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
+      - name: Build
+        run: packaging/build-linux.sh "${{ matrix.target }}"
+      - name: Name the package for its system
+        id: name
+        run: echo "name=$(echo '${{ matrix.target }}' | tr ':' '-')" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kaden-${{ steps.name.outputs.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [version, package]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: packages
+          merge-multiple: true
+      - name: The version's notes from CHANGELOG
+        run: |
+          awk -v v="## ${{ needs.version.outputs.version }}" \
+            '$0 == v {on = 1; next} /^## / {on = 0} on' CHANGELOG > notes.md
+          test -s notes.md || { echo "::error::CHANGELOG has no section for it"; exit 1; }
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" packages/* --title "Kaden $GITHUB_REF_NAME" --notes-file notes.md

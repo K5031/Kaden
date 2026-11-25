@@ -3,11 +3,29 @@
 ## What you need
 
 - Linux. macOS should work but is untested; Windows is not supported.
-- Python 3.12 or newer (the app is tested on 3.13), and [uv](https://docs.astral.sh/uv/).
 - An API key from one provider: [Anthropic](https://platform.claude.com/) (Claude),
   [DeepSeek](https://platform.deepseek.com/) or [OpenAI](https://platform.openai.com/).
 
 ## Install
+
+On Ubuntu 24.04 and 26.04, Fedora 44 and 45 and Arch, download the package for your
+system from the [latest release](https://github.com/K5031/Kaden/releases/latest) and
+install it:
+
+| Your system | Download | Install |
+|---|---|---|
+| Ubuntu 24.04 or 26.04 | the `.deb` named for it (`noble`, `resolute`) | open it, or `sudo apt install ./kaden-desktop_*.deb` |
+| Fedora 44 or 45 | the `.rpm` named for it (`fc44`, `fc45`) | open it, or `sudo dnf install ./kaden-desktop-*.rpm` |
+| Arch | the `.pkg.tar.zst` | `sudo pacman -U kaden-desktop-*.pkg.tar.zst` |
+
+Kaden is then in your apps, and `kaden` (or `kd`) starts it from a terminal. A new
+release is installed the same way, over the old one.
+
+### From source
+
+On other systems, to follow changes before they are released, or for the
+[GPU voice](using-kaden.md), install from source. This needs Python 3.12 or newer (the
+app is tested on 3.13) and [uv](https://docs.astral.sh/uv/):
 
 ```bash
 git clone https://github.com/K5031/Kaden.git

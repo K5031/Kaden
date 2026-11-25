@@ -15,16 +15,21 @@ The [desktop app](docs/desktop-app.md), ready for a new chat.
 A runtime drives four swappable modules (Core, Memory, Tools, Frontend); see
 `src/kaden/api.py` and `SPEC.md`.
 
-## Quick start
+## Download
 
-Requires Linux, Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+**[Get Kaden from the latest release](https://github.com/K5031/Kaden/releases/latest)**,
+for Linux:
 
-```bash
-git clone https://github.com/K5031/Kaden.git
-uv tool install --python 3.13 --editable "Kaden[desktop]"
-export ANTHROPIC_API_KEY=sk-ant-...   # or enter a key when the app asks for one
-kaden
-```
+| Your system | Download | Install |
+|---|---|---|
+| Ubuntu 24.04 or 26.04 | the `.deb` named for it (`noble`, `resolute`) | open it, or `sudo apt install ./kaden-desktop_*.deb` |
+| Fedora 44 or 45 | the `.rpm` named for it (`fc44`, `fc45`) | open it, or `sudo dnf install ./kaden-desktop-*.rpm` |
+| Arch | the `.pkg.tar.zst` | `sudo pacman -U kaden-desktop-*.pkg.tar.zst` |
+
+Then start **Kaden** from your apps. The first time, it asks which AI provider you use
+(Anthropic, DeepSeek or OpenAI) and your key for it. `kaden` also starts it from a
+terminal. Other systems, and the GPU voice, install from source: see
+[Getting started](docs/getting-started.md).
 
 Kaden works freely in the folder you choose for a chat; anything outside it gets a quick
 automatic check, and Kaden asks you when it is unsure. Choose a folder made for it;

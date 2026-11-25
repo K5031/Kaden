@@ -120,14 +120,36 @@ crashes on this loop; on 3.13 every file passes.
 `pyproject.toml`. The bundle installs Kaden itself (`requires = [".[desktop]"]`), so its
 dependencies come from `[project]` and its modules are found through their entry points.
 
-A package for the Linux you build on (here an Arch `.pkg.tar.zst`) uses the system Python,
-which must also run Briefcase and have its headers (`Python.h`) installed. The script runs
-Briefcase and adds `kaden` and `kd` to the package as links to its program, which then
-runs the `kaden` command (Briefcase itself makes one program per app):
+A system package uses the system's Python. For the Linux you build on (here an Arch
+`.pkg.tar.zst`) that Python must also run Briefcase and have its headers (`Python.h`)
+installed; with a Docker image as the argument, the package is built in it, for that
+system. The script runs Briefcase and adds `kaden` and `kd` to the package as links to its
+program, which then runs the `kaden` command (Briefcase itself makes one program per app).
+What each system must provide (Qt's requirements) is in `[tool.briefcase...linux.system.*]`:
 
 ```bash
-packaging/linux-system.sh
+packaging/build-linux.sh
 ```
+
+```bash
+packaging/build-linux.sh ubuntu:26.04
+```
+
+### Releasing
+
+1. Set the version in `pyproject.toml`, in `[project]` and `[tool.briefcase]` alike, and
+   add its section (`## 0.1.0`) to `CHANGELOG`: it becomes the release's notes.
+2. Commit, then tag and push the tag:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+The Release workflow (`.github/workflows/release.yml`) builds a `.deb` for Ubuntu 24.04
+and 26.04, an `.rpm` for Fedora 44 and 45, and the Arch package (each runs on its
+system's own Python), and makes the GitHub release with them. It
+fails before building when the tag and the version differ. Run it by hand (Actions →
+Release → Run workflow) to only build, without a release.
 
 A Flatpak needs `flatpak-builder`; a macOS `.dmg` must be built on a Mac:
 

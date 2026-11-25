@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.0
+
+The first release with packages to download: Ubuntu 24.04 and 26.04, Fedora 44 and 45,
+and Arch. Kaden is now licensed under the AGPL, version 3 or later.
+
+- **Continuous:** one Kaden with a life of its own beside your chats, behind the switch at
+  the top right: their own memory, journal, daily amount and settings.
+- **Claude Code's tools and ways:** its shell, file and web tools, plan mode, subagents
+  (also in their own git worktree), AskUserQuestion, hooks, skills, and saved answers to
+  permission questions (always or never allow).
+- **Voice:** talk with Kaden, choose its voice or add one from a recording, and, with an
+  NVIDIA GPU, a natural voice; microphone and speaker apart, loaded at start if you like.
+- **Watches:** a tool can watch something (new videos, messages) and wake the agent each
+  time it happens, also after a restart.
+- **A Bilibili account of its own** for the agent, logged in by a QR code you scan.
+- **Tool settings:** a Tools module can offer settings, on a Tools page in Settings.
+- **Backups** of your chats and Continuous, once a day.
+- Attachments reach the agent as files, and a look closer to Claude's.
+
 ## 0.0.0
 
 First packaged build: the desktop app and the terminal app, with web search, automatic
