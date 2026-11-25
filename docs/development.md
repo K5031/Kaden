@@ -117,8 +117,9 @@ crashes on this loop; on 3.13 every file passes.
 ## Desktop bundles
 
 [Briefcase](https://briefcase.beeware.org/) builds them from `[tool.briefcase]` in
-`pyproject.toml`. The bundle installs Kaden itself (`requires = [".[desktop]"]`), so its
-dependencies come from `[project]` and its modules are found through their entry points.
+`pyproject.toml`. The bundle installs Kaden itself (`requires = ["./[desktop]"]`, written
+as a path so that a build in Docker makes a wheel of it), so its dependencies come from
+`[project]` and its modules are found through their entry points.
 
 A system package uses the system's Python. For the Linux you build on (here an Arch
 `.pkg.tar.zst`) that Python must also run Briefcase and have its headers (`Python.h`)

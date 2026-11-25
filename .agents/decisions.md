@@ -420,7 +420,8 @@ stdlib names stay exposed on 3.15.
 run, on `QtEventLoop`. Bundles carry Python 3.13.
 
 **Briefcase (0.4.7).** The bundle installs Kaden as a package (`requires =
-[".[desktop]"]`), not its sources: Kaden finds its modules through entry points, which
+["./[desktop]"]`: Briefcase takes a requirement for a local path only if it has a "/", and
+only then builds a wheel of it for a build in Docker), not its sources: Kaden finds its modules through entry points, which
 only package metadata carries (a bundle of sources lists no modules). The Linux system package for Arch builds and starts the desktop app
 (2026-11-10, system Python 3.14.9): 114 MB as `.pkg.tar.zst`, 398 MB installed, of which
 PySide6 is 244 MB. Not built yet: the Flatpak (needs `flatpak-builder`) and the macOS

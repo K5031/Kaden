@@ -105,7 +105,8 @@ formal_name = "Kaden"
 description = "An AI agent that works for you on your computer."
 sources = ["src/kaden_desktop"]
 # Kaden itself, installed with its metadata: its modules are found through entry points.
-requires = [".[desktop]"]
+# Written as a path ("/"), so a build in Docker makes a wheel of it to install there.
+requires = ["./[desktop]"]
 
 [tool.briefcase.app.kaden-desktop.linux.flatpak]
 finish_arg."talk-name=org.freedesktop.secrets" = true
