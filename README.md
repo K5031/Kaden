@@ -28,8 +28,20 @@ for Linux:
 
 Then start **Kaden** from your apps. The first time, it asks which AI provider you use
 (Anthropic, DeepSeek or OpenAI) and your key for it. `kaden` also starts it from a
-terminal. Other systems, and the GPU voice, install from source: see
-[Getting started](docs/getting-started.md).
+terminal.
+
+### From source
+
+For other systems, the GPU voice, or the latest changes. Requires Linux, Python 3.12+ and
+[uv](https://docs.astral.sh/uv/):
+
+```bash
+git clone https://github.com/K5031/Kaden.git
+uv tool install --python 3.13 --editable "Kaden[desktop]"
+kaden
+```
+
+[Getting started](docs/getting-started.md) has the details.
 
 Kaden works freely in the folder you choose for a chat; anything outside it gets a quick
 automatic check, and Kaden asks you when it is unsure. Choose a folder made for it;
