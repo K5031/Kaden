@@ -17,7 +17,7 @@ BV = "BV1xx411c7mD"
 VIEW = {"code": 0, "data": {
     "bvid": BV, "aid": 2, "cid": 62131, "title": "字幕君交流场所", "duration": 2055,
     "pubdate": 1246376402, "desc": "The oldest video on the site.",
-    "owner": {"name": "碧诗"},
+    "owner": {"name": "碧诗", "mid": 2},
     "stat": {"view": 5633609, "like": 279154, "danmaku": 129082, "reply": 89787},
     "pages": [{"page": 1, "cid": 62131, "part": "Part one", "duration": 2055},
               {"page": 2, "cid": 70000, "part": "Part two", "duration": 60}]}}
@@ -77,7 +77,7 @@ async def test_a_video_is_read_with_its_details_and_subtitles():
     tools = bilibili([{"lan": "zh-CN", "lan_doc": "中文",
                        "subtitle_url": "//aisubtitle.example/subtitle.json"}], asked=asked)
     text = await tools.run("BiliVideo", {"video": f"https://www.bilibili.com/video/{BV}/"})
-    for part in ("字幕君交流场所", "碧诗", "34:15", "5,633,609 views", "The oldest video",
+    for part in ("字幕君交流场所", "By 碧诗 (uploader id 2)", "34:15", "5,633,609 views", "The oldest video",
                  "1. Part one", "2. Part two", "Subtitles (中文)", "[00:03] Hello, everyone",
                  "[01:01] That is all"):
         assert part in text, part

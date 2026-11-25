@@ -17,6 +17,7 @@ import shutil
 import sys
 import tomllib
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,7 @@ from kaden.api import (
     MessageCommitted,
     Role,
     RuntimeSnapshot,
+    SettingsUpdate,
     Text,
 )
 from kaden.frontends.remote import Channel, RemoteRuntime
@@ -74,6 +76,8 @@ class Life:
         self.name: str = record.get("name", NAME)
         self.about: str = record.get("about", "")  # who it is, in the user's words
         self.conversation_id: str | None = record.get("conversation_id")
+        # What its own time may cost a day, as the user set it (None: no limit).
+        self.daily_usd: float | None = record.get("daily_usd", self.daily_usd)
 
     @property
     def runtime(self) -> RemoteRuntime:
@@ -149,6 +153,22 @@ class Life:
         if self._live is not None:
             await self._live.channel.request("set_duty", duty=self._life())
 
+    async def set_daily_usd(self, usd: float | None) -> None:
+        """What its own time may cost a day (None: no limit): kept, and at once if it
+        lives."""
+        self.daily_usd = usd
+        await asyncio.to_thread(self._write)
+        if self._live is not None:
+            budget = (await self._live.settings()).budget
+            await self._live.update_settings(SettingsUpdate(
+                budget=replace(budget, max_cost_usd_per_day=usd)))
+
+    async def restart(self) -> None:
+        """Its process closed and started again, on the same life: what was saved in its
+        folder (its tool settings) applies."""
+        await self.aclose()
+        await self.start()
+
     async def aclose(self) -> None:
         if self._starting is not None and not self._starting.done():
             self._starting.cancel()
@@ -184,8 +204,11 @@ class Life:
         config = self.parent_dir / "config.toml"
         if config.exists():
             shutil.copyfile(config, self.folder / "config.toml")
-        settings_file = self.parent_dir / "settings.toml"
-        settings = tomllib.loads(settings_file.read_text()) if settings_file.exists() else {}
+        settings = _toml(self.parent_dir / "settings.toml")
+        # Its tool settings are its own (saved in its folder), not the chats'.
+        settings.pop("tool_settings", None)
+        if own := _toml(self.folder / "settings.toml").get("tool_settings"):
+            settings["tool_settings"] = own
         # Its own time on the model the user chose for upkeep: the cheaper one.
         self._own_model = settings.get("maintenance_model") or None
         settings["budget"] = ({} if self.daily_usd is None
@@ -202,4 +225,8 @@ class Life:
         self.folder.mkdir(parents=True, exist_ok=True)
         (self.folder / RECORD).write_text(json.dumps(
             {"conversation_id": self.conversation_id, "name": self.name,
-             "about": self.about}))
+             "about": self.about, "daily_usd": self.daily_usd}))
+
+
+def _toml(path: Path) -> dict[str, Any]:
+    return tomllib.loads(path.read_text()) if path.exists() else {}

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from kaden.api import Budget, McpServer, PermissionPolicy, PermissionRule
+from kaden.api import Budget, McpServer, PermissionPolicy, PermissionRule, ToolSetting
 from kaden.runtime.hooks import Hook
 
 # How the agent's tools behave: true whoever the agent is (a life's prompt has it too).
@@ -69,6 +69,10 @@ class ModuleState:
     work_folder: str | None = None  # the Tools root this run; None = not settable
     # Saved MCP servers, their variable values "" (api.McpServer); the next start builds them.
     mcp_servers: tuple[McpServer, ...] = ()
+    # The settings the Tools module declares (its factory's user_config), and the saved
+    # values its factory was given this run.
+    tool_settings: tuple[ToolSetting, ...] = ()
+    tool_values: Mapping[str, bool | str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +103,8 @@ class RuntimeConfig:
     retry_max_delay_s: float = 30.0
     initial_wait_s: float = 10.0
     default_tool_timeout_s: float = 3600.0
+    watch_retry_s: float = 60.0  # a watch that failed: first wait before it is run again
+    watch_retry_max_s: float = 3600.0  # the wait doubles up to this
     cancel_grace_s: float = 5.0
     reminder_min_s: float = 60.0  # the soonest a due step wakes the agent without a duty
     subscriber_queue_size: int = 1000

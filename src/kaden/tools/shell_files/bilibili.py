@@ -71,7 +71,7 @@ SPECS: tuple[ToolSpec, ...] = (
             "limit": {"type": "integer", "minimum": 1, "maximum": 2000,
                       "description": "At most this many, the earliest first (default 300)"}},
             "required": ["video"], "additionalProperties": False},
-        read_only=True),
+        read_only=True, deferred=True),
     ToolSpec(
         name="BiliComments",
         description="A Bilibili video's top comments, with their likes and top replies.",
@@ -80,7 +80,7 @@ SPECS: tuple[ToolSpec, ...] = (
             "limit": {"type": "integer", "minimum": 1, "maximum": 20,
                       "description": "At most this many (default 10)"}},
             "required": ["video"], "additionalProperties": False},
-        read_only=True),
+        read_only=True, deferred=True),
     ToolSpec(
         name="BiliFrames",
         description=(
@@ -91,7 +91,7 @@ SPECS: tuple[ToolSpec, ...] = (
             "seconds": {"type": "array", "items": {"type": "number", "minimum": 0},
                         "minItems": 1, "maxItems": MAX_FRAMES}},
             "required": ["video", "seconds"], "additionalProperties": False},
-        read_only=True, timeout=180.0),
+        read_only=True, timeout=180.0, deferred=True),
 )
 NAMES = frozenset(spec.name for spec in SPECS)
 
@@ -142,8 +142,11 @@ class Bilibili:
         stat = info.get("stat", {})
         pages = info.get("pages") or []
         made = datetime.fromtimestamp(info.get("pubdate", 0)).date().isoformat()
+        owner = info.get("owner", {})
+        uploader = owner.get("name", "?") + (f" (uploader id {owner['mid']})"
+                                             if owner.get("mid") else "")
         lines = [f"{info['title']} ({info['bvid']})",
-                 (f"By {info.get('owner', {}).get('name', '?')}, {made}, "
+                 (f"By {uploader}, {made}, "
                   f"{clock(info.get('duration', 0))} long"),
                  (f"{stat.get('view', 0):,} views, {stat.get('like', 0):,} likes, "
                   f"{stat.get('danmaku', 0):,} danmaku, {stat.get('reply', 0):,} comments")]

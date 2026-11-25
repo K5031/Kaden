@@ -16,7 +16,7 @@ import re
 import shutil
 import tempfile
 import time
-from collections.abc import Callable, Container, Sequence
+from collections.abc import Awaitable, Callable, Container, Sequence
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -59,6 +59,7 @@ from PySide6.QtGui import (
     QPalette,
     QPen,
     QPixmap,
+    QResizeEvent,
     QShortcut,
     QTextBlockFormat,
     QTextCharFormat,
@@ -119,6 +120,7 @@ from kaden.api import (
     RuntimeAPI,
     Settings,
     SettingsUpdate,
+    ToolSetting,
     ToolStatus,
 )
 from kaden.frontends.common import (
@@ -187,6 +189,7 @@ from kaden.frontends.desktop.viewmodel import (
     relative_date,
     settings_update,
     step_segments,
+    tool_changes,
     user_message,
 )
 from kaden.frontends.desktop.voice.mode import DEFAULT_VOICE, KOKORO_VOICES, VoiceMode
@@ -203,6 +206,8 @@ CODE_HEADER = 22  # px above them, for the block's language and its copy button
 CODE_RADIUS = 8  # px, the corners of the box
 TURN_GAP = 18  # px more below your message, before Kaden's reply, than between its steps
 LIST_ITEM_SPACING = 4  # px below a list item
+PICTURE_HEIGHT = 240  # px, at most, of a picture in a tool's card: a QR code scans at it
+PICTURE_WIDTH = 480  # px, at most: a wide one (a screenshot) fits the card
 VOICE_DIR = "voice"  # the speech models, in the data folder
 HEADING_SPACING = 6  # px above a heading, on top of the paragraph below the previous block
 RENDER_INTERVAL_MS = 100  # Markdown of a streaming reply is re-rendered at most this often
@@ -1004,11 +1009,18 @@ class ToolCard(QFrame):
         self.mousePressEvent = (  # type: ignore[method-assign]
             lambda event: self.toggle.click())
         self.progress = _label(tone="muted")
+        # A tool's pictures, shown folded or not: a code to scan, a frame it looked at.
+        self.pictures: list[QLabel] = []
+        self._shown: tuple[Image, ...] = ()
+        self._picture_row = QHBoxLayout()
+        self._picture_row.setSpacing(6)
+        self._picture_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.details = QPlainTextEdit(readOnly=True)
         self.details.setMaximumHeight(200)
         self.details.hide()
-        for widget in (self.progress, self.details):
-            layout.addWidget(widget)
+        layout.addWidget(self.progress)
+        layout.addLayout(self._picture_row)
+        layout.addWidget(self.details)
         self.refresh()
 
     def refresh(self) -> None:
@@ -1026,10 +1038,42 @@ class ToolCard(QFrame):
         self.progress.setVisible(bool(item.progress) and item.status is None)
         self.details.setPlainText(f"{item.arguments}\n\n{item.content}".strip())
         self.setAccessibleName(f"Tool {item.name}, {item.state_label}")
+        if item.pictures != self._shown:
+            self._show_pictures(item.pictures)
+
+    def _show_pictures(self, pictures: tuple[Image, ...]) -> None:
+        for label in self.pictures:
+            _discard(label)
+        self.pictures, self._shown = _picture_labels(pictures), pictures
+        for label in self.pictures:
+            self._picture_row.addWidget(label)
 
     def _toggle(self, shown: bool) -> None:
         self.toggle.setArrowType(Qt.ArrowType.DownArrow if shown else Qt.ArrowType.RightArrow)
         self.details.setVisible(shown)
+
+
+def _picture_labels(pictures: Sequence[Image]) -> list[QLabel]:
+    """A tool's pictures, small enough for the conversation; one that is not base64 or not
+    a picture is left out."""
+    labels = []
+    for picture in pictures:
+        pixmap = QPixmap()
+        try:
+            data = base64.b64decode(picture.data, validate=True)
+        except ValueError:  # binascii.Error: not base64
+            continue
+        if not pixmap.loadFromData(data):
+            continue
+        if pixmap.height() > PICTURE_HEIGHT or pixmap.width() > PICTURE_WIDTH:
+            pixmap = pixmap.scaled(PICTURE_WIDTH, PICTURE_HEIGHT,
+                                   Qt.AspectRatioMode.KeepAspectRatio,
+                                   Qt.TransformationMode.SmoothTransformation)
+        label = QLabel()
+        label.setPixmap(pixmap)
+        label.setAccessibleName(picture.name or "Picture")
+        labels.append(label)
+    return labels
 
 
 class StepGroup(QFrame):
@@ -1059,6 +1103,13 @@ class StepGroup(QFrame):
         head.addStretch()
         head.addWidget(self.cancel)
         layout.addWidget(self.header)
+        # Folded, its steps' pictures still show (a code to scan); open, their cards do.
+        self.pictures: list[QLabel] = []
+        self._shown: tuple[Image, ...] = ()
+        self._picture_row = QHBoxLayout()
+        self._picture_row.setSpacing(6)
+        self._picture_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        layout.addLayout(self._picture_row)
         self.body = QFrame(objectName="stepsBody")
         self.steps = QVBoxLayout(self.body)
         self.steps.setContentsMargins(0, 0, 0, 0)
@@ -1085,10 +1136,20 @@ class StepGroup(QFrame):
         theme.mark(self.state, "tone", tone)
         self.state.setVisible(bool(state))
         self.cancel.setVisible(self.active is not None and self.active.cancellable)
+        pictures = tuple(p for step in steps for p in step.pictures)
+        if pictures != self._shown:
+            for label in self.pictures:
+                _discard(label)
+            self.pictures, self._shown = _picture_labels(pictures), pictures
+            for label in self.pictures:
+                self._picture_row.addWidget(label)
+                label.setVisible(not self.body.isVisibleTo(self))
 
     def _toggle(self, shown: bool) -> None:
         self.toggle.setAccessibleName("Hide the steps" if shown else "Show the steps")
         self.body.setVisible(shown)
+        for label in self.pictures:
+            label.setVisible(not shown)
 
 
 def _place(layout: QVBoxLayout, index: int, widget: QWidget) -> None:
@@ -1159,6 +1220,40 @@ def _page(title: str, *rows: QWidget) -> QScrollArea:
     scroll.setFrameShape(QFrame.Shape.NoFrame)
     scroll.setWidget(page)
     return scroll
+
+
+class ToolSettingRows:
+    """The rows of the settings a Tools module declares: a switch, a field or options."""
+
+    def __init__(self, settings: Sequence[ToolSetting]) -> None:
+        self.controls: dict[str, QWidget] = {}
+        self.rows: list[QWidget] = []
+        for setting in settings:
+            value = setting.default if setting.value is None else setting.value
+            control: QWidget
+            if setting.type == "boolean":
+                control = Switch()
+                control.setChecked(bool(value))
+            elif setting.type == "choice":
+                control = QComboBox()
+                for choice, label in setting.choices.items():
+                    control.addItem(label, choice)
+                control.setCurrentIndex(max(0, control.findData(value)))
+            else:
+                control = QLineEdit(str(value))
+            self.controls[setting.name] = control
+            self.rows.append(_setting(setting.title, setting.description, control))
+
+    def values(self) -> dict[str, bool | str]:
+        values: dict[str, bool | str] = {}
+        for name, control in self.controls.items():
+            if isinstance(control, QCheckBox):
+                values[name] = control.isChecked()
+            elif isinstance(control, QComboBox):
+                values[name] = control.currentData()
+            elif isinstance(control, QLineEdit):
+                values[name] = control.text()
+        return values
 
 
 class DragArea(QFrame):
@@ -2293,12 +2388,6 @@ class MainWindow(QMainWindow):
         self.view_menu_button.setAccessibleName("Menu")
         self.view_menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.view_menu_button.hide()
-        self.identity_button = QToolButton(text="✎")
-        self.identity_button.setToolTip("Who they are")
-        self.identity_button.setAccessibleName("Who they are")
-        self.identity_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.identity_button.clicked.connect(lambda: self._ask_identity(starting=False))
-        self.identity_button.hide()
         self.journal_button = QToolButton(text="Journal")
         self.journal_button.setToolTip("What they wrote of their days")
         self.journal_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -2306,14 +2395,13 @@ class MainWindow(QMainWindow):
         self.journal_button.hide()
         titles.addWidget(self.view_menu_button)
         titles.addWidget(self.title_label, 100)  # a chat's title takes the room there is
-        # The life's name in its view, as wide as it is, so ✎ and Journal follow it.
+        # The life's name in its view, as wide as it is, so Journal follows it.
         self.life_name = QLabel()
         self.life_name.setProperty("role", "header")
         self.life_name.hide()
         titles.addWidget(self.life_name)
         # As tall in both views, so the Continuous switch keeps its place.
         self.title_label.setMinimumHeight(self.view_menu_button.sizeHint().height())
-        titles.addWidget(self.identity_button)  # right after the life's name
         titles.addWidget(self.journal_button)
         titles.addStretch(1)
         titles.addWidget(self.duty_label)
@@ -2638,11 +2726,7 @@ class MainWindow(QMainWindow):
         main_menu = QMenu(self)
         self.menu_button.setMenu(main_menu)
         self.view_menu_button.setMenu(main_menu)
-        self.identity_action = QAction("Who they &are…", self)
-        self.identity_action.setVisible(False)  # in the life's view
-        self.identity_action.triggered.connect(lambda: self._ask_identity(starting=False))
-        main_menu.addActions([self.new_action, self.folder_action, self.duty_action, stop,
-                              self.identity_action])
+        main_menu.addActions([self.new_action, self.folder_action, self.duty_action, stop])
         main_menu.addSeparator()
         view_menu = main_menu.addMenu("&View")
         for text, keys, steps in (
@@ -3160,7 +3244,7 @@ class MainWindow(QMainWindow):
         if on == self._life_on:
             return
         if on and self.life is not None and not self.life.has_lived:
-            self._ask_identity(starting=True)  # its name and who it is, first
+            self._name_life()  # its name and who it is, first
             return
         self._life_frame(on, waking=on)  # at once, before its process answers
         _spawn(self._show_life(on))
@@ -3172,37 +3256,32 @@ class MainWindow(QMainWindow):
         self._life_on = on
         self.sidebar.setVisible(not on)
         self.title_label.setVisible(not on)
-        for widget in (self.life_name, self.view_menu_button, self.identity_button,
+        for widget in (self.life_name, self.view_menu_button,
                        self.journal_button, self.view_gear_button, self._gear_balance):
             widget.setVisible(on)
         self._gear_balance.setFixedWidth(self.view_gear_button.sizeHint().width())
-        self.identity_action.setVisible(on)
         self.waking.setVisible(waking)
         self.scroll.setVisible(not waking)
         self.composer.setVisible(not waking)
         self._refresh_status()
         self._show_voice()  # the message box's hint names whom it talks to
 
-    def _ask_identity(self, *, starting: bool) -> None:
+    def _name_life(self) -> None:
+        """Before it first lives: its name and who it is. Later they are in its settings."""
         life = self.life
         assert life is not None
-        dialog = self.life_dialog = LifeDialog(self, life.name, life.about,
-                                                         starting=starting)
+        dialog = self.life_dialog = LifeDialog(self, life.name, life.about)
 
         def chosen() -> None:
             async def apply() -> None:
                 await life.set_identity(dialog.name.text(), dialog.about.toPlainText())
-                if starting:
-                    self._life_frame(True, waking=True)
-                    await self._show_life(True)
-                else:
-                    self._refresh_status()
-                    self._show_voice()
+                self._life_frame(True, waking=True)
+                await self._show_life(True)
             _spawn(apply())
 
         dialog.accepted.connect(chosen)
-        if starting:  # not chosen: no life
-            dialog.rejected.connect(lambda: self.continuous_switch.setChecked(False))
+        # not chosen: no life
+        dialog.rejected.connect(lambda: self.continuous_switch.setChecked(False))
         dialog.open()
 
     async def _show_life(self, on: bool) -> None:
@@ -3371,7 +3450,12 @@ class MainWindow(QMainWindow):
             action.triggered.connect(lambda _=False, m=info.id: self.controller.select_model(m))
 
     def open_settings(self, page: str | None = None) -> None:
-        """The Settings window, at `page` (a section's name) or its first."""
+        """The Settings window, at `page` (a section's name) or its first; in the life's
+        view, the life's own settings."""
+        if self.showing_life:
+            self._open_life_settings()
+            return
+
         async def load() -> None:
             settings = await self.runtime.settings()
             try:
@@ -3385,6 +3469,40 @@ class MainWindow(QMainWindow):
             self.memory_dialog, self.mcp_dialog = dialog.memory, dialog.servers
             if page is not None:
                 dialog.show_page(page)
+            dialog.open()
+
+        self.controller.command(load())
+
+    def _open_life_settings(self) -> None:
+        life = self.life
+        assert life is not None
+
+        async def restart() -> None:
+            self._life_frame(True, waking=True)
+            try:
+                await life.restart()
+            except Exception as e:  # noqa: BLE001 - shown, never fatal
+                self.model.notify(f"{life.name} could not restart: {user_message(e)}")
+                return
+            await self._show_life(True)
+
+        async def saved(identity: tuple[str, str] | None, daily: Any,
+                        changes: dict[str, bool | str]) -> None:
+            if identity is not None:
+                await life.set_identity(*identity)
+                self._refresh_status()
+                self._show_voice()  # the message box names them
+            if daily is not UNCHANGED:
+                await life.set_daily_usd(daily)
+            if changes:
+                await life.runtime.update_settings(SettingsUpdate(tool_settings=changes))
+                _spawn(restart())
+
+        async def load() -> None:
+            dialog = LifeSettingsDialog(self, life.name, life.about,
+                                        await life.runtime.settings(), life.daily_usd)
+            dialog.saved = saved
+            self._dialog = dialog
             dialog.open()
 
         self.controller.command(load())
@@ -3560,10 +3678,10 @@ class JournalDialog(QDialog):
 
 
 class LifeDialog(QDialog):
-    """The life's name and who it is, in the user's words: before it first lives,
-    and to change later."""
+    """The life's name and who it is, in the user's words, before it first lives; later
+    they are changed in its settings (LifeSettingsDialog)."""
 
-    def __init__(self, parent: QWidget, name: str, about: str, *, starting: bool) -> None:
+    def __init__(self, parent: QWidget, name: str, about: str) -> None:
         super().__init__(parent)
         self.setWindowTitle("Who they are")
         self.setMinimumWidth(520)
@@ -3576,13 +3694,107 @@ class LifeDialog(QDialog):
         self.about.setPlaceholderText("Personality, interests, how they talk… or leave it to them")
         self.about.setMaximumHeight(140)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
-        _primary(buttons.addButton("Start" if starting else "Save",
+        _primary(buttons.addButton("Start",
                                    QDialogButtonBox.ButtonRole.AcceptRole))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         form.addRow("Name", self.name)
         form.addRow("Who they are", self.about)
         form.addRow(buttons)
+
+
+class LifeSettingsDialog(QDialog):
+    """The life's own settings: its name and who it is, and what its own time may cost a
+    day (at once); what its tools declare (when its process starts again). Its provider
+    and models follow the user's chats."""
+
+    def __init__(self, parent: QWidget, name: str, about: str, settings: Settings,
+                 daily_usd: float | None) -> None:
+        super().__init__(parent)
+        self.settings, self.daily_usd = settings, daily_usd
+        self.identity = (name, about)
+        self.setWindowTitle(f"Settings · {name}")
+        self.setMinimumWidth(620)
+        column = QVBoxLayout(self)
+        column.setContentsMargins(20, 18, 20, 16)
+        column.addWidget(_label(f"Settings · {name}", selectable=False, role="heading"))
+        self.name = QLineEdit(name)
+        self.name.setPlaceholderText(NAME)
+        column.addWidget(_setting("Name", "What they are called.", self.name))
+        self.about = QPlainTextEdit(about)
+        self.about.setPlaceholderText("Personality, interests, how they talk… or leave it to them")
+        self.about.setMaximumHeight(120)
+        column.addWidget(_setting("Who they are", "In your words. Applies at once.",
+                                  self.about, below=True))
+        self.daily = QLineEdit("" if daily_usd is None else f"{daily_usd:g}")
+        self.daily.setPlaceholderText("No limit")
+        column.addWidget(_setting("Daily amount (US$)", "What their own time may cost a day. "
+                                  "Your messages always reach them.", self.daily))
+        self.tool_rows = ToolSettingRows(settings.tool_settings)
+        for row in self.tool_rows.rows:
+            column.addWidget(row)
+        if self.tool_rows.rows:
+            column.addWidget(_label(f"A change to their tools restarts {name}. Their model "
+                                    "is in your Settings.", selectable=False, role="small"))
+        self.error = _label()
+        theme.mark(self.error, "tone", "error")
+        self.error.hide()
+        column.addWidget(self.error)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
+                                   | QDialogButtonBox.StandardButton.Cancel)
+        self.save_button = _primary(buttons.button(QDialogButtonBox.StandardButton.Save))
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        column.addWidget(buttons)
+        # Called with the new name and who they are (None if unchanged), the new daily
+        # amount (UNCHANGED if it is not) and the tool settings changed.
+        self.saved: Callable[[tuple[str, str] | None, Any, dict[str, bool | str]],
+                             Awaitable[None]] | None = None
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        """Never shorter than its text needs at this width: a window's minimum size knows
+        nothing of wrapped text, which would be cut off."""
+        super().resizeEvent(event)
+        layout = self.layout()
+        if layout is not None and layout.hasHeightForWidth():
+            need = layout.totalHeightForWidth(self.width())
+            if need > self.minimumHeight():
+                self.setMinimumHeight(need)
+
+    def _save(self) -> None:
+        changes = tool_changes(self.settings, self.tool_rows.values())
+        text = self.daily.text().strip().lstrip("$")
+        try:
+            daily = float(text) if text else None
+            if daily is not None and daily < 0:
+                raise ValueError
+        except ValueError:
+            self.error.setText("Write the daily amount as dollars, like 1 or 2.50, or leave "
+                               "it empty for no limit.")
+            self.error.show()
+            return
+        daily = UNCHANGED if daily == self.daily_usd else daily
+        identity: tuple[str, str] | None = (self.name.text().strip() or NAME,
+                                            self.about.toPlainText().strip())
+        if identity == self.identity:
+            identity = None
+        if (not changes and daily is UNCHANGED and identity is None) or self.saved is None:
+            self.accept()
+            return
+        self.save_button.setEnabled(False)
+        self.error.hide()
+
+        async def save() -> None:
+            assert self.saved is not None
+            try:
+                await self.saved(identity, daily, changes)
+            except Exception as e:  # noqa: BLE001 - shown in the dialog
+                self.save_button.setEnabled(True)
+                self.error.setText(user_message(e))
+                self.error.show()
+                return
+            self.accept()
+        _spawn(save())
 
 
 class DutyDialog(QDialog):
@@ -3985,6 +4197,14 @@ class SettingsDialog(QDialog):
             "Memory": self.memory,
             "Tool servers": self.servers,
         }
+        self.tool_rows = ToolSettingRows(settings.tool_settings)
+        if self.tool_rows.rows:  # after Instructions
+            pages = list(self.pages.items())
+            at = list(self.pages).index("Instructions") + 1
+            pages.insert(at, ("Tools", _page("Tools", *self.tool_rows.rows,
+                                             _label(AT_RESTART, selectable=False,
+                                                    role="small"))))
+            self.pages = dict(pages)
         self.nav = QListWidget(objectName="settingsNav")
         self.nav.setFixedWidth(190)
         self.stack = QStackedWidget()
@@ -4097,6 +4317,7 @@ class SettingsDialog(QDialog):
             instructions=self.instructions.toPlainText(),
             permission_rules=tuple(self.rules.item(i).data(Qt.ItemDataRole.UserRole)
                                    for i in range(self.rules.count())),
+            tool_settings=self.tool_rows.values(),
         )
 
     def _rules_box(self, settings: Settings) -> QWidget:

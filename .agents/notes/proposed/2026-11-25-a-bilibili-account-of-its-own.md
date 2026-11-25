@@ -22,57 +22,91 @@ to be closed to visitors. The user wants the life to have an account of its own.
   visitor-only rule of [watching Bilibili](../implemented/2026-11-23-watching-bilibili.md)
   protects.
 
-### Logging in without a password
+### Logging in without a password, as a tool
 
-- In the life's identity dialog (✎ next to its name), **Bilibili: Log in…** shows a QR
-  code from Bilibili's web QR login (`passport.bilibili.com/x/passport-login/web/qrcode/
-  generate`, then `…/poll` every 2 s: not scanned, scanned, expired, or logged in). The
-  user scans it with the Bilibili app, switched to the life's account. No password passes
-  through Kaden. The code lasts about 3 minutes. Checked 2026-11-25: generate answers a
-  visitor, poll says "not scanned" (86101).
+- **`BiliLogin`**, a tool of the built-in Tools module, does the whole login, so nothing
+  outside that module knows Bilibili: without a login it asks Bilibili's web QR login for
+  a code (`passport.bilibili.com/x/passport-login/web/qrcode/generate`) and returns it at
+  once as a picture, which the window shows in the step's card; the user scans it with
+  the Bilibili app, switched to the life's account, and confirms. The module then polls
+  (`…/poll` every 2 s: not scanned, scanned, expired, logged in) in the background for
+  the code's 3 minutes. Calling `BiliLogin` again says whether it worked, and who the
+  account is; `log_out` forgets the login. No password passes through Kaden. Checked
+  2026-11-25: generate answers a visitor, poll says "not scanned" (86101).
+- A tool returns only when it finishes, so the code cannot be shown while the same call
+  waits for the scan: the code comes back at once and the wait is the module's.
 - On success Bilibili sets its login cookies (`SESSDATA`, `bili_jct`, `DedeUserID`) and
-  gives a `refresh_token`. They are kept in the system keychain (service `kaden`, as API
-  keys are), under a name that carries the instance's data folder, so only the life's
-  tools read them. The dialog then shows the account's name and **Log out**.
-- The QR code is drawn with `segno` (pure Python, no dependencies), added to the desktop
-  extra.
-- The login is the frontend's (it shows the code and stores the result), as the life's
-  data folder already is (the app writes its `life.json` and settings); the tools read the
-  keychain entry, under a name defined once in `api.py` from the data folder. A frontend
-  writing what a Tools module reads is not in the contract yet: recorded in
-  `.agents/contract-issues.md`.
+  gives a `refresh_token`. The module keeps them in the system keychain (service `kaden`,
+  as API keys are), under a name made from its instance's data folder (the factory's
+  `paths.data_dir`), so a login belongs to one Kaden instance: the life's, when the life
+  logs in. The user's chats could log in an account of their own the same way. A file
+  in the data folder (`bilibili-account`, no secret in it) says there is a login, and only
+  then is the keychain asked: sub-sessions and a fleet's agents, which never log in, never
+  touch it.
+- `BiliLogin` is a one-off, so it is deferred as Claude Code defers its rarely used
+  built-ins (`ToolSpec.deferred`): named in the system prompt, described once loaded with
+  ToolSearch or called.
+- The QR code is drawn with `segno` (pure Python, no dependencies, the established
+  library for it), added to the core dependencies, as the Tools module draws it.
+- **Tool cards show a tool's pictures.** A tool's pictures (`ToolResult.attachments`)
+  reach the model today, and the window shows nothing of them. The card shows them under
+  its row, small; a general change, useful for any tool that returns pictures
+  (`BiliFrames`, screenshots).
 - Cookies never appear in tool output (the archive keeps everything) or on a command line
   (not in ffmpeg's `-headers`).
 
 ### What the account adds
 
 Tools in the built-in Tools module, beside the visitor ones, offered to an instance that
-has a login (the module is given its data folder, checks for a login off the event loop,
-and lists its tools each cycle, so a login made while the life runs reaches it on its next
-turn):
+has a login (it checks for one off the event loop and lists its tools each cycle, so a
+login reaches the life on its next turn):
 
 | Tool | What it does |
 |---|---|
 | `BiliFollow` | Follow or unfollow a channel (uploader id or channel link) |
 | `BiliFollowing` | The channels the account follows |
-| `BiliFeed` | New videos from followed channels since it last looked; with `wait`, it waits for them in the background |
+| `BiliFeed` | New videos from followed channels since it last looked |
+| `BiliWatchFeed` | Watch them: told of each burst of new videos, until stopped ([standing watches](../implemented/2026-11-25-standing-watches.md)) |
 
 - `BiliVideo` also shows the uploader's id, so a channel can be followed from a video.
-- `BiliFeed` with `wait` is background work: it checks the account's feed (the dynamics
-  feed, video posts) every 10 minutes and finishes only when there is something new,
-  which wakes the life as any finished background work does. Its spec has no timeout
-  (the default of an hour would end it, and wake the life, every hour with nothing new).
-  After the first new video it waits 5 more minutes and delivers everything new in one
-  wake.
-- One mark of what has been delivered, kept in the data folder: a restart does not deliver
-  anything again, and `BiliFeed` without `wait` moves the same mark. The first look ever
-  sets it to now instead of delivering the feed's history. One watch at a time: a second
-  `wait` while one runs answers that it is already waiting, with its operation id.
+- `BiliWatchFeed` is a [standing watch](../implemented/2026-11-25-standing-watches.md):
+  each of its calls checks the account's feed (the dynamics feed, video posts) every 10
+  minutes and finishes when there is something new, 5 minutes after the first new video,
+  with everything new; the runtime delivers it as a notice that wakes the life, and
+  watches again, also after a restart.
+- What has been delivered is kept in the data folder by post id, not by time (two posts in
+  the same second, one listed late, or the newest deleted would otherwise be lost or come
+  back), and a watch's outcome is marked delivered only once it is in the conversation.
+  `BiliFeed` delivers too. The first look shows the latest few. A watch rides out a feed
+  that fails to load; a login that is gone ends it.
 - A refusal from Bilibili (a follow refused, a check against automated accounts) is
   reported as it is; the tools do not retry it.
 - The visitor tools stay visitors: browsing is not tied to the account.
-- Nothing is posted: no comments, danmaku, likes or messages. Following is the one thing
+- Nothing is posted in public: no comments, danmaku or likes. Following is the one thing
   others can see (the channel gains a follower; the following list may be public).
+
+### Private messages
+
+The user wants the life to message them on Bilibili, and asked for a general tool: one
+that would message anyone, with nothing set up for it.
+
+- **`BiliMessage`** sends a private message to an account by its UID or a link to its space
+  page. The life learns the user's UID as it learns anything: the user tells it.
+- **`BiliMessages`** gives the messages people sent the account since it last looked, with
+  who sent them; **`BiliWatchMessages`** is a watch the module keeps whenever the life is
+  logged in ([standing watches](../implemented/2026-11-25-standing-watches.md)), so a
+  message wakes it within a minute; by default only from accounts it follows, a setting of
+  the user's ([tool settings](../implemented/2026-11-25-tool-settings.md)).
+- A message counts as the life's own time, within its daily amount: anyone can write to an
+  account, and a stranger's messages must not spend beyond it. The user's message on a
+  spent day reaches it the next day; their message in the app always does at once.
+- What has been delivered is kept by sender and message number (`msg_seqno`) in the data
+  folder, marked only once the watch's outcome is in the conversation.
+- Bilibili limits messages to an account that does not follow back (often one until it
+  is answered); the user following the life's account avoids that.
+- Unverified until the life is logged in: sending (`api.vc.bilibili.com/web_im/v1/web_im/
+  send_msg`, with the account's csrf), the inbox (`…/session_svr/v1/session_svr/
+  get_sessions`) and reading a conversation (`…/svr_sync/v1/svr_sync/fetch_session_msgs`).
 
 ## Alternatives considered
 
@@ -81,6 +115,19 @@ turn):
   visitors, which Kaden does not get around. Not tried, since the user wants an account.
 - **The user's own account.** Already logged in, but the life would act as the user, and
   the user would see its follows in their own feed.
+- **The window logs in** (a QR code in the life's identity dialog, the login written to the
+  keychain for the Tools module to read). The window would know Bilibili's login, and a
+  frontend would hand a Tools module a secret outside the contract (contract issue P6).
+- **Messages with the user's account only** (a UID the user set in the life's identity
+  dialog, passed to its tools as an option). Built first: it held the life to the user's
+  account, but put one website in who the life is, and a tool that worked only once set
+  up. The user wants the tool general.
+- **The user's messages waking it as the user's.** Their Bilibili message would reach it on
+  a spent day too, but the tool cannot tell the user from anyone else, and a stranger's
+  messages would spend outside the daily amount.
+- **A general accounts mechanism in the contract** (modules declare accounts, Settings
+  logs in). Complete, but machinery for one account; worth it once a second module needs
+  a login.
 - **A password login.** Bilibili's password login goes through a captcha (geetest);
   QR login needs neither a password nor a captcha.
 - **Watching channels in the runtime, outside tool calls.** Follows would survive restarts
@@ -90,8 +137,9 @@ turn):
 
 ## Acceptance criteria
 
-- The user scans a code in the identity dialog and the life is logged in; Log out forgets
-  it; the user's chats never get the account's tools.
+- Asked to log in, the life calls `BiliLogin`, the code shows in the step's card, the user
+  scans it, and the life's next `BiliLogin` says it is logged in; `log_out` forgets it; the
+  user's chats never get the life's account.
 - The life can follow a channel it found in a video, list its follows, and is woken by a
   followed channel's new video, with everything new from a burst in one wake.
 - Without a login, everything works as now.

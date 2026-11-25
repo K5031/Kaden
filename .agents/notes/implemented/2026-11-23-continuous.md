@@ -32,8 +32,8 @@ The life is a headless Kaden in `<data dir>/life/` that the app starts with itse
 drives over JSON-RPC (`frontends/life.py`), as it does sub-sessions: its memory, its one
 conversation, usage and settings are its own, so it never sees the user's chats or their
 memory, and they never see its life. Its view is the window's own, on that runtime,
-without the chat list: its name, the step it is on as the status line, ✎ for who it is,
-Journal for `home/journal.md`. While its process starts, the view says so.
+without the chat list: its name, the step it is on as the status line,
+Journal for `home/journal.md`; its name and who it is are in its settings (the gear). While its process starts, the view says so.
 
 ### Its life
 
@@ -49,7 +49,8 @@ Journal for `home/journal.md`. While its process starts, the view says so.
 - **Its own prompt** (`life.PROMPT`): that it has a life of its own and tools to live it,
   that the user can read its journal, then Kaden's facts about its tools. Not the chats'
   (an assistant's), nor the user's instructions for them.
-- **Its own time costs at most a daily amount** (US$1), on the user's cheaper model;
+- **Its own time costs at most a daily amount** (US$1 until the user sets another in its
+  settings, or none), on the user's cheaper model;
   talking with the user does not count toward it and is answered with their chosen model.
 
 Nothing else shapes what it does: abilities (its tools, its folder, the web, Bilibili)

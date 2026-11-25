@@ -9,7 +9,15 @@ from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from kaden.api import Attachment, ToolCall, ToolContext, ToolOutput, Tools, ToolSpec
+from kaden.api import (
+    Attachment,
+    ToolCall,
+    ToolContext,
+    ToolOutput,
+    Tools,
+    ToolSetting,
+    ToolSpec,
+)
 from kaden.tools.shell_files import attachments
 
 type ToolFn = Callable[[ToolCall, ToolContext], Awaitable[ToolOutput]]
@@ -177,3 +185,17 @@ def factory(options: dict[str, Any], paths: Any) -> FakeTools:
     for name in options.get("instant", ()):
         tools.instant(name)
     return tools
+
+
+def configurable(options: dict[str, Any], paths: Any) -> FakeTools:
+    """A Tools module that declares settings the user sees (user_config)."""
+    return factory(options, paths)
+
+
+configurable.user_config = (  # type: ignore[attr-defined]
+    ToolSetting("wake", "Wake for messages", "choice", "follows",
+                choices={"follows": "From accounts it follows", "anyone": "From anyone",
+                         "nobody": "From no one"}),
+    ToolSetting("greet", "Greet new followers", "boolean", False),
+    ToolSetting("signature", "Signature", "string", "", description="Added to each message"),
+)

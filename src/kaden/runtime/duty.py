@@ -15,6 +15,7 @@ DUE = "a plan item is due"
 CHECK_IN = "scheduled check-in"
 FINISHED = "background work finished"
 NEW_DAY = "a new day"  # a life held back by its daily amount wakes again
+WATCH = "something it watches happened"  # a standing watch fired (ToolSpec.watch)
 OPEN = (PlanStatus.TODO, PlanStatus.DOING)
 CLOSE_PLAN = (
     "Steps are still open. Before you end your turn, bring the todo list up to date with "

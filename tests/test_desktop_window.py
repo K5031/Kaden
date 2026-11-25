@@ -48,6 +48,7 @@ from kaden.frontends.desktop.window import (
     DATE_ROLE,
     PREVIEW_ROLE,
     AssistantBubble,
+    LifeSettingsDialog,
     MainWindow,
     PermissionCard,
     SettingsDialog,
@@ -1292,7 +1293,7 @@ async def test_the_menus_live_behind_two_buttons_and_their_shortcuts_still_work(
     assert not window.findChildren(QMenuBar)
     texts = [a.text() for a in window.menu_button.menu().actions() if a.text()]
     assert texts == ["&New chat", "New chat in another &folder…", "Set a &duty…", "S&top",
-                     "Who they &are…", "&View", "&Model"]
+                     "&View", "&Model"]
     profile = window.profile_button.menu()
     window._fill_profile_header()
     texts = [a.text() for a in profile.actions() if a.text() and a.isVisible()]
@@ -2271,6 +2272,7 @@ class FakeLife:
     async def set_identity(self, name: str, about: str) -> None:
         self.name, self.about = name, about
 
+
     async def read_journal(self) -> str:
         return self.journal
 
@@ -2282,6 +2284,15 @@ class FakeLife:
 
     async def start(self) -> None:
         self.started += 1
+
+    restarted = 0
+    daily_usd: float | None = 1.0
+
+    async def restart(self) -> None:
+        self.restarted += 1
+
+    async def set_daily_usd(self, usd: float | None) -> None:
+        self.daily_usd = usd
 
     def take_messages(self) -> list[str]:
         said, self.said = self.said, []
@@ -2318,14 +2329,14 @@ async def test_the_life_takes_over_the_window_and_gives_it_back(make, qapp):
         return lambda: (qapp.processEvents(), check())[1]
     await eventually(laid_out(
         lambda: switch.mapTo(window, switch.rect().center()).y() == switch_at.y()))
-    # Its name is the title, whole, with ✎ and Journal after it.
+    # Its name is the title, whole, with Journal after it.
     name = window.life_name
     assert window.title_label.isHidden()
     await eventually(laid_out(lambda: name.text() == "Kaden" and name.width()
                               >= name.fontMetrics().horizontalAdvance("Kaden")))
-    def gap() -> int:  # from its name to ✎
-        pencil = window.identity_button
-        return (pencil.mapTo(window, pencil.rect().topLeft()).x()
+    def gap() -> int:  # from its name to Journal
+        journal = window.journal_button
+        return (journal.mapTo(window, journal.rect().topLeft()).x()
                 - name.mapTo(window, name.rect().topRight()).x())
     await eventually(laid_out(lambda: gap() < 20))
     assert window.controller is not window.home  # the message box talks to it
@@ -2393,18 +2404,27 @@ async def test_the_user_names_the_life_before_it_first_lives(make, qapp):
     assert (life.name, life.about) == ("Mira", "Curious, loves old maps.")
     assert life.started == 1 and window.life_name.text() == "Mira"
     assert window.input.placeholderText() == "Message Mira"  # whom the box talks to
-    window.identity_button.click()  # in its title bar: who they are, to change
-    again = await eventually(lambda: window.life_dialog is not dialog
-                             and window.life_dialog)
-    assert again.name.text() == "Mira"
-    again.reject()
+    assert not hasattr(window, "identity_button")  # who they are is in their settings
+    menu = [a.text() for a in window.menu_button.menu().actions()]
+    assert "Who they &are…" not in menu
+    window.open_settings()
+    settings = await eventually(lambda: isinstance(window._dialog, LifeSettingsDialog)
+                                and window._dialog.isVisible() and window._dialog)
+    assert (settings.name.text(), settings.about.toPlainText()) == (
+        "Mira", "Curious, loves old maps.")
+    settings.name.setText("Mira Fox")
+    settings._save()
+    await eventually(lambda: life.name == "Mira Fox" and not settings.isVisible())
+    assert life.about == "Curious, loves old maps." and life.restarted == 0
+    await eventually(lambda: window.life_name.text() == "Mira Fox")
+    assert window.input.placeholderText() == "Message Mira Fox"
     life.said.append("Look at this map!")  # by itself, while its view is on screen
     window.continuous_switch.click()
     await eventually(lambda: not window.showing_life)
     assert window.input.placeholderText() == "Message Kaden"
     for listener in life.listeners:
         listener()
-    await eventually(lambda: any(n.text == "Mira: Look at this map!"
+    await eventually(lambda: any(n.text == "Mira Fox: Look at this map!"
                                  for n in window.model.items if isinstance(n, NoticeItem)))
 
 
@@ -2502,3 +2522,216 @@ async def test_without_a_tray_closing_quits(make, qapp):
     window.closed.connect(lambda: closed.append(True))
     window.close()
     assert closed == [True] and window.tray is None
+
+
+async def test_a_tools_pictures_show_in_its_card(make, qapp):
+    """A picture a tool returns (a QR code to scan, a frame it looked at) is shown in the
+    step's card, not only sent to the model."""
+    import base64
+
+    from PySide6.QtCore import QBuffer, QIODevice
+    from PySide6.QtGui import QColor, QImage
+
+    from kaden.api import Image, ToolOutput, ToolSpec
+
+    picture = QImage(40, 30, QImage.Format.Format_RGB32)
+    picture.fill(QColor("black"))
+    buffer = QBuffer()
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    picture.save(buffer, "PNG")
+    png = base64.b64encode(bytes(buffer.data())).decode()
+
+    async def show(call, ctx):
+        return ToolOutput("Scan this code.", attachments=[Image("image/png", png, "qr.png")])
+
+    h: Harness = await make()
+    h.tools.add(ToolSpec("show", "Shows a code", {"type": "object", "properties": {}},
+                         read_only=True), show)
+    h.core.add(Step(calls=[call("show")]), Step(text="There it is."))
+    await h.start()
+    window, controller, _ = await open_window(h)
+    controller.send("show me")
+    await eventually(lambda: widgets(window, ToolCard) and not controller.model.busy)
+    [card] = widgets(window, ToolCard)
+    [shown] = card.pictures
+    assert shown.isVisibleTo(card) and not card.details.isVisibleTo(card)  # folded, still seen
+    assert shown.pixmap().width() == 40
+
+
+def test_a_broken_picture_is_left_out_and_a_wide_one_fits(qapp):
+    """A tool's picture that is not one (bad data) is skipped without breaking its card;
+    a wide one is made small enough to fit."""
+    import base64
+
+    from PySide6.QtCore import QBuffer, QIODevice
+    from PySide6.QtGui import QColor, QImage
+
+    from kaden.api import Image
+    from kaden.frontends.desktop.viewmodel import ToolItem
+    from kaden.frontends.desktop.window import PICTURE_HEIGHT, PICTURE_WIDTH
+
+    wide = QImage(3000, 200, QImage.Format.Format_RGB32)
+    wide.fill(QColor("white"))
+    buffer = QBuffer()
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    wide.save(buffer, "PNG")
+    item = ToolItem("c1", "show", pictures=(
+        Image("image/png", "not base64 at all!", "bad.png"),
+        Image("image/png", base64.b64encode(b"not a picture").decode(), "junk.png"),
+        Image("image/png", base64.b64encode(bytes(buffer.data())).decode(), "wide.png")))
+    card = ToolCard(item, lambda call_id: None)
+    [shown] = card.pictures
+    assert shown.pixmap().width() <= PICTURE_WIDTH and shown.pixmap().height() <= PICTURE_HEIGHT
+
+
+async def test_a_folded_run_of_steps_still_shows_their_pictures(make, qapp):
+    """Steps in a row fold into one line; a picture one of them returned (a code to scan)
+    shows under that line, not only inside the fold."""
+    import base64
+
+    from PySide6.QtCore import QBuffer, QIODevice
+    from PySide6.QtGui import QColor, QImage
+
+    from kaden.api import Image, ToolOutput, ToolSpec
+    from kaden.frontends.desktop.window import StepGroup
+
+    picture = QImage(40, 30, QImage.Format.Format_RGB32)
+    picture.fill(QColor("black"))
+    buffer = QBuffer()
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    picture.save(buffer, "PNG")
+    png = base64.b64encode(bytes(buffer.data())).decode()
+
+    async def show(call, ctx):
+        return ToolOutput("Scan this code.", attachments=[Image("image/png", png, "qr.png")])
+
+    h: Harness = await make()
+    h.tools.instant("look")
+    h.tools.add(ToolSpec("show", "Shows a code", {"type": "object", "properties": {}},
+                         read_only=True), show)
+    h.core.add(Step(calls=[call("look")]), Step(calls=[call("show")]), Step(text="Scan it."))
+    await h.start()
+    window, controller, _ = await open_window(h)
+    controller.send("log in")
+    await eventually(lambda: not controller.model.busy and len(widgets(window, ToolCard)) == 2)
+    [group] = window.conversation._groups.values()
+    assert isinstance(group, StepGroup)
+    assert not group.body.isVisibleTo(group)  # folded
+    [shown] = group.pictures
+    assert shown.isVisibleTo(group)
+    group.toggle.click()  # unfolded, the card shows it: not twice
+    assert not shown.isVisibleTo(group)
+
+
+async def test_what_the_tools_declare_has_a_page_in_settings(make, qapp):
+    from tests.fakes.tools import configurable
+
+    state = ModuleState(tool_settings=tuple(configurable.user_config))
+    h: Harness = await make(modules=state)
+    await h.start()
+    window, controller, _ = await open_window(h)
+    dialog = SettingsDialog(window, h.runtime, controller, await h.runtime.settings(), [], 0.0)
+    pages = [dialog.nav.item(i).text() for i in range(dialog.nav.count())]
+    assert pages.index("Tools") == pages.index("Instructions") + 1
+    dialog.show_page("Tools")
+    rows = dialog.tool_rows
+    assert rows.controls["wake"].currentText() == "From accounts it follows"
+    rows.controls["wake"].setCurrentIndex(rows.controls["wake"].findData("nobody"))
+    rows.controls["greet"].setChecked(True)
+    dialog._save()
+    await eventually(lambda: not dialog.isVisible())
+    values = {t.name: t.value for t in (await h.runtime.settings()).tool_settings}
+    assert values == {"wake": "nobody", "greet": True, "signature": ""}
+
+
+async def test_tools_that_declare_nothing_have_no_page(make, qapp):
+    h: Harness = await make()
+    await h.start()
+    window, controller, _ = await open_window(h)
+    dialog = SettingsDialog(window, h.runtime, controller, await h.runtime.settings(), [], 0.0)
+    assert "Tools" not in [dialog.nav.item(i).text() for i in range(dialog.nav.count())]
+
+
+async def test_in_the_lifes_view_settings_are_its_own(make, qapp):
+    """The gear there opens the life's tool settings; saving restarts its process."""
+    from tests.fakes.tools import configurable
+
+    h: Harness = await make()
+    await h.start()
+    them: Harness = await make(modules=ModuleState(
+        tool_settings=tuple(configurable.user_config)))
+    await them.start()
+    life = FakeLife(them.runtime)
+    controller = Controller(h.runtime, ConversationModel())
+    window = MainWindow(h.runtime, controller, life=life)
+    asyncio.create_task(controller.run())
+    window.continuous_switch.click()
+    await eventually(lambda: window.showing_life)
+    window.view_gear_button.click()
+    await eventually(lambda: isinstance(window._dialog, LifeSettingsDialog)
+                     and window._dialog.isVisible())
+    dialog = window._dialog
+    assert dialog.windowTitle() == "Settings · Kaden"
+    assert dialog.name.text() == "Kaden"
+    wake = dialog.tool_rows.controls["wake"]
+    wake.setCurrentIndex(wake.findData("anyone"))
+    dialog._save()
+    await eventually(lambda: life.restarted == 1)
+    values = {t.name: t.value for t in (await them.runtime.settings()).tool_settings}
+    assert values["wake"] == "anyone"
+    await eventually(lambda: window.showing_life and window.controller is not window.home)
+
+
+async def test_the_lifes_daily_amount_is_set_in_its_settings(make, qapp):
+    """At once, without a restart; empty for no limit."""
+    h: Harness = await make()
+    await h.start()
+    them: Harness = await make()
+    await them.start()
+    life = FakeLife(them.runtime)
+    controller = Controller(h.runtime, ConversationModel())
+    window = MainWindow(h.runtime, controller, life=life)
+    asyncio.create_task(controller.run())
+    window.continuous_switch.click()
+    await eventually(lambda: window.showing_life)
+    window.open_settings()
+    await eventually(lambda: isinstance(window._dialog, LifeSettingsDialog)
+                     and window._dialog.isVisible())
+    dialog = window._dialog
+    assert dialog.daily.text() == "1"
+    dialog.daily.setText("2.50")
+    dialog._save()
+    await eventually(lambda: not dialog.isVisible())
+    assert life.daily_usd == 2.5 and life.restarted == 0
+    window.open_settings()
+    await eventually(lambda: window._dialog is not dialog and window._dialog.isVisible())
+    window._dialog.daily.setText("lots")
+    window._dialog._save()
+    assert window._dialog.isVisible() and window._dialog.error.isVisible()
+    window._dialog.daily.setText("")
+    window._dialog._save()
+    await eventually(lambda: life.daily_usd is None)
+
+
+async def test_the_lifes_settings_show_their_descriptions_whole(make, qapp):
+    from PySide6.QtWidgets import QLabel
+
+    from tests.fakes.tools import configurable
+
+    h: Harness = await make(modules=ModuleState(tool_settings=tuple(configurable.user_config)))
+    await h.start()
+    window, _, _ = await open_window(h)
+    dialog = LifeSettingsDialog(window, "Ahri", "", await h.runtime.settings(), 1.0)
+    dialog.show()
+    # A window manager may give it less height than wrapped text needs: Qt's minimum size
+    # for a window knows nothing of wrapping.
+    dialog.resize(dialog.minimumWidth(), 200)
+    for _ in range(3):
+        qapp.processEvents()
+        await asyncio.sleep(0.02)
+    wrapped = [label for label in dialog.findChildren(QLabel)
+               if label.wordWrap() and label.isVisible() and label.text()]
+    assert wrapped
+    for label in wrapped:
+        assert label.height() >= label.heightForWidth(label.width()), label.text()
+    dialog.close()

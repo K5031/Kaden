@@ -891,7 +891,7 @@ was used.
 - **Proposed fix:** `set_duty(None)` with no duty does nothing; the frontend's test goes.
 
 ### P6 (S) A secret a frontend writes for a Tools module
-- **Status:** Open.
+- **Status:** Withdrawn: the login became a tool of the Tools module (`BiliLogin`), which keeps it itself; no frontend writes it.
 - **Where:** `api.py` (no contract for it); proposed
   [a Bilibili account of its own](notes/proposed/2026-11-25-a-bilibili-account-of-its-own.md).
 - **Problem:** The desktop app logs the life into Bilibili (a QR code the user scans) and

@@ -45,10 +45,12 @@ from kaden.runtime.modules import (
     MCP_FACTORY,
     TERMINAL,
     WINDOW,
+    declared_settings,
     find,
     has_display,
     mcp_key,
     targets,
+    tool_values,
 )
 from kaden.runtime.settings import (
     BUDGET_INTS,
@@ -75,7 +77,7 @@ LAUNCHER_FRONTENDS = {WINDOW: "desktop"}
 HEADLESS_FACTORY = "kaden.frontends.headless:factory"
 SAVED_KEYS = ("modules", "model", "maintenance_model", "permissions",
               "system_prompt", "work_folder", "budget", "mcp_servers", "always_allow",
-              "never_allow")
+              "never_allow", "tool_settings")
 
 
 def read_config(path: Path, *, required: bool,
@@ -283,9 +285,11 @@ def read_saved(path: Path) -> dict[str, Any]:
                                                   for t in texts):
             raise SystemExit(f"{path}: {key} is a list of rules, such as \"shell: git status\"")
         rules += [PermissionRule.parse(text, allow=allow) for text in texts]
+    if not isinstance(data.get("tool_settings", {}), dict):
+        raise SystemExit(f"{path}: [tool_settings] must be a table")
     runtime = {k: v for k, v in data.items()
                if k not in ("modules", "work_folder", "mcp_servers", "always_allow",
-                            "never_allow")}
+                            "never_allow", "tool_settings")}
     cleared = [k for k in ("model", "maintenance_model") if runtime.get(k) == ""]
     for key in cleared:
         del runtime[key]
@@ -297,6 +301,7 @@ def read_saved(path: Path) -> dict[str, Any]:
         saved["work_folder"] = data["work_folder"]
     saved["mcp_servers"] = servers
     saved["permission_rules"] = tuple(rules)
+    saved["tool_settings"] = data.get("tool_settings", {})
     return saved
 
 
@@ -362,6 +367,10 @@ def load_config(args: Launch, *, launcher: str = WINDOW,
     if "work_folder" in saved and "root" in tools.options:
         tools = ModuleSpec(tools.factory, {**tools.options, "root": saved["work_folder"]})
     saved.pop("work_folder", None)
+    declared = declared_settings(tools.factory)
+    values = tool_values(declared, saved.pop("tool_settings"))
+    if values:
+        tools = ModuleSpec(tools.factory, {**tools.options, **values})
     modules["tools"] = tools
     servers = saved.pop("mcp_servers")
     extra = (ModuleSpec(MCP_FACTORY, {"servers": [mcp_options(s) for s in servers]}),
@@ -381,7 +390,7 @@ def load_config(args: Launch, *, launcher: str = WINDOW,
         frontend = modules["frontend"]
         modules["frontend"] = ModuleSpec(frontend.factory, {**frontend.options, **start})
     state = ModuleState(running=running, chosen=chosen, work_folder=tools.options.get("root"),
-                        mcp_servers=servers)
+                        mcp_servers=servers, tool_settings=declared, tool_values=values)
     return InstanceConfig(
         runtime=RuntimeConfig(data_dir=data_dir, modules=state, **runtime),
         startup_error="; ".join(problems) or None,

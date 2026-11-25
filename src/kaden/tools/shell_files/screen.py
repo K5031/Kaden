@@ -30,7 +30,7 @@ SPEC = ToolSpec(
         "not take one the user did not ask for. You can only look: you cannot click or type."
     ),
     parameters={"type": "object", "properties": {}, "additionalProperties": False},
-    timeout=60.0,
+    timeout=60.0, deferred=True,  # only when the user asks about their screen
 )
 
 

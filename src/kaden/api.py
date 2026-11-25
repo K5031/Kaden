@@ -334,6 +334,14 @@ class ToolSpec:
     #   tool may end it itself then, with what it has.
     deferrable: bool = False  # True (a tool server's): offered by name only, and loaded
     #   with ToolSearch, once such tools together would take much of the request
+    deferred: bool = False  # True: always offered by name only, and loaded with ToolSearch
+    #   (or by being called), however few tools there are: a rarely used built-in, as
+    #   Claude Code defers its own
+    watch: bool = False  # True: a call waits for something outside and finishes with what
+    #   happened. The runtime answers it at once with a watch id and keeps it: it runs the
+    #   call again each time it finishes, delivers each outcome as a notice that wakes the
+    #   conversation, starts it again after a restart, and ends it on TaskStop with the
+    #   id. Read-only. (Spec 16: standing watches.)
     answers_prompt: bool = False  # True: a call with a `prompt` argument (Claude Code's
     #   WebFetch) gets, in place of a successful output, the model's answer to the prompt
     #   from that output, from the maintenance model.
@@ -897,6 +905,7 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
         "TaskStop",
         "Stop a running background task by its id, or withdraw a proposal.",
         {"type": "object", "properties": {"task_id": _TASK_ID}, "required": ["task_id"]},
+        deferred=True,  # rarely needed, as Claude Code defers it
     ),
     # A proposal is an operation with the propose call's id, and a PROPOSAL prompt.
     "propose": ToolSpec(
@@ -945,6 +954,7 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
         "open, then present your plan with ExitPlanMode. Skip it for small, clear tasks "
         "and for pure research.",
         {"type": "object", "properties": {}},
+        deferred=True,  # occasional, as Claude Code defers it
     ),
     # Waits for the user's approval (a PLAN prompt).
     "ExitPlanMode": ToolSpec(
@@ -959,6 +969,7 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
                                  "description": "The plan, in markdown: concise, the steps "
                                                 "and the files they touch."}},
          "required": ["plan"]},
+        deferred=True,  # occasional, as Claude Code defers it
     ),
     # Ends the turn when it is the only call in its message (no request follows); frontends
     # show it as a card from the transcript (see SUGGESTION_TOOLS). An option with a call is
@@ -1133,6 +1144,25 @@ class ToolOutput:
     is_error: bool = False
     # Pictures and PDFs for the model to look at, with the text: what a file tool read.
     attachments: Sequence[Image | Document] = ()
+    # A watch's (ToolSpec.watch): called, off the event loop, once the outcome is in the
+    # conversation, so the module marks it delivered only then and gives it again after a
+    # crash. Blocking.
+    confirm: Callable[[], None] | None = None
+    # A watch's error: False when trying again cannot help (a login that is gone), which
+    # ends the watch; True to try again later.
+    retry: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class StandingWatch:
+    """A watch a Tools module keeps on a conversation with a duty (Tools.standing_watches):
+    its tool and arguments. `as_user`: its outcomes are the user's own messages by another
+    way in, which wake the conversation as the user's message does; otherwise they count
+    as the duty's own time (an inbox anyone can write to)."""
+
+    name: str
+    arguments: Mapping[str, Any] = field(default_factory=dict)
+    as_user: bool = False
 
 
 class Tools(abc.ABC):
@@ -1167,6 +1197,14 @@ class Tools(abc.ABC):
 
     @abc.abstractmethod
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput: ...
+
+    async def standing_watches(self) -> Sequence[StandingWatch]:
+        """Optional: watches (of its ToolSpec.watch tools) the module keeps on a
+        conversation with a duty, a life's included, whatever the conversation does: an
+        account's inbox, say. Read when a conversation opens and after each cycle; the
+        runtime starts each named one that is not running and ends one no longer named.
+        StandingWatch.as_user says how their outcomes wake it."""
+        return ()
 
     async def use_folder(self, folder: Path | None) -> None:
         """Optional. Make `folder` the work folder of the calls that follow, creating it
@@ -1467,7 +1505,7 @@ class ModuleInfo:
     """An installed module: an entry point in the group kaden.cores, kaden.memories,
     kaden.tools or kaden.frontends whose package imports cleanly. The entry point's name
     is the id, its target the factory. A factory may carry display_name; a Core factory
-    key_name, a Frontend factory kind."""
+    key_name, a Frontend factory kind, a Tools factory user_config (ToolSetting)."""
 
     id: str  # e.g. "anthropic"
     name: str  # for display, e.g. "Claude"; the id without display_name
@@ -1498,6 +1536,26 @@ class McpServer:
     command: str | None = None
     url: str | None = None
     env: Mapping[str, str] = field(default_factory=dict)
+
+
+TOOL_SETTING_TYPES = ("boolean", "string", "choice")
+
+
+@dataclass(frozen=True, slots=True)
+class ToolSetting:
+    """A setting a Tools module declares for the user: its factory's `user_config`, a
+    sequence of these. type is one of TOOL_SETTING_TYPES; a "choice" is one of `choices`
+    (value -> label, in order). The factory receives the saved value under `name` among its
+    options, only when one is saved; else the option from config.toml, if any, else it
+    uses `default`. In Settings, `value` is the one saved (the default when none is)."""
+
+    name: str  # letters, digits and _; unique in the module
+    title: str  # for display
+    type: str
+    default: bool | str
+    description: str = ""
+    choices: Mapping[str, str] = field(default_factory=dict)
+    value: bool | str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1535,6 +1593,8 @@ class Settings:
     mcp_servers: Sequence[McpServer] = ()
     # What the user answered "always" or "never" to (a runtime setting, applied at once)
     permission_rules: Sequence[PermissionRule] = ()
+    # Module settings: what the Tools module declares (ToolSetting), with the saved values.
+    tool_settings: Sequence[ToolSetting] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1542,7 +1602,9 @@ class SettingsUpdate:
     """A partial change: None leaves a setting as it is. maintenance_model "" clears it.
     budget replaces the whole budget. modules maps kinds to installed ids. api_key is stored
     for the chosen Core (modules["core"] in this update, else the saved choice) and never
-    returned. mcp_servers, like modules and api_key, applies at the next start."""
+    returned. mcp_servers, like modules and api_key, applies at the next start, and so does
+    tool_settings: names the Tools module declares to values of the declared type (None:
+    back to the default), merged into the saved ones."""
 
     modules: Mapping[str, str] | None = None
     api_key: str | None = None
@@ -1554,6 +1616,7 @@ class SettingsUpdate:
     work_folder: str | None = None
     mcp_servers: Sequence[McpServer] | None = None  # replaces the whole list
     permission_rules: Sequence[PermissionRule] | None = None  # replaces the whole list
+    tool_settings: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -251,7 +251,37 @@ The agent can watch Bilibili videos the way a visitor does, without logging in: 
 details and its subtitles (where they are open to visitors), its danmaku at their moments,
 its top comments, and pictures of it at moments it picks (where ffmpeg is installed). Give
 it a BV id or a link, b23.tv ones too. It finds videos through web search: Bilibili's own
-search turns programs away. It cannot comment, like or post: it is not logged in.
+search turns programs away.
+
+It can also have an account of its own, for example Continuous:
+
+1. Make the account yourself on Bilibili (it needs a phone number), and switch the
+   Bilibili app on your phone to it.
+2. Ask the agent to log in ("log into your Bilibili"). A QR code appears in the step's
+   card: scan it with the app and confirm. No password goes through Kaden; the login is
+   kept in your system keychain, for that agent's Kaden only (Continuous's account is not
+   your chats').
+3. Logged in, it can follow and unfollow channels, list what it follows, and read the new
+   videos from them, or watch them: from then on, whenever they post, it is told (a burst
+   together, a few minutes after the first), also after Kaden restarts, until it stops
+   watching.
+
+Logged in, it can also send private messages, to an account by its UID or a link to its
+space page, and read the messages people send it. Its inbox is watched for it: within
+about a minute of someone writing, it gets the message. Whose messages wake it is a
+setting, **Woken by Bilibili messages** (Settings → Tools, or for Continuous the gear in
+their view): from accounts it follows (the default), from anyone, or from no one. The rest
+wait unread until it reads its messages, and it is told how many are waiting. What was
+in the inbox before its first look is not news: the first look shows the latest few, and
+counts the rest as read. A new
+follow counts within ten minutes. To talk with Continuous from the
+Bilibili app, tell it your UID (on your profile page) and write to its account; follow it
+from yours, or Bilibili may hold its messages back until you reply. Messages to it count
+as its own time: on a day its own time is spent, they reach it the next day (your
+messages in the app always reach it).
+
+Ask it to log out to forget the login. It still cannot comment, like or post. Others can
+see whom an account follows, and Bilibili may restrict an account that looks automated.
 
 ## Looking at your screen
 
@@ -305,3 +335,29 @@ background work go on; click its icon there to open the window again. **Quit** (
 your name's menu or the tray icon's), or Ctrl+Q, quits: tools still running are
 cancelled, and your conversations are saved and can be continued later. On a desktop
 without a system tray, closing the window quits.
+
+## Backups
+
+While the desktop app runs, it backs up your chats and Continuous once a day, into
+`~/.kaden/backups/`, one folder per day (`2026-11-25`), laid out like `~/.kaden`. It keeps
+the last 7 days, one backup for each of the 4 weeks and 6 months before that, and deletes
+the rest. The speech models are not backed up; they can be downloaded again. If a backup
+fails, a notice in the chat says why.
+
+The backups are on the same disk as Kaden. To keep them safe from the disk failing, copy
+`~/.kaden/backups` somewhere else now and then.
+
+To restore from a backup:
+
+1. Quit Kaden (**Quit**, not only closing the window).
+2. Put back what you want from the backup folder: its `life` folder for Continuous, or
+   its files for your chats.
+3. Next to each database you put back (`memory-files.db`, `memory.db`), delete its
+   `-wal` and `-shm` files if there are any: they belong to the database you replaced.
+
+For example, to put Continuous back as it was on 25 November:
+
+```bash
+rm -rf ~/.kaden/life
+cp -a ~/.kaden/backups/2026-11-25/life ~/.kaden/life
+```

@@ -47,14 +47,16 @@ from kaden.api import (
     Document,
     Image,
     InstancePaths,
+    StandingWatch,
     ToolCall,
     ToolContext,
     ToolOutput,
     Tools,
+    ToolSetting,
     ToolSpec,
     foreground_timeout,
 )
-from kaden.tools.shell_files import attachments, bilibili, office, screen, web
+from kaden.tools.shell_files import attachments, bili_account, bilibili, office, screen, web
 
 SHELL_STALL_TIMEOUT = 600.0  # seconds without output before the runtime may stall-kill
 HEARTBEAT_INTERVAL = 0.5  # min seconds between silent heartbeats from file walks
@@ -240,6 +242,7 @@ FILE_SPECS: tuple[ToolSpec, ...] = (
              "edit_mode": {"enum": ["replace", "insert", "delete"]}},
             ["notebook_path", "new_source"],
         ),
+        deferred=True,  # notebooks are rare, as Claude Code defers it
     ),
 )
 
@@ -260,12 +263,20 @@ def _page_range(pages: str | None, total: int) -> tuple[int, int]:
 
 
 def factory(options: dict[str, Any], paths: InstancePaths) -> ShellFilesTools:
-    """Options: root (default: the current directory), shell_timeout, shell_stall_timeout."""
+    """Options: root (default: the current directory), shell_timeout, shell_stall_timeout,
+    bilibili_wake (a setting of the user's: user_config)."""
     options = dict(options)
-    return ShellFilesTools(Path(options.pop("root", Path.cwd())), **options)
+    account = bili_account.Account(paths.data_dir,
+                                   wake=options.pop("bilibili_wake", "follows"))
+    return ShellFilesTools(Path(options.pop("root", Path.cwd())), account=account, **options)
 
 
 factory.display_name = "Shell, files and web"  # type: ignore[attr-defined]
+factory.user_config = (  # type: ignore[attr-defined]
+    ToolSetting("bilibili_wake", "Woken by Bilibili messages", "choice", "follows",
+                "Whose messages start a turn. The rest wait unread.",
+                dict(bili_account.WAKE)),
+)
 
 
 def sandbox_environment(environ: Mapping[str, str]) -> dict[str, str]:
@@ -317,7 +328,9 @@ class ShellFilesTools(Tools):
         web_tools: web.Web | None = None,
         bilibili_tools: bilibili.Bilibili | None = None,
         screen_tools: screen.Screen | None = None,
+        account: bili_account.Account | None = None,
     ) -> None:
+        """`account`: the instance's own Bilibili account (its data folder's); none without."""
         self._default = Path(root).expanduser().resolve()
         self._bwrap = _bwrap(self._default, Path.home().resolve())
         # Files the user attached: the sandbox shows each, read-only, where it is.
@@ -327,6 +340,7 @@ class ShellFilesTools(Tools):
         self._web = web_tools or web.Web()
         self._bili = bilibili_tools or bilibili.Bilibili()
         self._screen = screen_tools or screen.Screen.found()
+        self._account = account
         # Each conversation's files as it last read or wrote them: (conversation, file)
         # to what _version says of it.
         self._seen: dict[tuple[str, Path], tuple[int, int, int]] = {}
@@ -362,10 +376,17 @@ class ShellFilesTools(Tools):
         self._specs = {spec.name: spec for spec in self._spec_list}
 
     async def list_tools(self) -> Sequence[ToolSpec]:
-        return self._spec_list
+        if self._account is None:
+            return self._spec_list
+        return (*self._spec_list, *await self._account.specs())  # with a login, more
+
+    async def standing_watches(self) -> Sequence[StandingWatch]:
+        return await self._account.standing() if self._account is not None else ()
 
     async def aclose(self) -> None:
         await self._bili.aclose()
+        if self._account is not None:
+            await self._account.aclose()
 
     async def use_folder(self, folder: Path | None) -> None:
         root = self._default if folder is None else Path(folder).expanduser().resolve()
@@ -375,6 +396,9 @@ class ShellFilesTools(Tools):
     async def confined(self, call: ToolCall) -> bool:
         if call.name in web.NAMES or call.name in bilibili.NAMES:
             return True
+        if call.name in bili_account.NAMES:  # reading the account's feed and follows only
+            return call.name in ("BiliFeed", "BiliFollowing", "BiliMessages", "BiliWatchFeed",
+                                 "BiliWatchMessages")
         if not self._bounded or call.name not in self._handlers or call.name == screen.NAME:
             return False
         if call.name == SHELL.name:
@@ -403,6 +427,8 @@ class ShellFilesTools(Tools):
                 for arg in ("--ro-bind-try", str(path), str(path))]
 
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput:
+        if call.name in bili_account.NAMES and self._account is not None:
+            return await self._account_call(call)
         spec = self._specs.get(call.name)
         if spec is None:
             return ToolOutput(f"Unknown tool: {call.name}", is_error=True)
@@ -423,6 +449,22 @@ class ShellFilesTools(Tools):
 
     async def _screenshot(self, args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
         return await self._screen.run()
+
+    async def _account_call(self, call: ToolCall) -> ToolOutput:
+        assert self._account is not None
+        spec = next((s for s in await self._account.specs() if s.name == call.name), None)
+        if spec is None:
+            return ToolOutput("Not logged in to Bilibili: BiliLogin gives a code to log in.",
+                              is_error=True)
+        try:
+            jsonschema.validate(call.arguments, spec.parameters)
+        except jsonschema.ValidationError as e:
+            return ToolOutput(f"Invalid arguments: {e.message}", is_error=True)
+        try:
+            return await self._account.run(call.name, call.arguments)
+        except httpx2.HTTPError as e:
+            return ToolOutput(f"Bilibili could not be reached: {type(e).__name__}: {e}",
+                              is_error=True)
 
     def _bili_call(self, name: str
                    ) -> Callable[[dict[str, Any], ToolContext], Awaitable[str | ToolOutput]]:

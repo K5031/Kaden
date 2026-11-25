@@ -142,3 +142,49 @@ def test_its_clock_is_its_own_with_a_day_as_the_net():
     from kaden.frontends.life import PACE_S
 
     assert PACE_S == (60.0, 86_400.0)  # it chooses; at the latest a day
+
+
+async def test_its_tool_settings_are_its_own_and_last(tmp_path, child_env):
+    """Saved in its folder, they apply when it restarts; the chats' never reach it."""
+    from kaden.api import SettingsUpdate
+
+    data = home(tmp_path, [{"text": ""}, {"text": ""}, {"text": ""}])
+    with (data / "settings.toml").open("a") as settings:
+        settings.write('[tool_settings]\nbilibili_wake = "anyone"\n')  # the chats'
+    life = Life(data, pace_s=(0.05, 30))
+    try:
+        await life.start()
+        await eventually(lambda: life.snapshot)
+        values = {t.name: t.value for t in (await life.runtime.settings()).tool_settings}
+        assert values["bilibili_wake"] == "follows"
+        await life.runtime.update_settings(
+            SettingsUpdate(tool_settings={"bilibili_wake": "nobody"}))
+        await life.restart()
+        await eventually(lambda: life.snapshot)
+        s = await life.runtime.settings()
+        assert {t.name: t.value for t in s.tool_settings}["bilibili_wake"] == "nobody"
+        own = tomllib.loads((data / "life" / "settings.toml").read_text())
+        assert own["tool_settings"] == {"bilibili_wake": "nobody"}  # kept by the app
+    finally:
+        await life.aclose()
+
+
+async def test_the_user_sets_its_daily_amount(tmp_path, child_env):
+    """At once while it lives, kept for its next start; None for no limit."""
+    data = home(tmp_path, [{"text": ""}, {"text": ""}, {"text": ""}])
+    life = Life(data, pace_s=(0.05, 30))
+    assert life.daily_usd == 1.0
+    try:
+        await life.start()
+        await eventually(lambda: life.snapshot)
+        await life.set_daily_usd(3.0)
+        assert (await life.runtime.settings()).budget.max_cost_usd_per_day == 3.0
+        assert Life(data).daily_usd == 3.0
+        await life.restart()
+        settings = tomllib.loads((data / "life" / "settings.toml").read_text())
+        assert settings["budget"] == {"max_cost_usd_per_day": 3.0}
+        await life.set_daily_usd(None)
+        assert (await life.runtime.settings()).budget.max_cost_usd_per_day is None
+        assert Life(data).daily_usd is None
+    finally:
+        await life.aclose()

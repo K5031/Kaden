@@ -120,6 +120,7 @@ from kaden.api import (
 from kaden.runtime import duty as duties
 from kaden.runtime import hooks
 from kaden.runtime import skills as skill_files
+from kaden.runtime import watches as watch_files
 from kaden.runtime.budget import (
     BudgetTracker,
     calibrated,
@@ -355,6 +356,25 @@ class _Completion:
             return "".join(b.text for b in completed.message.blocks if isinstance(b, Text))
 
 
+@dataclass(slots=True)
+class _Firing:
+    """A watch's outcome on its way into the conversation."""
+
+    text: str
+    confirm: Callable[[], None] | None
+    delivered: asyncio.Event = field(default_factory=asyncio.Event)
+
+
+class _WatchContext:
+    """ToolContext of a watch's call: confined (a watch is read-only), progress unseen."""
+
+    def __init__(self, call_id: str, watch: watch_files.Watch) -> None:
+        self.call_id, self.conversation_id, self.confined = call_id, watch.conversation_id, True
+
+    def progress(self, text: str) -> None:
+        pass
+
+
 class Runtime:
     """Implements RuntimeAPI. One agent per process."""
 
@@ -408,6 +428,15 @@ class Runtime:
         self._mem_lock = asyncio.Lock()
         self._backlog: deque[tuple[Message, list[RuntimeEvent], StopReason | None]] = deque()
         self._inbox: list[MessageQueued] = []
+        # Standing watches (ToolSpec.watch): the data folder's, read at the first start;
+        # the tasks running for the open conversation's; firings of the conversation's own
+        # that wait for a cycle (their own time, held on a spent day); and each firing
+        # queued in the inbox (the user's), delivered once it is appended.
+        self._watches: list[watch_files.Watch] | None = None
+        self._watch_tasks: dict[str, asyncio.Task[None]] = {}
+        self._fired: list[_Firing] = []
+        self._confirms: dict[str, _Firing] = {}
+        self._keeping: asyncio.Task[None] | None = None
         # Whether the agent was last told the user talks to it; None: not looked up yet.
         self._spoken: bool | None = None
         self._pending_results: list[tuple[OperationResult, ToolFinished]] = []
@@ -545,6 +574,7 @@ class Runtime:
             self._log.open(data_dir / EVENT_LOG_FILE)
             self._loop_task = asyncio.create_task(self._run_loop())
 
+        self._end_watch_tasks()  # the conversation left keeps them, for when it is back
         conversation, resumed = await self._open_conversation(options)
         if self._conversation is None or conversation.id != self._conversation.id:
             self._grants.clear()
@@ -569,6 +599,7 @@ class Runtime:
         # A duty waits for the user after it was closed; a life goes on.
         if conversation.duty is None or conversation.duty.kind == DutyKind.LIFE:
             self._schedule_duty()
+        await self._resume_watches()
         return conversation
 
     async def select_model(self, model_id: str) -> None:
@@ -918,6 +949,7 @@ class Runtime:
     async def _shut_down(self) -> None:
         self._cycle_requested = False
         self._cancel_duty()
+        self._end_watch_tasks()
         await self.stop()
         if self._stop_task is not None:
             await self._stop_task
@@ -1183,12 +1215,15 @@ class Runtime:
                     self._memory_tools.add(spec.name)
                 elif module is not self._core:
                     self._tool_owner[spec.name] = module
-        deferrable = [s for s in specs.values() if s.deferrable]
-        self._deferred, self._searchable = {}, {}
+        deferrable = [s for s in specs.values() if s.deferrable and not s.deferred]
+        searchable = [s for s in specs.values() if s.deferred]  # always, however few
         if sum(len(json.dumps(_definition(s))) for s in deferrable) > DEFER_OVER_CHARS:
-            self._searchable = {s.name: s for s in deferrable}
+            searchable += deferrable
+        self._deferred, self._searchable = {}, {}
+        if searchable:
+            self._searchable = {s.name: s for s in searchable}
             loaded = self._loaded.setdefault(conversation.id, set()) if conversation else set()
-            self._deferred = {s.name: s for s in deferrable if s.name not in loaded}
+            self._deferred = {s.name: s for s in searchable if s.name not in loaded}
             specs[TOOL_SEARCH.name] = TOOL_SEARCH
         return {name: self._describable(spec) for name, spec in specs.items()}
 
@@ -1366,6 +1401,8 @@ class Runtime:
             changed = q.author is Author.USER and q.spoken != await self._was_spoken()
             await self._append(Message(q.message_id, Role.USER, (Text(q.text), *q.attachments),
                                        time.time(), q.author, spoken=q.spoken))
+            if (firing := self._confirms.pop(q.message_id, None)) is not None:
+                await self._delivered(firing)
             if changed:  # the user began to talk, or to type again: tell the agent
                 self._spoken = q.spoken
                 notice = VOICE_ON_NOTICE if q.spoken else VOICE_OFF_NOTICE
@@ -1445,6 +1482,9 @@ class Runtime:
             if self._inbox and not unsaved and not (
                     self._base == AgentState.FAILED and self._budget.exhausted()):
                 self._request_cycle("queued message")
+            elif self._fired and not unsaved:
+                self._wake_for_watch()
+            self._keep_standing_soon()
             if self._waiting():
                 self._schedule_duty()
             self._update_state()
@@ -1456,6 +1496,7 @@ class Runtime:
         await self._flush_results()
         await self._deliver_inbox()
         self._own_time = self._duty_cause is not None  # a duty's, not the user's
+        duty_started = self._duty_cause is not None
         if self._duty_cause is not None:
             cause, self._duty_cause = self._duty_cause, None
             duty = self._conversation.duty if self._conversation is not None else None
@@ -1463,8 +1504,10 @@ class Runtime:
             if duty is None and cause == duties.DUE and self._conversation is not None:
                 self._reminded = time.time()
                 notice = duties.reminder(self._conversation.plan, self._reminded)
-            await self._notice(notice)
-        else:
+            if cause != duties.WATCH:  # its firings are the notices
+                await self._notice(notice)
+        await self._deliver_fired()  # what its watches saw, whatever started the cycle
+        if not duty_started:
             await self._ensure_user_last()
         while True:
             if self._stopping:
@@ -1945,6 +1988,8 @@ class Runtime:
                 "present your plan with ExitPlanMode; once the user approves it, you can "
                 "make changes.")), 0.0
         try:
+            if spec.watch:
+                return await self._start_watch(call, spec), 0.0
             if call.name == "propose":
                 return self._propose(call), 0.0
             if call.name == "wrap_up":
@@ -2040,6 +2085,212 @@ class Runtime:
             f"Task {call.id} {where}.{progress} Use TaskOutput to check on it or wait, "
             "TaskStop to stop it; its outcome is delivered when it finishes.",
         ), op.duration
+
+    # ── Standing watches ─────────────────────────────────────────────────
+
+    def _watch_list(self) -> list[watch_files.Watch]:
+        """The open conversation's watches."""
+        if self._conversation is None or self._watches is None:
+            return []
+        return [w for w in self._watches if w.conversation_id == self._conversation.id]
+
+    async def _save_watches(self) -> None:
+        assert self._watches is not None
+        try:
+            await asyncio.to_thread(watch_files.save, self._config.data_dir, self._watches)
+        except OSError:
+            logger.exception("the watches could not be kept")
+
+    async def _start_watch(self, call: ToolCall, spec: ToolSpec) -> ToolResult:
+        """Through the usual checks, then kept: answered at once with its id."""
+        if said := await self._hooked("before", call):
+            return ToolResult(call.id, ToolStatus.REFUSED, f"Refused by a hook: {said}")
+        try:
+            owner = self._tool_owner.get(call.name)
+            confined = owner is not None and await owner.confined(self._bare(call))
+        except Exception:  # module calls are wrapped; not knowing means asking
+            logger.exception("Tools.confined failed for %s", call.name)
+            confined = False
+        if refusal := await self._gate(call, spec, confined):
+            return ToolResult(call.id, ToolStatus.REFUSED, refusal)
+        if reason := self._budget.reserve_tool_call():
+            return ToolResult(call.id, ToolStatus.REFUSED, f"Refused: budget {reason}.")
+        arguments = dict(self._bare(call).arguments)
+        if same := next((w for w in self._watch_list()
+                         if w.name == call.name and w.arguments == arguments), None):
+            return ToolResult(call.id, ToolStatus.OK, f"Already watching ({same.id}): "
+                              f"{call.name}. TaskStop with {same.id} ends it.")
+        watch = await self._add_watch(call.name, arguments, kept=False)
+        return ToolResult(call.id, ToolStatus.OK, (
+            f"Watching ({watch.id}): {call.name}. Each time it fires you are told, in a "
+            f"notice, and it watches again, also after a restart. TaskStop with {watch.id} "
+            "ends it."))
+
+    async def _add_watch(self, name: str, arguments: dict[str, Any], *, kept: bool,
+                         as_user: bool = False) -> watch_files.Watch:
+        assert self._conversation is not None and self._watches is not None
+        watch = watch_files.Watch(watch_files.next_id(self._watches), self._conversation.id,
+                                  name, arguments, kept, as_user)
+        self._watches.append(watch)
+        await self._save_watches()
+        self._log.decision("watch_started", watch=watch.id, name=name, kept=kept)
+        self._run_watch(watch)
+        return watch
+
+    async def _stop_watch(self, watch_id: str) -> tuple[ToolStatus, str]:
+        watch = next(w for w in self._watch_list() if w.id == watch_id)
+        if watch.kept:
+            return ToolStatus.ERROR, (f"Watch {watch_id} is kept by its tools while they "
+                                      "can; it cannot be stopped.")
+        await self._drop_watch(watch)
+        return ToolStatus.OK, f"Stopped watch {watch_id}: it watches no more."
+
+    async def _drop_watch(self, watch: watch_files.Watch) -> None:
+        assert self._watches is not None
+        if (task := self._watch_tasks.pop(watch.id, None)) is not None:
+            task.cancel()
+        self._watches.remove(watch)
+        await self._save_watches()
+        self._log.decision("watch_ended", watch=watch.id)
+
+    def _run_watch(self, watch: watch_files.Watch) -> None:
+        if watch.id not in self._watch_tasks:
+            self._watch_tasks[watch.id] = asyncio.create_task(self._watch_loop(watch))
+
+    def _end_watch_tasks(self) -> None:
+        """Stop the tasks, not the watches: they start again when the conversation is."""
+        for task in self._watch_tasks.values():
+            task.cancel()
+        self._watch_tasks.clear()
+        if self._keeping is not None:
+            self._keeping.cancel()
+            self._keeping = None
+
+    async def _resume_watches(self) -> None:
+        """The opened conversation's watches, started again silently; then those the
+        modules keep for the user."""
+        if self._watches is None:
+            try:
+                self._watches = await asyncio.to_thread(watch_files.load, self._config.data_dir)
+            except (OSError, ValueError) as e:
+                logger.warning("the watches were not read: %s", e)
+                self._watches = []
+        if not self._watch_list():
+            await self._keep_standing()
+            return
+        await self._offered_tools()  # which module runs each
+        for watch in self._watch_list():
+            self._run_watch(watch)
+        await self._keep_standing()
+
+    def _keep_standing_soon(self) -> None:
+        if self._closed or (self._keeping is not None and not self._keeping.done()):
+            return
+        self._keeping = asyncio.create_task(self._keep_standing())
+
+    async def _keep_standing(self) -> None:
+        """Start each watch a module keeps that is not running; end those it no longer
+        keeps. Only on a conversation with a duty: one that goes on by itself."""
+        if self._conversation is None or self._watches is None or self._closed:
+            return
+        named: list[tuple[str, dict[str, Any], bool]] = []
+        if self._conversation.duty is not None:
+            for module in self._tools:
+                try:
+                    named += [(w.name, dict(w.arguments), w.as_user)
+                              for w in await module.standing_watches()]
+                except Exception:  # a module's failure costs its watches only
+                    logger.exception("%s.standing_watches failed", type(module).__name__)
+        kept = [w for w in self._watch_list() if w.kept]
+        for watch in kept:
+            if (watch.name, watch.arguments, watch.as_user) not in named:
+                await self._drop_watch(watch)
+        if named:
+            await self._offered_tools()
+        running = {(w.name, str(w.arguments), w.as_user) for w in self._watch_list() if w.kept}
+        for name, arguments, as_user in named:
+            if (name, str(arguments), as_user) not in running:
+                await self._add_watch(name, arguments, kept=True, as_user=as_user)
+
+    async def _watch_loop(self, watch: watch_files.Watch) -> None:
+        """Run the watch's call again and again; each outcome fires. One that fails is
+        tried again after a wait that doubles to watch_retry_max_s, said once; one that
+        cannot pass (ToolOutput.retry False) ends the watch."""
+        delay, told, n = 0.0, False, 0
+        while True:
+            n += 1
+            call = ToolCall(f"{watch.id}.{n}", watch.name, dict(watch.arguments))
+            owner = self._tool_owner.get(watch.name)
+            if owner is None:
+                output = ToolOutput(f"{watch.name} is no longer offered.", is_error=True,
+                                    retry=False)
+            else:
+                try:
+                    output = await owner.execute(call, _WatchContext(call.id, watch))
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:  # noqa: BLE001 - module calls are wrapped
+                    output = ToolOutput(f"Runtime error: {e}", is_error=True)
+            said = "\n\n".join([output.content, *map(attachment_text, output.attachments)])
+            if output.is_error and not output.retry:
+                self._watch_tasks.pop(watch.id, None)
+                if watch in (self._watches or []):
+                    await self._drop_watch(watch)
+                self._fire(watch, f"[Watch {watch.id}, {watch.name}] ended: {said}", None)
+                return
+            if output.is_error:
+                if not told:
+                    self._fire(watch, f"[Watch {watch.id}, {watch.name}] failed; it is tried "
+                                      f"again later: {said}", None)
+                    told = True
+                delay = min(max(self._config.watch_retry_s, delay * 2),
+                            self._config.watch_retry_max_s)
+                await asyncio.sleep(delay)
+                continue
+            delay, told = 0.0, False
+            firing = self._fire(watch, f"[Watch {watch.id}, {watch.name}] {said}",
+                                output.confirm)
+            # Looked at again only once that is in the conversation and confirmed: until
+            # then what it saw is not marked seen, and would be seen again.
+            await firing.delivered.wait()
+
+    def _fire(self, watch: watch_files.Watch, text: str,
+              confirm: Callable[[], None] | None) -> _Firing:
+        """Deliver a watch's outcome. One kept as the user's (StandingWatch.as_user), or on
+        a conversation without a duty, comes as the user's message does: queued, and woken
+        at once. Any other on a conversation with a duty comes as its own time: within its
+        day."""
+        self._log.decision("watch_fired", watch=watch.id)
+        firing = _Firing(text, confirm)
+        if watch.as_user or self._conversation is None or self._conversation.duty is None:
+            queued = MessageQueued(_new_id(), text, author=Author.KADEN)
+            self._confirms[queued.message_id] = firing
+            self._queue(queued, "watch")
+            return firing
+        self._fired.append(firing)
+        self._wake_for_watch()
+        return firing
+
+    def _wake_for_watch(self) -> None:
+        if self._waiting() and self._duty_running() and not self._day_spent():
+            self._request_cycle(f"duty: {duties.WATCH}", duties.WATCH)
+
+    async def _deliver_fired(self) -> None:
+        """The firings of the conversation's own watches, into it; each confirmed."""
+        fired, self._fired = self._fired, []
+        for firing in fired:
+            await self._notice(firing.text)
+            await self._delivered(firing)
+
+    async def _delivered(self, firing: _Firing) -> None:
+        """A firing is in the conversation: confirmed, and its watch looks again."""
+        try:
+            if firing.confirm is not None:
+                await asyncio.to_thread(firing.confirm)
+        except Exception:  # what it gave may be given again
+            logger.exception("a watch's confirmation failed")
+        finally:
+            firing.delivered.set()
 
     async def _gate(self, call: ToolCall, spec: ToolSpec, confined: bool) -> str | None:
         """Apply the permission policy to a call its Tools module judged `confined` or
@@ -2357,6 +2608,8 @@ class Runtime:
                     assert op.supervisor is not None
                     await asyncio.wait({op.supervisor}, timeout=wait_s)
                 return ToolStatus.OK, self._describe(op)
+            case "TaskStop" if args["task_id"] in {w.id for w in self._watch_list()}:
+                return await self._stop_watch(args["task_id"])
             case "TaskStop":
                 op = self._ops.get(args["task_id"])
                 if op is None:

@@ -10,12 +10,20 @@ import os
 import re
 import shlex
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Any
 
-from kaden.api import MODULE_KINDS, McpServer, ModuleChoice, ModuleInfo, SettingsUpdate
+from kaden.api import (
+    MODULE_KINDS,
+    TOOL_SETTING_TYPES,
+    McpServer,
+    ModuleChoice,
+    ModuleInfo,
+    SettingsUpdate,
+    ToolSetting,
+)
 from kaden.runtime.config import ModuleState, Restart
 from kaden.runtime.settings import get_stored_key, has_key, save_settings, store_key
 
@@ -85,6 +93,38 @@ def load_entry(kind: str, module_id: str, target: str) -> Installed | None:
                      getattr(factory, "kind", TERMINAL) if kind == "frontend" else None)
 
 
+def declared_settings(target: str) -> tuple[ToolSetting, ...]:
+    """The settings a Tools factory declares (its user_config); none if it declares none,
+    declares them wrongly, or does not load (building it says why). Blocks (imports it)."""
+    module_name, _, attr = target.partition(":")
+    try:
+        factory: Any = getattr(importlib.import_module(module_name), attr)
+    except Exception:
+        logger.info("tools %s do not load", target, exc_info=True)
+        return ()
+    declared = tuple(getattr(factory, "user_config", ()))
+    if not all(isinstance(t, ToolSetting) and t.type in TOOL_SETTING_TYPES
+               and takes(t, t.default) for t in declared):
+        logger.warning("%s declares its user_config wrongly; it is ignored", target)
+        return ()
+    return declared
+
+
+def takes(setting: ToolSetting, value: object) -> bool:
+    """Whether `value` is one of `setting`'s type (bool is not a string, nor a number)."""
+    if setting.type == "boolean":
+        return isinstance(value, bool)
+    if not isinstance(value, str):
+        return False
+    return setting.type == "string" or value in setting.choices
+
+
+def tool_values(declared: tuple[ToolSetting, ...], saved: dict[str, Any]
+                ) -> dict[str, bool | str]:
+    """The saved values the declared settings take; others are left out."""
+    return {t.name: saved[t.name] for t in declared if t.name in saved and takes(t, saved[t.name])}
+
+
 def find(kind: str, module_id: str | None) -> Installed | None:
     """Blocks like installed()."""
     if module_id is None or (target := targets(kind).get(module_id)) is None:
@@ -115,6 +155,9 @@ class ModuleSettings:
         self.key_saved = False
         self.mcp_running = tuple(state.mcp_servers)  # values ""; built for this run
         self.mcp_servers = self.mcp_running  # saved for the next start
+        self.tool_settings = state.tool_settings
+        self.tools_running = dict(state.tool_values)  # given to the Tools factory this run
+        self.tool_values = self.tools_running  # saved for the next start
 
     async def fields(self) -> dict[str, Any]:
         """The module part of Settings."""
@@ -125,9 +168,12 @@ class ModuleSettings:
                      for m in found[kind]]
             modules[kind] = ModuleChoice(self.running[kind], self.chosen[kind], infos)
         restart_needed = (self.key_saved or self.mcp_servers != self.mcp_running
+                          or self.tool_values != self.tools_running
                           or any(self.chosen[k] != self.running[k] for k in MODULE_KINDS))
         return {"modules": modules, "work_folder": self.work_folder,
                 "mcp_servers": self.mcp_servers,
+                "tool_settings": tuple(replace(t, value=self.tool_values.get(t.name, t.default))
+                                       for t in self.tool_settings),
                 "restart_needed": restart_needed,
                 "restart_frontend": self._restart_frontend(found["frontend"]),
                 "startup_error": self.startup_error, "already_open": self.already_open}
@@ -178,6 +224,20 @@ class ModuleSettings:
             await self._check_servers(u.mcp_servers)
             if [mcp_saved(s) for s in u.mcp_servers] != [mcp_saved(s) for s in self.mcp_servers]:
                 saved["mcp_servers"] = [mcp_saved(s) for s in u.mcp_servers]
+        if u.tool_settings is not None:
+            values = dict(self.tool_values)
+            declared = {t.name: t for t in self.tool_settings}
+            for name, value in u.tool_settings.items():
+                if (setting := declared.get(name)) is None:
+                    raise ValueError(f"the tools have no setting {name!r}")
+                if value is None:
+                    values.pop(name, None)
+                elif not takes(setting, value):
+                    raise ValueError(f"{value!r} is not a value of {name!r}")
+                else:
+                    values[name] = value
+            if values != self.tool_values:
+                saved["tool_settings"] = values
         if u.work_folder is not None:
             if self.work_folder is None:
                 raise ValueError("the work folder of these tools cannot be changed")
@@ -252,6 +312,7 @@ class ModuleSettings:
             raise
         self.chosen.update(saved.get("modules", {}))
         self.work_folder = saved.get("work_folder", self.work_folder)
+        self.tool_values = saved.get("tool_settings", self.tool_values)
         self.key_saved = self.key_saved or key_name is not None
         if u.mcp_servers is not None:
             await self._store_server_keys(u.mcp_servers)

@@ -14,7 +14,7 @@ import datetime
 import json
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Any
 
@@ -170,6 +170,7 @@ class ToolItem:
     status: ToolStatus | None = None
     content: str = ""
     duration_s: float | None = None
+    pictures: tuple[Image, ...] = ()  # what the tool returned to be looked at
 
     @property
     def sentence(self) -> str:
@@ -814,6 +815,8 @@ class ConversationModel:
             item.phase = Phase.DONE
             item.status = result.status
             item.content = result_text(result)
+            item.pictures = tuple(a for a in getattr(result, "attachments", ())
+                                  if isinstance(a, Image))
             item.duration_s = duration if duration is not None else item.duration_s
         if item in self._stream:
             self._stream.remove(item)
@@ -903,6 +906,7 @@ class SettingsForm:
     permissions: PermissionPolicy
     instructions: str
     permission_rules: tuple[PermissionRule, ...] = ()  # the saved answers kept
+    tool_settings: Mapping[str, bool | str] = field(default_factory=dict)  # name -> value
 
 
 def form_from(settings: Settings) -> SettingsForm:
@@ -910,7 +914,8 @@ def form_from(settings: Settings) -> SettingsForm:
     modules = {kind: choice.chosen for kind, choice in settings.modules.items()}
     return SettingsForm(modules, "", settings.model, settings.maintenance_model,
                         "" if limit is None else f"{limit:g}", settings.permissions,
-                        settings.system_prompt, tuple(settings.permission_rules))
+                        settings.system_prompt, tuple(settings.permission_rules),
+                        {t.name: t.value for t in settings.tool_settings if t.value is not None})
 
 
 def settings_update(current: Settings, form: SettingsForm) -> SettingsUpdate:
@@ -946,7 +951,15 @@ def settings_update(current: Settings, form: SettingsForm) -> SettingsUpdate:
         changes["system_prompt"] = form.instructions
     if form.permission_rules != tuple(current.permission_rules):
         changes["permission_rules"] = list(form.permission_rules)
+    if tools := tool_changes(current, form.tool_settings):
+        changes["tool_settings"] = tools
     return SettingsUpdate(**changes)
+
+
+def tool_changes(current: Settings, values: Mapping[str, bool | str]) -> dict[str, bool | str]:
+    """The tool settings whose value is not the one saved."""
+    return {t.name: values[t.name] for t in current.tool_settings
+            if t.name in values and values[t.name] != t.value}
 
 
 def limit_update(current: Settings, text: str) -> Budget:

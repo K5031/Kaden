@@ -27,6 +27,7 @@ from kaden.frontends.desktop import single
 from kaden.frontends.desktop.loop import run_on_qt
 from kaden.frontends.life import Life
 from kaden.frontends.sessions import SubSessions
+from kaden.runtime import backup
 
 
 def factory(options: dict[str, Any], paths: InstancePaths) -> DesktopFrontend:
@@ -104,10 +105,14 @@ class DesktopFrontend(Frontend):
         events = asyncio.create_task(controller.run())
         controller.command(window.begin(self.conversation_id))
         waiter = asyncio.create_task(closed.wait())
+        tasks = {events, waiter}
+        if self.data_dir is not None:  # the chats and Continuous, backed up while it runs
+            tasks.add(asyncio.create_task(backup.keep_backed_up(
+                self.data_dir, failed=lambda why: window.model.notify(why))))
         try:
             await asyncio.wait({events, waiter}, return_when=asyncio.FIRST_COMPLETED)
         finally:
-            for task in (events, waiter):
+            for task in tasks:
                 task.cancel()
             if server is not None:
                 server.close()

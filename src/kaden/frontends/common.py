@@ -385,9 +385,10 @@ def delete_details(is_open: bool, sub_sessions: int = 0) -> str:
 
 
 def needs_restart(update: SettingsUpdate) -> bool:
-    """Whether `update` holds module settings (modules, the key, MCP servers), which apply
-    at the next start."""
-    return bool(update.modules) or update.api_key is not None or update.mcp_servers is not None
+    """Whether `update` holds module settings (modules, the key, MCP servers, tool
+    settings), which apply at the next start."""
+    return (bool(update.modules) or update.api_key is not None
+            or update.mcp_servers is not None or bool(update.tool_settings))
 
 
 def restart_notice(settings: Settings) -> str | None:

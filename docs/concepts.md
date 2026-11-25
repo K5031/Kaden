@@ -85,11 +85,12 @@ closed it.
 
 - **You say who they are.** The first time, you give them a name and, if you like, who
   they are: personality, interests, how they talk. Leave that empty and they find out for
-  themselves. **✎** next to their name in their view changes it.
+  themselves. Their settings (the gear in their view) change it.
 - **They live on their own.** They do their own things with their tools (reading,
   looking things up, writing, watching Bilibili, projects of their own), around the
   clock. A minute after they finish something they go on, unless they chose to rest until
-  a later time (up to a day). Writing to them, or something of their own finishing, wakes
+  a later time (up to a day). Writing to them, something they watch happening (a channel
+  they follow posting), or something of their own finishing, wakes
   them at once.
 - **You can see what they are up to.** While they do something, the line at the top of
   their view says what (say, "Search the web for fox legends"), and **Journal** next to
@@ -104,7 +105,8 @@ closed it.
   then on start with Kaden, carrying on after a restart. Switching back to your chats does
   not pause them. Closing the window keeps Kaden running in the tray; only Quit stops
   them.
-- **Their own time costs at most about US$1 a day**, on your cheaper model (Settings →
+- **Their own time costs at most a daily amount**, US$1 unless you change it (the gear
+  in their view), on your cheaper model (Settings →
   Model for memory upkeep). Talking with you does not count toward it, and is answered
   with your chosen model. Once a day's share is spent, they rest until the next day and
   still answer you. Your spending limit in Settings covers it too.
