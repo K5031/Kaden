@@ -320,6 +320,8 @@ class ShellFilesTools(Tools):
     ) -> None:
         self._default = Path(root).expanduser().resolve()
         self._bwrap = _bwrap(self._default, Path.home().resolve())
+        # Files the user attached: the sandbox shows each, read-only, where it is.
+        self._attached: dict[Path, None] = {}
         self._shell_spec = replace(SHELL, timeout=shell_timeout,
                                    stall_timeout=shell_stall_timeout)
         self._web = web_tools or web.Web()
@@ -388,8 +390,17 @@ class ShellFilesTools(Tools):
 
     async def attach(self, path: Path) -> Attachment:
         """A relative path is taken from the work folder. Reading is the user's act, so
-        the file may lie outside it."""
-        return await asyncio.to_thread(attachments.read, self._path(str(path)))
+        the file may lie outside it, and a sandboxed command can read it from then on."""
+        block = await asyncio.to_thread(attachments.read, self._path(str(path)))
+        self._attached[self._path(str(path)).resolve()] = None
+        return block
+
+    def _granted(self) -> list[str]:
+        """The sandbox's read-only binds for the files the user attached outside the
+        workspace, which it binds writable already."""
+        return [arg for path in self._attached
+                if self.root not in path.parents
+                for arg in ("--ro-bind-try", str(path), str(path))]
 
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput:
         spec = self._specs.get(call.name)
@@ -508,7 +519,7 @@ class ShellFilesTools(Tools):
                   "exit $__kaden_status\n")
         try:
             sandbox = [] if self._sandbox is None or args.get("dangerouslyDisableSandbox") else [
-                *self._sandbox[:-1], str(folder)]  # its --chdir
+                *self._sandbox[:-2], *self._granted(), "--chdir", str(folder)]
             proc = await asyncio.create_subprocess_exec(
                 *sandbox, "sh", "-c", script,
                 env=sandbox_environment(os.environ) if sandbox else None,

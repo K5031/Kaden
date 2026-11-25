@@ -889,3 +889,18 @@ was used.
 - **Assumed:** The terminal frontend's duty dialog calls `set_duty` only when a duty is
   given or one is on.
 - **Proposed fix:** `set_duty(None)` with no duty does nothing; the frontend's test goes.
+
+### P6 (S) A secret a frontend writes for a Tools module
+- **Status:** Open.
+- **Where:** `api.py` (no contract for it); proposed
+  [a Bilibili account of its own](notes/proposed/2026-11-25-a-bilibili-account-of-its-own.md).
+- **Problem:** The desktop app logs the life into Bilibili (a QR code the user scans) and
+  keeps the login for the life's built-in Tools module to use. Secrets reach modules only
+  through the runtime today (`update_settings` writes a Core's `key_name`, MCP servers
+  declare `env`); nothing lets a frontend give a Tools module a credential.
+- **Assumed:** The login is kept in the system keychain under a name `api.py` derives from
+  the instance's data folder; the frontend writes it and the Tools module, given its
+  data folder, reads it. Both sides use the one function, so the name is declared once.
+- **Proposed fix:** A declared kind of secret a Tools module may read (its name in its
+  spec or factory), written through `RuntimeAPI.update_settings` like a Core's key, so a
+  frontend never writes what a module reads directly.

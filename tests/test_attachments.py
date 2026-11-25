@@ -61,7 +61,8 @@ def files(tmp_path: Path) -> dict[str, str]:
 def test_an_image_is_read_whole_and_a_text_file_with_its_content(files):
     image, note, binary, big = (attachments.read(Path(files[name]))
                                 for name in ("png", "txt", "bin", "big"))
-    assert image == Image("image/png", base64.b64encode(PNG).decode(), "shot.png")
+    assert image == Image("image/png", base64.b64encode(PNG).decode(), "shot.png",
+                          files["png"])  # where it is, so the agent can copy it
     assert note == File(files["txt"], "Buy oat milk.\n")
     assert binary == File(files["bin"]) and big == File(files["big"])  # named, not included
 
@@ -81,6 +82,8 @@ def test_an_image_too_large_for_a_provider_goes_by_its_path(tmp_path: Path):
 
 def test_how_an_attachment_reads_as_text():
     assert attachment_text(Image("image/png", "AAAA", "shot.png")) == "[Image attached: shot.png]"
+    assert attachment_text(Image("image/png", "AAAA", "shot.png", "/w/shot.png")) == (
+        "[Image attached: /w/shot.png]")
     assert attachment_text(File("/w/notes.txt", "Buy oat milk.")) == (
         "[File attached: /w/notes.txt]\nBuy oat milk.")
     assert "not included" in attachment_text(File("/w/data.bin"))
@@ -206,6 +209,27 @@ async def test_claude_gets_the_image_and_the_files_text():
         {"type": "text", "text": "[File attached: /w/notes.txt]\nBuy oat milk."}]
 
 
+async def test_claude_is_told_where_an_attached_picture_and_pdf_are():
+    """As for any other file, the agent learns where the user's picture or PDF is, so it can
+    copy or open it with its tools; the model sees it as well."""
+    anthropic = AnthropicDriver()
+    anthropic.queue_text()
+    await collect(anthropic.core, InferenceRequest(MODEL, "", [_message(
+        Text("keep these"), Image("image/png", "AAAA", "fox.png", "/home/me/fox.png"),
+        Document("/home/me/report.pdf", "JVBERi0=", "Sales rose", 1))], [],
+        max_output_tokens=256))
+    await anthropic.core.aclose()
+    [turn] = anthropic.stub.bodies[-1]["messages"]
+    assert turn["content"] == [
+        {"type": "document", "source": {"type": "base64", "media_type": "application/pdf",
+                                        "data": "JVBERi0="}},
+        {"type": "text", "text": "keep these"},
+        {"type": "text", "text": "[Image attached: /home/me/fox.png]"},
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                     "data": "AAAA"}},
+        {"type": "text", "text": "[File attached: /home/me/report.pdf (PDF, 1 page)]"}]
+
+
 async def test_claude_gets_a_pdf_as_a_document_before_the_text():
     anthropic = AnthropicDriver()
     anthropic.queue_text()
@@ -217,7 +241,8 @@ async def test_claude_gets_a_pdf_as_a_document_before_the_text():
     assert turn["content"] == [
         {"type": "document", "source": {"type": "base64", "media_type": "application/pdf",
                                         "data": "JVBERi0="}},
-        {"type": "text", "text": "summarize this"}]
+        {"type": "text", "text": "summarize this"},
+        {"type": "text", "text": "[File attached: /w/report.pdf (PDF, 1 page)]"}]
 
 
 def test_other_providers_get_a_pdfs_text():
@@ -240,6 +265,11 @@ def test_openai_style_providers_get_an_image_part_or_a_line_of_text():
     [only] = openai_messages("", [_message(Image("image/png", "AAAA"))])
     assert only["content"] == [{"type": "image_url",
                                 "image_url": {"url": "data:image/png;base64,AAAA"}}]
+    [placed] = openai_messages("", [_message(Image("image/png", "AAAA", "fox.png",
+                                                   "/home/me/fox.png"))])
+    assert placed["content"] == [  # told where it is, as with any other file
+        {"type": "text", "text": "[Image attached: /home/me/fox.png]"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}]
 
 
 # ── In memory ────────────────────────────────────────────────────────────
@@ -248,7 +278,7 @@ def test_openai_style_providers_get_an_image_part_or_a_line_of_text():
 async def test_memory_keeps_attachments_and_searches_a_files_text_not_image_data(tmp_path):
     memory = SqliteMemory(tmp_path / "m.db")
     conversation = await memory.create_conversation()
-    image = Image("image/png", "QUJDREVGR0g", "shot.png")
+    image = Image("image/png", "QUJDREVGR0g", "shot.png", "/w/shot.png")
     note = File("/w/notes.txt", "Buy oat milk.")
     await memory.append(conversation.id, [_message(Text("look"), image, note)])
     [stored] = await memory.history(conversation.id)
@@ -360,3 +390,11 @@ async def test_the_file_tool_shows_a_picture_and_on_request_a_pdfs_pages(
     [some] = part.attachments
     assert some.pages == 2 and "Sales rose" not in some.text and "Outlook for May" in some.text
     assert part.content == "[PDF, 3 pages; pages 2-3 attached]"
+
+
+def test_a_picture_stored_without_its_path_still_reads():
+    from kaden.memory.sqlite.codec import decode_block
+
+    stored = {"type": "image", "data": {"media_type": "image/png", "data": "AAAA",
+                                        "name": "shot.png"}}
+    assert decode_block(stored) == Image("image/png", "AAAA", "shot.png")

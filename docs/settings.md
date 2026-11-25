@@ -116,6 +116,8 @@ in the work folder; a link that leads out of it counts as outside. Commands run 
 sandbox ([bubblewrap](https://github.com/containers/bubblewrap)) in which they can:
 
 - read and change the work folder;
+- read the files you attached to a message, wherever they are, so the agent can copy a
+  picture you sent;
 - read the system, so installed programs run;
 - use the network.
 

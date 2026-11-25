@@ -198,6 +198,9 @@ class Image:
     media_type: str  # image/png, image/jpeg, image/gif or image/webp
     data: str  # the file's bytes, base64
     name: str = ""  # its file name
+    # Absolute, where the user attached it from; Cores tell the model, as for any other
+    # file, so the agent can copy or open it. Empty for a picture a tool returned.
+    path: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,14 +228,22 @@ class Document:
 type Attachment = Image | File | Document
 
 
+def attached_at(block: Image | Document) -> str:
+    """The line that tells the model a picture or a PDF the user attached, and where it is:
+    sent with it, as a file's path is sent with the file."""
+    if isinstance(block, Image):
+        return f"[Image attached: {block.path or block.name or block.media_type}]"
+    return (f"[File attached: {block.path} (PDF, {block.pages} "
+            f"page{'s' if block.pages != 1 else ''})]")
+
+
 def attachment_text(block: Attachment) -> str:
     """An attachment as text: a file for the model, either for a summary or a search hit,
     an image or a PDF for a model that cannot take it."""
     if isinstance(block, Image):
-        return f"[Image attached: {block.name or block.media_type}]"
+        return attached_at(block)
     if isinstance(block, Document):
-        head = (f"[File attached: {block.path} (PDF, {block.pages} "
-                f"page{'s' if block.pages != 1 else ''})]")
+        head = attached_at(block)
         return f"{head}\n{block.text}" if block.text else (
             f"{head}\n[No text could be read from it: it may be a scan.]")
     if block.text is None:

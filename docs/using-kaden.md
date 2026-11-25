@@ -48,6 +48,10 @@ message box has a button for each; use either alone or both:
   the speech models (about 830 MB) into its data folder.
 - **Pick its voice** in **Settings → General → Voice**: Heart (the default), Bella,
   Nicole, Michael or Fenrir. **Play** lets you hear one first.
+- **The first click waits for voice to load**: a few seconds, about 13 with the natural
+  voice, once per run of Kaden. Turn on **Settings → General → Load voice at start** to
+  have it loaded in the background when Kaden starts instead; it then stays in memory
+  (GPU memory with the natural voice) while Kaden runs.
 - **A natural voice** with an NVIDIA GPU: install the `voice-gpu` extra (see
   [Desktop app](desktop-app.md#a-natural-voice)). Kaden then hears you with Whisper,
   which gets more of your words right, and speaks with Chatterbox, in its own voice
@@ -65,10 +69,13 @@ Click **+** in the message box, drop files on the window or paste them, then sen
 message can be attachments only.
 
 - **A picture** (PNG, JPEG, GIF or WebP, up to 5 MB) is shown to the model, so you can ask
-  about a screenshot or a photo. With a model that cannot see pictures (DeepSeek), the
-  agent is only told that one was attached.
+  about a screenshot or a photo, and the agent is told where the file is, so it can copy or
+  keep it. With a model that cannot see pictures (DeepSeek), the agent is only told that
+  one was attached, and where. A pasted picture is saved to a temporary folder that is
+  cleared when the computer restarts.
 - **A PDF** (up to 20 MB and 600 pages) goes to Claude whole: it reads the text and sees
   every page, so tables, charts and scans work. Other providers get the text of its pages.
+  Either way the agent is told where it is.
 - **A Word, Excel or PowerPoint file** (.docx, .xlsx, .pptx) goes as its text: a
   document's headings, paragraphs and tables, a workbook's sheets row by row, a deck's
   slides with their notes. Formatting, pictures and charts in them are not included.

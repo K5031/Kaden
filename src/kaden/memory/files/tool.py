@@ -1,5 +1,6 @@
 """The memory tool: the agent reads and writes its project's memory folder with the commands
-of Anthropic's memory tool, which Claude models know. Blocking: run from a worker thread."""
+of Anthropic's memory tool, which Claude models know; str_replace takes the Edit tool's
+old_string and new_string, as every other edit does. Blocking: run from a worker thread."""
 
 from __future__ import annotations
 
@@ -20,8 +21,8 @@ MEMORY = ToolSpec(
     "Read and write your long-term memory for this project: the memory folder whose index, "
     f"{MEMORY_INDEX}, is in your instructions. Paths are relative to the folder. Commands: "
     "view (a file with line numbers, or the folder's files when path is empty or \".\"), "
-    "create (a new file with file_text), str_replace (old_str, which must occur once, with "
-    "new_str), insert (insert_text after line insert_line; 0 is the top), delete, rename "
+    "create (a new file with file_text), str_replace (old_string, which must occur once, "
+    "with new_string), insert (insert_text after line insert_line; 0 is the top), delete, rename "
     "(old_path to new_path). View a file before you change it: a file you have not read "
     "in this conversation, or that changed since, is not edited, deleted or renamed. Only "
     f"the first {INDEX_MAX_LINES} lines or {INDEX_MAX_BYTES // 1024} kB of {MEMORY_INDEX} "
@@ -33,15 +34,15 @@ MEMORY = ToolSpec(
                                                    "delete", "rename"]},
             "path": {"type": "string"},
             "file_text": {"type": "string"},
-            "old_str": {"type": "string"},
-            "new_str": {"type": "string"},
+            "old_string": {"type": "string"},
+            "new_string": {"type": "string"},
             "insert_line": {"type": "integer", "minimum": 0},
             "insert_text": {"type": "string"},
             "old_path": {"type": "string"},
             "new_path": {"type": "string"},
         },
         "required": ["command"],
-        # Another tool's argument (Edit's old_string) is named back, not passed through.
+        # Any other name (old_str, as Anthropic's memory tool has it) is named back.
         "additionalProperties": False,
     },
 )
@@ -120,13 +121,14 @@ def run_command(folder: MemoryFolder, args: dict[str, Any], seen: dict[str, str]
             absent(path)
             return f"Saved {path}." + write(path, args["file_text"])
         case "str_replace":
-            needs("path", "old_str", "new_str")
+            needs("path", "old_string", "new_string")
             text = known(path)
-            count = text.count(args["old_str"])
+            count = text.count(args["old_string"])
             if count != 1:
-                raise ValueError(f"old_str occurs {count} times in {path}; it must occur once.")
-            return f"Edited {path}." + write(path, text.replace(args["old_str"],
-                                                                 args["new_str"]))
+                raise ValueError(f"old_string occurs {count} times in {path}; it must occur "
+                                 "once.")
+            return f"Edited {path}." + write(path, text.replace(args["old_string"],
+                                                                 args["new_string"]))
         case "insert":
             needs("path", "insert_line", "insert_text")
             lines = known(path).splitlines(keepends=True)

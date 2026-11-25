@@ -43,6 +43,7 @@ from kaden.api import (
     TransientCoreError,
     Usage,
     UsageReport,
+    attached_at,
     attachment_text,
 )
 from kaden.core._common import (
@@ -372,6 +373,7 @@ def to_messages(system: str, messages: Sequence[Message], *,
             shown = [b for b in message.blocks if isinstance(b, Image)] if images else []
             texts += [attachment_text(b) for b in message.blocks
                       if isinstance(b, Image) and not images]
+            texts += [attached_at(b) for b in shown if b.path]  # where each one is
             text = "\n\n".join(texts)
             out.append({"role": "user", "content": text if not shown else [
                 *([{"type": "text", "text": text}] if text else []),

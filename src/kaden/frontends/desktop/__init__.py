@@ -69,6 +69,7 @@ class DesktopFrontend(Frontend):
             load_look,
             load_view,
             load_voice,
+            load_voice_at_start,
             save_look,
         )
 
@@ -92,6 +93,9 @@ class DesktopFrontend(Frontend):
                 window.continuous_switch.setChecked(True)  # where the user left off
         if self.zoom_file is not None:
             await window.voice.restore(await load_voice(self.zoom_file))
+            if await load_voice_at_start(self.zoom_file):
+                window.voice.load_at_start = True
+                controller.command(window.voice.preload())
         server = (await single.listen(self.data_dir, window.bring_forward)
                   if self.data_dir is not None else None)
         closed = asyncio.Event()
@@ -113,7 +117,8 @@ class DesktopFrontend(Frontend):
                 await self.life.aclose()
             if self.zoom_file is not None:
                 await save_look(self.zoom_file, window.voice.voice,
-                                life=window.showing_life)
+                                life=window.showing_life,
+                                load_voice=window.voice.load_at_start)
 
     async def _hand_over(self, data_dir: Path) -> None:
         """Another Kaden has the data folder: bring its window forward, or, when none

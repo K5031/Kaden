@@ -127,15 +127,15 @@ async def test_the_memory_tool_works_on_the_conversations_project(tmp_path: Path
         return await memory.execute(ToolCall("c", "memory", args), Context(conv.id))
 
     assert not (await run(command="create", path="a.md", file_text="one\ntwo\n")).is_error
-    assert not (await run(command="str_replace", path="a.md", old_str="two",
-                          new_str="2")).is_error
+    assert not (await run(command="str_replace", path="a.md", old_string="two",
+                          new_string="2")).is_error
     assert not (await run(command="insert", path="a.md", insert_line=1,
                           insert_text="one and a half")).is_error
     view = await run(command="view", path="a.md")
     assert "one and a half" in view.content and "\t2" in view.content
     assert not (await run(command="rename", old_path="a.md", new_path="b.md")).is_error
     assert (await run(command="view", path="")).content.startswith("b.md")
-    assert (await run(command="str_replace", path="b.md", old_str="x", new_str="y")).is_error
+    assert (await run(command="str_replace", path="b.md", old_string="x", new_string="y")).is_error
     assert (await run(command="create", path="../out.md", file_text="x")).is_error
     assert not (await run(command="delete", path="b.md")).is_error
     assert (await run(command="view", path="b.md")).is_error
@@ -163,7 +163,7 @@ async def test_a_memory_is_read_before_it_is_changed(tmp_path: Path):
     memory another conversation or the user wrote stays as it is until it is looked at."""
     memory, project, _conv, run = await _tool(tmp_path)
     await memory.save_note("tea.md", "Drinks tea", "Only green tea.", folder=project)
-    edit = {"command": "str_replace", "path": "tea.md", "old_str": "green", "new_str": "black"}
+    edit = {"command": "str_replace", "path": "tea.md", "old_string": "green", "new_string": "black"}
     for blind in (edit, {"command": "delete", "path": "tea.md"},
                   {"command": "insert", "path": "tea.md", "insert_line": 0, "insert_text": "x"},
                   {"command": "rename", "old_path": "tea.md", "new_path": "drinks.md"}):
@@ -173,7 +173,7 @@ async def test_a_memory_is_read_before_it_is_changed(tmp_path: Path):
     assert over.is_error and "exists" in over.content  # never a blind rewrite
     assert "green" in (await run(command="view", path="tea.md")).content
     assert not (await run(**edit)).is_error
-    assert not (await run(**{**edit, "old_str": "black", "new_str": "oolong"})).is_error
+    assert not (await run(**{**edit, "old_string": "black", "new_string": "oolong"})).is_error
     assert "oolong" in (await memory.notes(folder=project))[0].text
     await memory.aclose()
 
@@ -183,11 +183,11 @@ async def test_a_memory_changed_since_it_was_read_is_read_again(tmp_path: Path):
     await memory.save_note("tea.md", "Drinks tea", "Only green tea.", folder=project)
     await run(command="view", path="tea.md")
     await memory.save_note("tea.md", "Drinks tea", "Only black tea.", folder=project)  # the user
-    stale = await run(command="str_replace", path="tea.md", old_str="tea.", new_str="tea!")
+    stale = await run(command="str_replace", path="tea.md", old_string="tea.", new_string="tea!")
     assert stale.is_error and "changed since" in stale.content
     assert "black" in (await run(command="view", path="tea.md")).content
-    assert not (await run(command="str_replace", path="tea.md", old_str="tea.",
-                          new_str="tea!")).is_error
+    assert not (await run(command="str_replace", path="tea.md", old_string="tea.",
+                          new_string="tea!")).is_error
     await memory.aclose()
 
 
@@ -311,8 +311,8 @@ async def test_the_tool_and_the_user_both_stamp_a_memory_and_not_the_index(tmp_p
     viewed = (await run(command="view", path="tea.md")).content
     assert "modified: 20" in viewed
     # The agent goes on from what is stored, stamp included.
-    assert not (await run(command="str_replace", path="tea.md", old_str="Green",
-                          new_str="Oolong")).is_error
+    assert not (await run(command="str_replace", path="tea.md", old_string="Green",
+                          new_string="Oolong")).is_error
     await memory.save_note("cat.md", "Has a cat", "A grey cat.", folder=project)
     notes = {n.title: n for n in await memory.notes(folder=project)}
     assert notes["cat.md"].text == "A grey cat.\n" and notes["tea.md"].description == "Tea"
@@ -376,9 +376,10 @@ async def test_the_runtime_runs_on_it_unchanged(make, tmp_path: Path):
     assert "- [Tea](user-tea.md) — tea" in system and "Only green tea." not in system
 
 
-async def test_an_argument_of_another_tool_is_named_back(make, tmp_path: Path):
-    """The Edit tool's old_string and new_string, given to the memory tool, are refused by
-    name before the call runs, so the next try can fix just that."""
+async def test_str_replace_takes_edits_names_and_others_are_named_back(make, tmp_path: Path):
+    """str_replace takes the Edit tool's old_string and new_string, which the model uses for
+    every other edit; another name (the memory tool's old_str elsewhere) is refused by name
+    before the call runs, so the next try can fix just that."""
     from kaden.api import PermissionPolicy
     from tests.fakes.core import ScriptedCore, Step, call
     from tests.fakes.tools import FakeTools
@@ -389,7 +390,7 @@ async def test_an_argument_of_another_tool_is_named_back(make, tmp_path: Path):
     h = await make(memory=memory, tools=tools, permissions=PermissionPolicy.DENY,
                    core=ScriptedCore([
                        Step(calls=[call("memory", {"command": "str_replace", "path": "a.md",
-                                                   "old_string": "x", "new_string": "y"},
+                                                   "old_str": "x", "new_str": "y"},
                                         id="e"),
                                    call("memory", {"command": "view", "path": "",
                                                    "step_summary": "List my memories"},
@@ -401,5 +402,5 @@ async def test_an_argument_of_another_tool_is_named_back(make, tmp_path: Path):
     await h.turn("remember this")
     results = await h.results()
     assert results["e"].status is ToolStatus.ERROR
-    assert "'old_string'" in results["e"].content and "unexpected" in results["e"].content
+    assert "'old_str'" in results["e"].content and "unexpected" in results["e"].content
     assert results["v"].status is ToolStatus.OK  # every tool's step_summary is still taken

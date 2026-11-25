@@ -5,6 +5,7 @@ speaker are switched on and off apart."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -94,6 +95,8 @@ class VoiceMode(QObject):
         self._voice: Voice | None = None
         self._microphone: object | None = None
         self._starting: asyncio.Task[None] | None = None
+        self._loading: asyncio.Task[None] | None = None  # the engine, while it loads
+        self.load_at_start = False  # the user's choice: load the engine when Kaden starts
         self._streamed = False  # the reply under way came as deltas
         controller.listeners.append(self._event)
 
@@ -248,11 +251,37 @@ class VoiceMode(QObject):
             self._say("")
             return False
         self._say("Getting voice ready…")
-        self._engine = await asyncio.to_thread(self._make_engine, self.folder)
-        self._engine.voice = self.voice  # type: ignore[attr-defined]
-        await self._warm()
+        await self._load()
         self._say("")
         return True
+
+    async def preload(self) -> None:
+        """Load the engine and make the voice ready in the background, as when the user
+        first turns voice on, but with nothing asked or shown: models not yet downloaded
+        are left for that first time, and a load that fails is tried again then."""
+        if self._engine is not None or self.folder is None:
+            return
+        if await asyncio.to_thread(download.missing, self.folder, self.models()):
+            return
+        with contextlib.suppress(Exception):
+            await self._load()
+
+    async def _load(self) -> None:
+        """Load the engine once: whoever asks while it loads waits for the same load."""
+        if self._loading is None:
+            self._loading = asyncio.ensure_future(self._make())
+        try:
+            await asyncio.shield(self._loading)
+        except Exception:
+            self._loading = None  # the next ask tries again
+            raise
+
+    async def _make(self) -> None:
+        assert self.folder is not None
+        engine = await asyncio.to_thread(self._make_engine, self.folder)
+        engine.voice = self.voice  # type: ignore[attr-defined]
+        self._engine = engine
+        await self._warm()
 
     async def _warm(self) -> None:
         """Get the chosen voice ready; a recording that cannot be read shows up when it

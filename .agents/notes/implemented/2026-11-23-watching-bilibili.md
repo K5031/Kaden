@@ -27,7 +27,8 @@ Four tools in the built-in Tools module (`tools/shell_files/bilibili.py`), besid
   `WebSearch` (`site:bilibili.com …`) and links the user gives; the tools take a BV id or
   any link to a video.
 - **As a visitor:** no login, so nothing it does can act as the user, and subtitles that
-  Bilibili gives logged-in viewers only are missing.
+  Bilibili gives logged-in viewers only are missing. A life may get an account of its
+  own: [a Bilibili account of its own](../proposed/2026-11-25-a-bilibili-account-of-its-own.md).
 - **Light:** Bilibili's own web API over the HTTP client Kaden has (`httpx2`), with its
   request signing (WBI) and a visitor's cookie; frames are cut from the video's stream by
   the system's `ffmpeg`, offered only where it is installed. No new library.

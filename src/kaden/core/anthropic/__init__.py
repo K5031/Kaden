@@ -44,6 +44,7 @@ from kaden.api import (
     TransientCoreError,
     Usage,
     UsageReport,
+    attached_at,
     attachment_text,
 )
 from kaden.core._common import (
@@ -552,6 +553,8 @@ def to_messages(messages: Sequence[Message], model: str, system: str = "",
             if rewritten and isinstance(b, Reasoning):
                 continue
             made = _to_content(b, model, bound, search and i > latest, refused)
+            if role == "user" and isinstance(b, (Image, Document)) and b.path:
+                made.insert(0, {"type": "text", "text": attached_at(b)})  # where it is
             rewritten = rewritten or (isinstance(b, ServerToolUse) and bool(made)
                                       and made[0]["type"] == "text")
             content += made

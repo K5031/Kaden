@@ -2182,6 +2182,9 @@ async def test_the_chosen_voice_is_kept_with_the_look(tmp_path):
     assert await window_module.load_view(saved) is False
     await window_module.save_look(saved, voice="Bella", life=True)
     assert await window_module.load_view(saved) is True
+    assert await window_module.load_voice_at_start(saved) is False
+    await window_module.save_look(saved, voice="Bella", load_voice=True)
+    assert await window_module.load_voice_at_start(saved) is True
 
 
 async def test_the_voice_is_chosen_in_settings(make, qapp):
@@ -2198,6 +2201,10 @@ async def test_the_voice_is_chosen_in_settings(make, qapp):
     dialog.voice.setCurrentText("Fenrir")
     assert window.voice.voice == "Fenrir"
     assert dialog.play_voice.isEnabled()
+    # Loading it at start, so that the first click is quick: off unless the user turns it on.
+    assert not dialog.load_voice.isChecked() and not window.voice.load_at_start
+    dialog.load_voice.click()
+    assert window.voice.load_at_start
 
 
 async def test_a_voice_is_added_from_a_recording_in_settings(make, qapp, tmp_path):

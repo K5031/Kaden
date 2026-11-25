@@ -415,6 +415,24 @@ async def test_a_sandboxed_command_cannot_leave_the_workspace(tools, workspace, 
     assert not out.is_error and outside.read_text() == "out\n"
 
 
+@BWRAP
+async def test_a_file_the_user_attached_is_readable_in_the_sandbox(tools, workspace, tmp_path):
+    """Attaching is the user's act, so the sandbox shows that one file, read-only, where it
+    is: the agent can copy a picture it was sent. Its neighbours stay hidden."""
+    sent, other = tmp_path / "fox.png", tmp_path / "other.png"
+    sent.write_bytes(b"\x89PNG fox")
+    other.write_bytes(b"\x89PNG other")
+    copy = f"cp {sent} kept.png"
+    out = await run(tools, tmp_path, "Bash", command=copy)
+    assert out.is_error or not (workspace / "kept.png").exists()  # not yet: /tmp is hidden
+    await tools.attach(sent)
+    out = await run(tools, tmp_path, "Bash", command=(
+        f"{copy}; cat {other} || echo HIDDEN; echo x >> {sent} || echo READ-ONLY"))
+    assert (workspace / "kept.png").read_bytes() == b"\x89PNG fox"
+    assert "HIDDEN" in out.content and "READ-ONLY" in out.content
+    assert sent.read_bytes() == b"\x89PNG fox"
+
+
 async def test_without_a_sandbox_the_shell_is_not_confined(workspace, tmp_path, monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda name: None)
     tools = ShellFilesTools(workspace)

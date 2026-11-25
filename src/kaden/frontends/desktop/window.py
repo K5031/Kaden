@@ -248,12 +248,12 @@ async def load_look(path: Path) -> tuple[float, str]:
     return await asyncio.to_thread(read)
 
 
-async def save_look(path: Path, voice: str = DEFAULT_VOICE, *, life: bool = False
-                    ) -> None:
-    """Remember the zoom and the theme in use, the voice chosen, and whether the
-    life's view was open (so the app opens on it again)."""
+async def save_look(path: Path, voice: str = DEFAULT_VOICE, *, life: bool = False,
+                    load_voice: bool = False) -> None:
+    """Remember the zoom and the theme in use, the voice chosen, whether the life's view
+    was open (so the app opens on it again), and whether voice loads at start."""
     look = json.dumps({"zoom": theme.zoom(), "theme": theme.choice(), "voice": voice,
-                       "life": life})
+                       "life": life, "load_voice": load_voice})
     await asyncio.to_thread(path.write_text, look, encoding="utf-8")
 
 
@@ -269,6 +269,11 @@ async def _saved(path: Path, key: str) -> bool:
 async def load_view(path: Path) -> bool:
     """Whether the life's view was open when the app last closed."""
     return await _saved(path, "life")
+
+
+async def load_voice_at_start(path: Path) -> bool:
+    """Whether the user wants voice loaded when Kaden starts."""
+    return await _saved(path, "load_voice")
 
 
 
@@ -3941,6 +3946,12 @@ class SettingsDialog(QDialog):
         voice_row.addWidget(self.add_voice)
         voice_row.addWidget(self.remove_voice)
         self._show_removable()
+        # Voice loaded when Kaden starts, so the first click does not wait for it.
+        self.load_voice = Switch()
+        self.load_voice.setEnabled(voice is not None)
+        if voice is not None:
+            self.load_voice.setChecked(voice.load_at_start)
+            self.load_voice.toggled.connect(lambda on: setattr(voice, "load_at_start", on))
         self.pages: dict[str, QWidget] = {
             "General": _page(
                 "General", self.startup_error,
@@ -3954,6 +3965,8 @@ class SettingsDialog(QDialog):
                 self.model_note,
                 _setting(MODULE_LABELS["tools"], MODULE_HINTS["tools"], self.modules["tools"]),
                 _setting("Voice", "When you talk with Kaden.", voice_row),
+                _setting("Load voice at start", "Ready at the first click. Uses memory while "
+                         "Kaden runs.", self.load_voice),
                 _label(AT_RESTART, selectable=False, role="small")),
             "Spending": _page(
                 "Spending", _setting("Spending limit (US$)", f"Kaden stops when it reaches it. "

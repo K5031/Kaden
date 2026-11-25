@@ -80,7 +80,11 @@ Kaden starts again.
 Claude Code writes memory with its ordinary file tools. Kaden's file tools belong to the
 Tools module, and modules never reach into each other's storage, so this Memory offers one
 tool on its folder, `memory`, with the commands of Anthropic's memory tool, which Claude
-models know: `view`, `create`, `str_replace`, `insert`, `delete`, `rename`. Paths are
+models know: `view`, `create`, `str_replace`, `insert`, `delete`, `rename`. `str_replace`
+takes the Edit tool's `old_string` and `new_string`, not that tool's `old_str` and
+`new_str`: beside Edit, the model gave the memory tool Edit's names, and each such edit
+failed once. It is the edit Claude Code makes with Edit itself. Any other argument is
+named back as unexpected (`additionalProperties: false`). Paths are
 relative to the memory folder; anything that leaves it is refused. No pass after an answer
 saves anything, and there is no profile: facts about the user are `user` memories.
 
@@ -118,6 +122,9 @@ emptied (the built-in profile), so frontends no longer know the profile's title.
 
 ## Alternatives considered
 
+- **Anthropic's names for `str_replace` (`old_str`, `new_str`).** What the memory tool
+  has, but the model, which edits everything else with Edit, kept sending Edit's names;
+  naming them back only cost it a second try.
 - **Replace the built-in Memory.** Built first: the store went to schema 9 without notes,
   and the contract got memory-file methods instead of notes. It works, but leaves no
   choice, needs the user's store converted by hand, and does not show that a Memory can

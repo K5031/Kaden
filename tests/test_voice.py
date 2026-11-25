@@ -905,3 +905,55 @@ async def test_talking_in_the_lifes_view_talks_with_the_life(make, qapp, tmp_pat
     said = [b.text for m in await them.transcript() if m.role is Role.USER
             for b in m.blocks if isinstance(b, Text)]
     assert said[0] == "hello there"  # it went to the life, not the user's chat
+
+
+async def test_voice_can_be_loaded_at_start_without_a_word(tmp_path):
+    """Loading at start: the models already downloaded are loaded and the voice made ready,
+    with nothing asked or shown; a click meanwhile waits for that load, not a second."""
+    import threading
+
+    from kaden.frontends.desktop.voice.mode import VoiceMode
+
+    engine, made, release = ScriptedEngine(), [], threading.Event()
+
+    def make(folder: Path) -> ScriptedEngine:
+        made.append(folder)
+        release.wait(5)
+        return engine
+
+    asked: list[str] = []
+
+    async def ask(text: str, details: str) -> bool:
+        asked.append(text)
+        return True
+
+    mode = VoiceMode(Controller(), tmp_path, ask, engine=make, microphone=FakeMicrophone,
+                     speaker=Speaker, models=(), natural=False)
+    shown: list[str] = []
+    mode.changed.connect(lambda: shown.append(mode.status))
+    loading = asyncio.ensure_future(mode.preload())
+    await eventually(lambda: made)
+    assert shown == []  # in the background: the message box stays as it is
+    mode.toggle_speaker()  # clicked while it loads
+    release.set()
+    await loading
+    await eventually(lambda: mode.spoken)
+    assert made == [tmp_path] and asked == [] and engine.warmed == ["Heart"]
+
+
+async def test_models_not_yet_downloaded_are_left_for_the_first_click(tmp_path):
+    from kaden.frontends.desktop.voice.download import Model
+    from kaden.frontends.desktop.voice.mode import VoiceMode
+
+    made: list[Path] = []
+    asked: list[str] = []
+
+    async def ask(text: str, details: str) -> bool:
+        asked.append(text)
+        return False
+
+    mode = VoiceMode(Controller(), tmp_path, ask, engine=lambda folder: made.append(folder),
+                     microphone=FakeMicrophone, speaker=Speaker, natural=False,
+                     models=(Model("vad.onnx", "https://models.example/vad.onnx", 3, False),))
+    await mode.preload()
+    assert made == [] and asked == [] and not mode.on

@@ -34,7 +34,8 @@ def read(path: Path) -> Attachment:
         size = path.stat().st_size
         media_type = IMAGE_TYPES.get(path.suffix.lower())
         if media_type is not None and size <= MAX_IMAGE_BYTES:
-            return Image(media_type, base64.b64encode(path.read_bytes()).decode(), path.name)
+            return Image(media_type, base64.b64encode(path.read_bytes()).decode(), path.name,
+                         str(path))
         if path.suffix.lower() == ".pdf" and size <= MAX_PDF_BYTES:
             return _pdf(path)
         if path.suffix.lower() in office.KINDS and size <= MAX_OFFICE_BYTES:
