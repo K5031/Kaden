@@ -100,7 +100,8 @@ closed it.
   the chat you are in; replies to what you say stay in their view.
 - **They are apart from your chats, both ways.** They never see your conversations or
   their memory, and your chats never see their life. They know what you tell them, and
-  have a folder of their own to work in.
+  have a folder of their own to work in. What you always or never allow in their view is
+  theirs: your chats' saved answers do not apply to them, nor theirs to your chats.
 - **They keep going.** They start living the first time you open their view, and from
   then on start with Kaden, carrying on after a restart. Switching back to your chats does
   not pause them. Closing the window keeps Kaden running in the tray; only Quit stops

@@ -53,6 +53,8 @@ PROMPT = ("You have a life of your own on this computer, and tools to live it: i
 PACE_S = (60.0, 86_400.0)
 DAILY_USD = 1.0  # what its own time may cost a day, unless the user says otherwise
 STOP_GRACE_S = 10.0
+# Its settings that the app keeps when it writes the rest from the chats'.
+OWN_SETTINGS = ("tool_settings", "always_allow", "never_allow")
 
 
 class Life:
@@ -205,10 +207,13 @@ class Life:
         if config.exists():
             shutil.copyfile(config, self.folder / "config.toml")
         settings = _toml(self.parent_dir / "settings.toml")
-        # Its tool settings are its own (saved in its folder), not the chats'.
-        settings.pop("tool_settings", None)
-        if own := _toml(self.folder / "settings.toml").get("tool_settings"):
-            settings["tool_settings"] = own
+        # What the user said in its own view is its own (saved in its folder), not the
+        # chats': its tool settings, and what it may always or never do.
+        mine = _toml(self.folder / "settings.toml")
+        for key in OWN_SETTINGS:
+            settings.pop(key, None)
+            if key in mine:
+                settings[key] = mine[key]
         # Its own time on the model the user chose for upkeep: the cheaper one.
         self._own_model = settings.get("maintenance_model") or None
         settings["budget"] = ({} if self.daily_usd is None

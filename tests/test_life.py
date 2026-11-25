@@ -188,3 +188,26 @@ async def test_the_user_sets_its_daily_amount(tmp_path, child_env):
         assert Life(data).daily_usd is None
     finally:
         await life.aclose()
+
+
+async def test_what_the_user_always_allows_it_is_its_own_and_lasts(tmp_path, child_env):
+    """Saved answers given in its view last across its restarts; the chats' never reach
+    it."""
+    from kaden.api import PermissionRule, SettingsUpdate
+
+    data = home(tmp_path, [{"text": ""}, {"text": ""}, {"text": ""}])
+    with (data / "settings.toml").open("a") as settings:
+        settings.write('always_allow = ["Bash: git status"]\n')  # the chats'
+    life = Life(data, pace_s=(0.05, 30))
+    try:
+        await life.start()
+        await eventually(lambda: life.snapshot)
+        assert (await life.runtime.settings()).permission_rules == ()
+        await life.runtime.update_settings(SettingsUpdate(
+            permission_rules=[PermissionRule("BiliMessage")]))
+        await life.restart()
+        await eventually(lambda: life.snapshot)
+        rules = (await life.runtime.settings()).permission_rules
+        assert rules == (PermissionRule("BiliMessage"),)
+    finally:
+        await life.aclose()

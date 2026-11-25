@@ -1091,6 +1091,6 @@ The design is in [the note](notes/implemented/2026-11-25-tool-settings.md); the 
 | The file | `[tool_settings]` in `settings.toml`, written whole on each change (not merged as a table), so a value of None leaves it; values of settings the running Tools module does not declare are dropped then |
 | Checks | `modules.takes`: a `boolean` takes a bool; a `string` a str; a `choice` one of its values. Unknown name or other value: ValueError naming it |
 | Restart needed | When the saved values differ from those the factory was given this run |
-| The life | `Life._prepare` drops the chats' `[tool_settings]` and keeps the life's own; `Life.restart` is `aclose` then `start`; the window shows it waking meanwhile and its view again after |
+| The life | `Life._prepare` drops the chats' `[tool_settings]`, `always_allow` and `never_allow` and keeps the life's own (`life.OWN_SETTINGS`): answers given in its view are its own; `Life.restart` is `aclose` then `start`; the window shows it waking meanwhile and its view again after |
 | Bilibili | `bilibili_wake`: `follows` (default), `anyone`, `nobody`. Followings read 50 a page, at most 40 pages, kept 600 s (`FOLLOWS_S`); a conversation with something new from an account not followed is counted by its `unread_count` in `get_sessions` and not fetched; the firing ends with "N more conversation(s) waiting, from accounts you don't follow (BiliMessages reads them)." |
 
