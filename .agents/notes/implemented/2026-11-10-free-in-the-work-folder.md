@@ -55,43 +55,43 @@ after the user allows it.
 
 A sandboxed command, which runs unasked, can create links in the work folder that point
 anywhere, and the file tools run outside the sandbox. So a call judged confined, which
-`execute` is told (`ToolContext.confined`), checks the file it actually opened (`ShellFilesTools._open`, by `/proc/self/fd`), not only the path
-it was given: a link swapped in after the check is refused. `Grep` reads regular
-files only and skips links, as ripgrep does by default.
+`execute` is told (`ToolContext.confined`), opens its file from the work folder down, one
+folder at a time, refusing a link at each step (`ShellFilesTools._open`, `O_NOFOLLOW`
+with `dir_fd`, the same on Linux and macOS), not only by the path it was given: a link
+swapped in after the check is refused. The file tools open regular files only, so a pipe
+or a device is refused rather than waited on. `Grep` reads regular files only and skips
+links, as ripgrep does by default.
 
 ### Shell: a sandbox
 
 The shell tool (`Bash`) takes an argument, `dangerouslyDisableSandbox` (default false).
 
 - **Sandboxed** when the sandbox works: the command runs under
-  [bubblewrap](https://github.com/containers/bubblewrap) and the call is confined. The
-  tool's description tells the model what the sandbox hides.
+  [bubblewrap](https://github.com/containers/bubblewrap) on Linux or Seatbelt
+  (`sandbox-exec`) on macOS, and the call is confined. The tool's description tells the
+  model what the sandbox hides.
 - **`dangerouslyDisableSandbox: true`**, or no working sandbox: the command runs with the user's rights
   and is not confined, so it prompts.
 
-Inside the sandbox (`shell_files._sandbox`):
+Inside the sandbox (`shell_files/sandbox.py`; how each system does it is
+[A sandbox on each system](2026-11-26-a-sandbox-on-each-system.md)):
 
 | | |
 |---|---|
 | Work folder | read and write |
 | System (`/usr`, `/etc`, ...) | read-only, so installed programs run |
-| `/home`, `/root`, the user's home | empty, except the work folder itself |
-| `/tmp` | private and empty |
-| `/run/user` | hidden, so the session bus and its services (the keychain) cannot be reached |
+| `/home`, `/root`, the user's home | hidden, except the work folder itself |
+| `/tmp` | private and empty: the command's own temporary folder (`TMPDIR`) |
+| The login session's services | hidden, so the session bus and its services (the keychain) cannot be reached |
+| Local services | their sockets cannot be reached (Docker, the system bus) |
 | Environment | as outside, minus variables whose names look like secrets (`KEY`, `TOKEN`, `SECRET`, `PASSW`, `CREDENTIAL`) |
-| Processes | only its own (`--unshare-pid`) |
+| Processes | only its own |
 | Network | as outside |
 
-```
-bwrap --ro-bind / / --tmpfs /home --tmpfs /root --tmpfs /run/user --tmpfs /tmp
-      --dir HOME --bind ROOT ROOT --dev /dev --proc /proc --unshare-pid
-      --die-with-parent --chdir ROOT sh -c COMMAND
-```
-
 Whether it works is tested once when the module is built, by running `true` in it, off
-the event loop: `bwrap` missing, user namespaces disabled, or Kaden itself running in a
-sandbox all leave the shell unsandboxed. Stop, cancellation and timeouts act on the
-`bwrap` process group as they did on the shell's.
+the event loop: the program missing, user namespaces disabled, or Kaden itself running
+in a sandbox all leave the shell unsandboxed. Stop, cancellation and timeouts act on the
+sandbox's process group as they did on the shell's.
 
 ### A work folder that cannot be a boundary
 
@@ -135,9 +135,10 @@ user choose each chat's folder.
 
 - **Hands-off work by default.** In a folder made for it, the agent reads, writes and runs
   commands without a prompt, and still asks before anything outside.
-- **A sandbox bug is a security bug.** A mistake in the bubblewrap arguments lets an
-  unasked command out. A test probes the boundary from inside: writing outside, listing
-  the home folder, reaching the session bus.
+- **A sandbox bug is a security bug.** A mistake in the bubblewrap arguments or the
+  Seatbelt profile lets an unasked command out. A test probes the boundary from inside,
+  with whichever sandbox the system has: writing outside, listing the home folder,
+  reaching the session bus and the local services' sockets.
 - **Secrets in the environment stay out.** Keys exported in a shell profile reach Kaden
   started from a terminal; a sandboxed command runs unasked and may use the network, so it
   gets the environment without them (`shell_files.sandbox_environment`). A secret under
@@ -155,7 +156,8 @@ user choose each chat's folder.
 - **Reads and the ceiling.** `allow_read_only` reads anywhere without asking and
   `allow_workspace` does not, so the two are not strictly ordered; the ceiling orders them
   by what may be changed.
-- **Linux only.** Without bubblewrap (macOS, some Linux setups, a Kaden that itself runs
-  in a sandbox) shell commands ask; file calls in the work folder still run freely.
+- **Linux and macOS.** Without a working sandbox (Windows, Linux without bubblewrap, a
+  Kaden that itself runs in a sandbox) shell commands ask; file calls in the work folder
+  still run freely.
 - **A looser default.** New users get an agent that changes files in its folder unasked.
   The folder is theirs to choose, and the welcome says what the agent may do.

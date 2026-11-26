@@ -6,8 +6,9 @@ directory. Commands inherit the process environment (PERMISSION_CEILING_ENV incl
 sandboxed ones without the variables that look like secrets (sandbox_environment).
 
 The workspace is a boundary the runtime can rely on (`confined`): a file call is confined
-when its path is inside it, and a shell command when it runs in the bubblewrap sandbox,
-where only the workspace is writable and the home directories are hidden. The web tools
+when its path is inside it, and a shell command when it runs in the sandbox (`sandbox.py`:
+bubblewrap on Linux, Seatbelt on macOS), where only the workspace is writable and the home
+directories are hidden. The web tools
 (`web.py`) touch nothing on this computer, so they are confined too. Calls that reach
 outside still work; the runtime asks the user first.
 """
@@ -17,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import bisect
+import codecs
 import contextlib
 import io
 import json
@@ -27,7 +29,7 @@ import secrets
 import shutil
 import signal
 import stat
-import subprocess
+import tempfile
 import threading
 import time
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
@@ -56,7 +58,15 @@ from kaden.api import (
     ToolSpec,
     foreground_timeout,
 )
-from kaden.tools.shell_files import attachments, bili_account, bilibili, office, screen, web
+from kaden.tools.shell_files import (
+    attachments,
+    bili_account,
+    bilibili,
+    office,
+    sandbox,
+    screen,
+    web,
+)
 
 SHELL_STALL_TIMEOUT = 600.0  # seconds without output before the runtime may stall-kill
 HEARTBEAT_INTERVAL = 0.5  # min seconds between silent heartbeats from file walks
@@ -87,9 +97,6 @@ FILE_TYPES: dict[str, tuple[str, ...]] = {
 class ToolError(Exception):
     """Expected failure reported to the model as an is_error output."""
 
-
-# Set while a call that `confined` judged inside runs (ToolContext.confined): its files must
-# really be in the workspace, wherever a link that appeared since the check leads.
 
 
 def _object(properties: dict[str, Any], required: Sequence[str] = ()) -> dict[str, Any]:
@@ -126,15 +133,14 @@ SHELL = ToolSpec(
 )
 SANDBOX_NOTE = (
     " Commands run in a sandbox: they can read and write the workspace, read the system "
-    "and use the network, but the rest of the home directory and environment variables "
-    "holding keys or tokens are hidden, and nothing outside the workspace can be "
-    "changed. Set `dangerouslyDisableSandbox` to true only when a command needs something outside; "
+    "and use the network, but the rest of the home directory, local services and "
+    "environment variables holding keys or tokens are hidden, and nothing outside the "
+    "workspace can be changed. Set `dangerouslyDisableSandbox` to true only when a command needs something outside; "
     "the user is then asked first, so say why."
 )
 # Variables whose names look like secrets (API keys, tokens, passwords) are left out of a
 # sandboxed command's environment: it runs unasked and may use the network.
 SECRET_NAME = re.compile(r"KEY|TOKEN|SECRET|PASSW|CREDENTIAL", re.IGNORECASE)
-SANDBOX_CHECK_TIMEOUT = 5.0  # seconds for the one test run of the sandbox at startup
 FILE_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="Read",
@@ -283,38 +289,6 @@ def sandbox_environment(environ: Mapping[str, str]) -> dict[str, str]:
     return {k: v for k, v in environ.items() if not SECRET_NAME.search(k)}
 
 
-def _sandbox(bwrap: str, root: Path, home: Path) -> list[str]:
-    """The bubblewrap command line that confines a shell command to `root`.
-
-    The whole system is visible read-only, so installed programs run; home directories,
-    /tmp and the session's runtime directory are replaced by empty ones, and only the
-    workspace is bound back, writable. The network is left as it is."""
-    hidden = [p for p in (Path("/home"), Path("/root"), Path("/run/user"), Path("/tmp"), home)
-              if p.is_dir()]
-    command = [bwrap, "--ro-bind", "/", "/"]
-    for path in hidden:
-        command += ["--tmpfs", str(path)]
-    return command + ["--dir", str(home), "--bind", str(root), str(root), "--dev", "/dev",
-                      "--proc", "/proc", "--unshare-pid", "--die-with-parent",
-                      "--chdir", str(root)]
-
-
-def _bwrap(root: Path, home: Path) -> str | None:
-    """bubblewrap, if a sandbox works here (not when it is missing, user namespaces are
-    disabled, or Kaden itself runs in a sandbox). Blocking: run it where module
-    factories run, off the event loop."""
-    bwrap = shutil.which("bwrap")
-    if bwrap is None:
-        return None
-    try:
-        works = subprocess.run([*_sandbox(bwrap, root, home), "true"], check=False,
-                               capture_output=True, timeout=SANDBOX_CHECK_TIMEOUT
-                               ).returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        works = False
-    return bwrap if works else None
-
-
 class ShellFilesTools(Tools):
     """`shell_timeout`: hard limit per command (None = runtime default, math.inf = none).
     `shell_stall_timeout`: seconds without output before the command counts as hung."""
@@ -332,14 +306,14 @@ class ShellFilesTools(Tools):
     ) -> None:
         """`account`: the instance's own Bilibili account (its data folder's); none without."""
         self._default = Path(root).expanduser().resolve()
-        self._bwrap = _bwrap(self._default, Path.home().resolve())
+        self._found = sandbox.find()  # this system's, if it works here
         # Files the user attached: the sandbox shows each, read-only, where it is.
         self._attached: dict[Path, None] = {}
         self._shell_spec = replace(SHELL, timeout=shell_timeout,
                                    stall_timeout=shell_stall_timeout)
         self._web = web_tools or web.Web()
         self._bili = bilibili_tools or bilibili.Bilibili()
-        self._screen = screen_tools or screen.Screen.found()
+        self._screen = screen_tools or screen.Screen(screen.find())
         self._account = account
         # Each conversation's files as it last read or wrote them: (conversation, file)
         # to what _version says of it.
@@ -356,9 +330,6 @@ class ShellFilesTools(Tools):
             "Glob": self._list_files,
             "Grep": self._search_files,
             "NotebookEdit": self._notebook_edit,
-            **{name: self._web_call(name) for name in web.NAMES},
-            **{name: self._bili_call(name) for name in bilibili.NAMES},
-            screen.NAME: self._screenshot,
         }
 
     def _set_root(self, root: Path) -> None:
@@ -366,8 +337,7 @@ class ShellFilesTools(Tools):
         home = Path.home().resolve()
         # A workspace that is or holds the home directory (or is /) is no boundary.
         self._bounded = root != home and root not in home.parents
-        self._sandbox = (_sandbox(self._bwrap, root, home)
-                         if self._bwrap is not None and self._bounded else None)
+        self._sandbox = self._found if self._bounded else None
         shell = self._shell_spec
         if self._sandbox is not None:
             shell = replace(shell, description=shell.description + SANDBOX_NOTE)
@@ -397,9 +367,8 @@ class ShellFilesTools(Tools):
         if call.name in web.NAMES or call.name in bilibili.NAMES:
             return True
         if call.name in bili_account.NAMES:  # reading the account's feed and follows only
-            return call.name in ("BiliFeed", "BiliFollowing", "BiliMessages", "BiliWatchFeed",
-                                 "BiliWatchMessages")
-        if not self._bounded or call.name not in self._handlers or call.name == screen.NAME:
+            return call.name in bili_account.READ_ONLY
+        if not self._bounded or call.name not in self._handlers:  # the screen too
             return False
         if call.name == SHELL.name:
             return (self._sandbox is not None
@@ -419,13 +388,6 @@ class ShellFilesTools(Tools):
         self._attached[self._path(str(path)).resolve()] = None
         return block
 
-    def _granted(self) -> list[str]:
-        """The sandbox's read-only binds for the files the user attached outside the
-        workspace, which it binds writable already."""
-        return [arg for path in self._attached
-                if self.root not in path.parents
-                for arg in ("--ro-bind-try", str(path), str(path))]
-
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput:
         if call.name in bili_account.NAMES and self._account is not None:
             return await self._account_call(call)
@@ -437,7 +399,7 @@ class ShellFilesTools(Tools):
         except jsonschema.ValidationError as e:
             return ToolOutput(f"Invalid arguments: {e.message}", is_error=True)
         try:
-            result = await self._handlers[call.name](call.arguments, ctx)
+            result = await self._run(call, ctx)
             return result if isinstance(result, ToolOutput) else ToolOutput(result)
         except (ToolError, web.WebError, screen.ScreenError, bilibili.BiliError) as e:
             return ToolOutput(str(e), is_error=True)
@@ -447,8 +409,14 @@ class ShellFilesTools(Tools):
         except OSError as e:
             return ToolOutput(f"{type(e).__name__}: {e}", is_error=True)
 
-    async def _screenshot(self, args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
-        return await self._screen.run()
+    async def _run(self, call: ToolCall, ctx: ToolContext) -> str | ToolOutput:
+        if call.name in web.NAMES:
+            return await self._web.run(call.name, call.arguments)
+        if call.name in bilibili.NAMES:
+            return await self._bili.run(call.name, call.arguments)
+        if call.name == screen.NAME:
+            return await self._screen.run()
+        return await self._handlers[call.name](call.arguments, ctx)
 
     async def _account_call(self, call: ToolCall) -> ToolOutput:
         assert self._account is not None
@@ -465,19 +433,6 @@ class ShellFilesTools(Tools):
         except httpx2.HTTPError as e:
             return ToolOutput(f"Bilibili could not be reached: {type(e).__name__}: {e}",
                               is_error=True)
-
-    def _bili_call(self, name: str
-                   ) -> Callable[[dict[str, Any], ToolContext], Awaitable[str | ToolOutput]]:
-        async def call(args: dict[str, Any], ctx: ToolContext) -> str | ToolOutput:
-            return await self._bili.run(name, args)
-
-        return call
-
-    def _web_call(self, name: str) -> Callable[[dict[str, Any], ToolContext], Awaitable[str]]:
-        async def call(args: dict[str, Any], ctx: ToolContext) -> str:
-            return await self._web.run(name, args)
-
-        return call
 
     def _path(self, raw: str | None) -> Path:
         path = Path(raw or ".").expanduser()
@@ -496,21 +451,54 @@ class ShellFilesTools(Tools):
         return resolved
 
     def _open(self, path: Path, flags: int, ctx: ToolContext) -> int:
-        """os.open, for a call `confined` allowed only if the file opened is in the
-        workspace: checked on the open file, so a link swapped in after the check (or
-        between this check and the read or write) cannot lead outside."""
-        if not ctx.confined:
-            return os.open(path, flags, 0o644)
-        fd = os.open(self._within(path, ctx), flags | os.O_NOFOLLOW, 0o644)
+        """os.open of a regular file (or, with O_DIRECTORY, a folder): a pipe or a device
+        is refused rather than waited on. For a call `confined` allowed, the file is
+        reached from the workspace one folder at a time, none of them a link, so a link
+        swapped in after the check (or during the open) cannot lead outside."""
+        folder = flags & os.O_DIRECTORY
+        flags |= 0 if folder else os.O_NONBLOCK  # opening a pipe would wait for a writer
+        if ctx.confined:
+            fd = self._open_inside(path, self._within(path, ctx), flags)
+        else:
+            fd = os.open(path, flags, 0o644)
+        if not folder:
+            try:
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    raise ToolError(f"{self._display(path)} is not a regular file")
+                os.set_blocking(fd, True)
+            except BaseException:
+                os.close(fd)
+                raise
+        return fd
+
+    def _open_inside(self, path: Path, resolved: Path, flags: int) -> int:
+        """`resolved`, a path in the workspace without links, opened from the workspace
+        down, each step refusing a link (O_NOFOLLOW): what is opened is in the workspace,
+        whatever is swapped in meanwhile."""
+        *folders, last = ("", *resolved.relative_to(self.root).parts)
+        fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
         try:
-            inside = Path(os.readlink(f"/proc/self/fd/{fd}")).is_relative_to(self.root)
-        except OSError:
+            for name in folders[1:]:
+                step = self._step(path, name, os.O_RDONLY | os.O_DIRECTORY, fd)
+                os.close(fd)
+                fd = step
+            if not last:  # the workspace itself
+                return fd if flags & os.O_DIRECTORY else self._step(path, ".", flags, fd)
+            opened = self._step(path, last, flags, fd)
+        except BaseException:
             os.close(fd)
             raise
-        if not inside:
-            os.close(fd)
-            raise self._outside(path)
-        return fd
+        os.close(fd)
+        return opened
+
+    def _step(self, path: Path, name: str, flags: int, within: int) -> int:
+        try:
+            return os.open(name, flags | os.O_NOFOLLOW, 0o644, dir_fd=within)
+        except OSError:
+            with contextlib.suppress(OSError):
+                if stat.S_ISLNK(os.stat(name, dir_fd=within, follow_symlinks=False).st_mode):
+                    raise self._outside(path) from None
+            raise
 
     def _open_folder(self, path: Path, ctx: ToolContext) -> int:
         """The folder, open: what is walked is what was opened, whatever is put at its
@@ -549,6 +537,17 @@ class ShellFilesTools(Tools):
     # ── shell ────────────────────────────────────────────────────────────
 
     async def _shell(self, args: dict[str, Any], ctx: ToolContext) -> str:
+        if self._sandbox is None or args.get("dangerouslyDisableSandbox"):
+            return await self._command(args, ctx, None)
+        tmp = Path(await asyncio.to_thread(tempfile.mkdtemp, prefix="kaden-sandbox-")).resolve()
+        try:
+            return await self._command(args, ctx, tmp)
+        finally:
+            await asyncio.to_thread(shutil.rmtree, tmp, True)
+
+    async def _command(self, args: dict[str, Any], ctx: ToolContext, tmp: Path | None) -> str:
+        """The command, in the sandbox with `tmp` as its temporary folder; without one,
+        as the user."""
         # Our own pipe rather than PIPE: asyncio's Process.wait() also waits for its pipes
         # to close, which never happens while a backgrounded child holds stdout.
         read_fd, write_fd = os.pipe()
@@ -560,11 +559,15 @@ class ShellFilesTools(Tools):
                   f"printf '\\n%s%s\\n' '{self._where}' \"$(pwd -P)\"\n"
                   "exit $__kaden_status\n")
         try:
-            sandbox = [] if self._sandbox is None or args.get("dangerouslyDisableSandbox") else [
-                *self._sandbox[:-2], *self._granted(), "--chdir", str(folder)]
+            command = ["sh", "-c", script]
+            if tmp is not None:
+                assert self._sandbox is not None
+                command = await asyncio.to_thread(self._sandbox.wrap, command, root=self.root,
+                                                  tmp=tmp, granted=list(self._attached))
             proc = await asyncio.create_subprocess_exec(
-                *sandbox, "sh", "-c", script,
-                env=sandbox_environment(os.environ) if sandbox else None,
+                *command,
+                env=None if tmp is None else {**sandbox_environment(os.environ),
+                                              "TMPDIR": str(tmp)},
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=write_fd,
                 stderr=asyncio.subprocess.STDOUT,
@@ -777,10 +780,12 @@ class ShellFilesTools(Tools):
         cell_id, source, kind = args.get("cell_id"), args["new_source"], args.get("cell_type")
 
         def edit() -> str:
-            with open(self._open(path, os.O_RDWR, ctx), "r+", encoding="utf-8") as f:
+            with open(self._open(path, os.O_RDWR, ctx), "r+", encoding="utf-8",
+                      newline="") as f:
                 self._as_read(path, ctx)
+                raw = f.read()
                 try:
-                    book = json.load(f)
+                    book = json.loads(raw)
                 except json.JSONDecodeError as e:
                     raise ToolError(f"{self._display(path)} is not a notebook: {e}") from None
                 cells = book.get("cells")
@@ -815,10 +820,10 @@ class ShellFilesTools(Tools):
                     if cell.get("cell_type") == "code":
                         cell["outputs"], cell["execution_count"] = [], None
                     done = f"Replaced cell {cell_id}"
+                text = json.dumps(book, indent=1, ensure_ascii=False) + "\n"
                 f.seek(0)
                 f.truncate()
-                json.dump(book, f, indent=1, ensure_ascii=False)
-                f.write("\n")
+                f.write(text.replace("\n", "\r\n") if _crlf(raw) else text)
             self._saw(path, ctx)
             return f"{done} in {self._display(path)}"
 
@@ -854,7 +859,8 @@ class ShellFilesTools(Tools):
         def write() -> None:
             existed = os.path.lexists(path)
             self._within(path.parent, ctx).mkdir(parents=True, exist_ok=True)
-            with open(self._open(path, os.O_WRONLY | os.O_CREAT, ctx), "w", encoding="utf-8") as f:
+            with open(self._open(path, os.O_WRONLY | os.O_CREAT, ctx), "w", encoding="utf-8",
+                      newline="") as f:
                 if existed:  # checked once it is open: where it leads is refused first
                     self._as_read(path, ctx)
                 f.truncate()
@@ -870,14 +876,21 @@ class ShellFilesTools(Tools):
         replace_all = args.get("replace_all", False)
 
         def edit() -> int:
-            with open(self._open(path, os.O_RDWR, ctx), "r+", encoding="utf-8") as f:
+            with open(self._open(path, os.O_RDWR, ctx), "r+", encoding="utf-8",
+                      newline="") as f:
                 self._as_read(path, ctx)
                 text = f.read()
-                count = text.count(old)
+                crlf = _crlf(text)  # edited with LF, as Read shows it, and written back
+                if crlf:
+                    text = text.replace("\r\n", "\n")
+                find, put = (old.replace("\r\n", "\n"), new.replace("\r\n", "\n")) if crlf \
+                    else (old, new)
+                count = text.count(find)
                 if count == 1 or (count > 1 and replace_all):
+                    text = text.replace(find, put)
                     f.seek(0)
                     f.truncate()
-                    f.write(text.replace(old, new))
+                    f.write(text.replace("\n", "\r\n") if crlf else text)
             if count == 0:
                 raise ToolError(f"old_string not found in {self._display(path)}")
             if count > 1 and not replace_all:
@@ -1005,8 +1018,9 @@ async def _pump(stream: asyncio.StreamReader, out: _OutputBuffer, ctx: ToolConte
     starts with `hidden` is never shown."""
     last_report = 0.0
     pending: str | None = None
+    decoder = codecs.getincrementaldecoder("utf-8")("replace")  # a read may end mid-character
     while chunk := await stream.read(65536):
-        text = chunk.decode("utf-8", "replace")
+        text = decoder.decode(chunk)
         out.append(text)
         lines = [line for line in re.split(r"[\r\n]", text)
                  if line.strip() and not (hidden and line.startswith(hidden))]
@@ -1016,6 +1030,7 @@ async def _pump(stream: asyncio.StreamReader, out: _OutputBuffer, ctx: ToolConte
         if pending is not None and now - last_report >= PROGRESS_INTERVAL:
             ctx.progress(pending)
             pending, last_report = None, now
+    out.append(decoder.decode(b"", final=True))
     if pending is not None:
         ctx.progress(pending)
 
@@ -1178,6 +1193,11 @@ def _output_text(output: dict[str, Any]) -> str:
     if output.get("output_type") == "error":
         return f"{output.get('ename', 'Error')}: {output.get('evalue', '')}"
     return "[image]" if any(k.startswith("image/") for k in data) else ""
+
+
+def _crlf(text: str) -> bool:
+    """Whether every line ends with CR LF; a file that mixes endings is edited as it is."""
+    return "\r\n" in text and text.count("\n") == text.count("\r\n")
 
 
 def _version(path: Path) -> tuple[int, int, int]:

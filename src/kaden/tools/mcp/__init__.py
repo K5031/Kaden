@@ -9,8 +9,8 @@ names from different servers never clash.
 
 A command gets a small environment (the SDK's safe default: PATH, HOME and the like), the
 variables configured for it, and PERMISSION_CEILING_ENV, so a Kaden it launches cannot
-escape the ceiling. No call is confined: what a server does is unknown, so the runtime
-reviews or asks.
+escape the ceiling. No call is confined and no tool is read-only (a server's readOnlyHint
+is its own claim): what a server does is unknown, so the runtime reviews or asks.
 """
 
 from __future__ import annotations
@@ -136,6 +136,7 @@ class McpTools(Tools):
             _, pending = await asyncio.wait(tasks, timeout=CLOSE_TIMEOUT)
             for task in pending:
                 task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
 
     async def _serve(self, server: _Server) -> None:
         """Open the connection, list the tools, hold it until aclose(), close it here."""
@@ -155,9 +156,10 @@ class McpTools(Tools):
                                        server.originals[name])
                         continue
                     server.originals[name] = tool.name
+                    # Never read-only, whatever its readOnlyHint says: the server is a
+                    # program of its own, so the runtime reviews or asks.
                     server.tools[name] = ToolSpec(
                         name, _describe(server.name, tool), tool.input_schema or {"type": "object"},
-                        read_only=bool(tool.annotations and tool.annotations.read_only_hint),
                         deferrable=True)
                 server.client = client
                 server.ready.set()

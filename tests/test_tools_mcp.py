@@ -28,9 +28,40 @@ async def test_tools_are_named_by_server(tools):
     specs = {s.name: s for s in await tools.list_tools()}
     assert set(specs) >= {"mcp__notes__add", "mcp__notes__broken", "mcp__notes__env"}
     add = specs["mcp__notes__add"]
-    assert add.read_only and "Add two numbers" in add.description and "notes" in add.description
+    assert "Add two numbers" in add.description and "notes" in add.description
     assert add.parameters["properties"].keys() == {"a", "b"}
-    assert not specs["mcp__notes__broken"].read_only
+
+
+async def test_a_servers_read_only_hint_is_not_taken_on_trust(tools):
+    """`add` says it is read-only; the server is a program of its own, so its calls are
+    reviewed or asked about all the same."""
+    assert not any(spec.read_only for spec in await tools.list_tools())
+
+
+async def test_closing_waits_for_every_server_to_end(monkeypatch):
+    import asyncio
+
+    from kaden.tools import mcp
+
+    monkeypatch.setattr(mcp, "CLOSE_TIMEOUT", 0.05)
+    module = McpTools({"notes": build()})
+    await module.list_tools()
+    [server] = module._servers
+    ended = asyncio.Event()
+
+    async def slow_to_end() -> None:
+        try:
+            await asyncio.sleep(3600)
+        finally:  # cancelled, it still tidies up for a moment
+            await asyncio.sleep(0.05)
+            ended.set()
+
+    running, server.task = server.task, asyncio.create_task(slow_to_end())
+    await asyncio.sleep(0)
+    await module.aclose()
+    assert ended.is_set() and server.task.done()
+    server.stop.set()
+    await running
 
 
 async def test_calls_return_text_and_errors(tools):

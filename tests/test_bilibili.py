@@ -4,6 +4,8 @@ it does)."""
 
 from __future__ import annotations
 
+import asyncio
+import os
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
@@ -167,3 +169,80 @@ async def test_the_built_in_tools_offer_them(tmp_path):
     missing = await tools.execute(ToolCall("c2", "BiliVideo", {"video": "nothing"}),
                                   context("c2"))
     assert missing.is_error and "BV id" in missing.content
+
+
+def gone(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
+def slow_ffmpeg(tmp_path: Path) -> tuple[str, Path]:
+    """A stand-in for ffmpeg that says its process id, then never finishes."""
+    marker, program = tmp_path / "pid", tmp_path / "ffmpeg"
+    program.write_text(f"#!/bin/sh\necho $$ > {marker}\nexec sleep 30\n")
+    program.chmod(0o755)
+    return str(program), marker
+
+
+async def started(marker: Path) -> int:
+    while not marker.exists() or not marker.read_text().strip():
+        await asyncio.sleep(0.01)
+    return int(marker.read_text())
+
+
+@pytest.mark.parametrize("ending", ["stop", "timeout"])
+async def test_a_frame_cut_that_is_stopped_or_too_slow_ends_ffmpeg(tmp_path, monkeypatch,
+                                                                 ending):
+    from kaden.tools.shell_files import bilibili as module
+
+    monkeypatch.setattr(module, "CUT_TIMEOUT", 0.5)
+    program, marker = slow_ffmpeg(tmp_path)
+    cutting = asyncio.create_task(
+        Bilibili(ffmpeg=program)._ffmpeg_cut("https://upos.example/v.mp4", 1, tmp_path / "f.jpg"))
+    pid = await started(marker)
+    if ending == "stop":
+        cutting.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cutting
+    else:
+        with pytest.raises(BiliError, match="too long"):
+            await cutting
+    for _ in range(200):
+        if gone(pid):
+            break
+        await asyncio.sleep(0.01)
+    assert gone(pid)
+
+
+async def test_calls_at_once_share_one_visitors_session():
+    asked: list[httpx2.Request] = []
+    answer = bilibili(asked=asked)._transport.handler  # type: ignore[union-attr]
+
+    async def slowly(request: httpx2.Request) -> httpx2.Response:
+        await asyncio.sleep(0.01)
+        return answer(request)
+
+    tools = Bilibili(transport=httpx2.MockTransport(slowly))
+    await asyncio.gather(*(tools.run("BiliComments", {"video": BV}) for _ in range(3)))
+    assert sum(r.url.host == "www.bilibili.com" for r in asked) == 1
+    await tools.aclose()
+
+
+async def test_a_session_that_could_not_start_is_closed(monkeypatch):
+    from kaden.tools.shell_files import bilibili as module
+
+    made: list[httpx2.AsyncClient] = []
+
+    class Client(httpx2.AsyncClient):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            made.append(self)
+
+    monkeypatch.setattr(module.httpx2, "AsyncClient", Client)
+    tools = Bilibili(transport=httpx2.MockTransport(lambda request: httpx2.Response(503)))
+    with pytest.raises(httpx2.HTTPStatusError):
+        await tools.run("BiliComments", {"video": BV})
+    assert made and all(client.is_closed for client in made)
