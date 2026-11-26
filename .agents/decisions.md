@@ -435,6 +435,18 @@ shutdown the runtime puts back what it inherited: the export is for what it laun
 the runtime that Restart now builds next in the same process would otherwise read it as
 its ceiling and could not be loosened either.
 
+## Desktop rendering and repainting
+
+| Choice | Decision |
+|---|---|
+| A streaming reply | `AssistantBubble.parts`: while a reply streams, each run of whole blocks (up to the last blank line outside a code fence, `_whole_part_end`) is rendered once, in a `MarkdownView` of its own above the body; the body renders only what comes after, every 100 ms. Once the reply is final the parts go and the body renders all of it once, so selection, copy and numbering are those of the whole |
+| A theme change | What is drawn in the theme's colours at render (syntax colours and inline code in `MarkdownView`, the copy, close and plan icons, the plan's spinner) is drawn again on the app's palette change, when it was painted with another palette (`_restyled`); the spinner reads its colour as it paints |
+| Repaints | `MainWindow._paint_icons` repaints only when what the icons show changed (theme, busy, microphone, speaker, maximized); in Continuous's view a change in its conversation updates only the note of what it does (`_show_duty`); filling the sidebar updates only the title (`_show_title`); a switch fills the sidebar once, on its `Reset` |
+| The spinner | Turns only while it shows (its timer starts on show and stops on hide) |
+| Pasted pictures | Saved one at a time (`MainWindow._pasting`), so each gets its own `pasted-N.png` |
+| Window tasks | Run through the window's own controller (`self.home.command`): kept referenced, and a failure becomes a notice. `LifeSettingsDialog` takes that controller |
+| Confirmations | One `confirm()`; a dangerous action's button has the destructive role (Cancel first, and the default) |
+
 ## Free in the work folder
 
 Design: [Agent Note](notes/implemented/2026-11-10-free-in-the-work-folder.md).

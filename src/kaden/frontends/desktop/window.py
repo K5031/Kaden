@@ -237,8 +237,13 @@ FLAGS_ROLE = Qt.ItemDataRole.UserRole + 4  # {"archived"}, {"folded"}, {"working
 KIND_ROLE = Qt.ItemDataRole.UserRole + 5  # sidebar rows: "group", "conversation", "session"
 
 
-def _spawn(coro: Any) -> asyncio.Task[Any]:
-    return asyncio.ensure_future(coro)
+def _restyled(widget: QWidget, event: QEvent) -> bool:
+    """Whether `event` is the app's palette changing from the one `widget` was painted
+    with (its `_painted`, None before it is): what was drawn in its colours is drawn
+    again."""
+    painted = getattr(widget, "_painted", None)
+    return (event.type() in (QEvent.Type.PaletteChange, QEvent.Type.ApplicationPaletteChange)
+            and painted is not None and painted is not theme.current())
 
 
 async def load_look(path: Path) -> tuple[float, str]:
@@ -312,6 +317,18 @@ def _label(text: str = "", *, wrap: bool = True, selectable: bool = True,
     label.setProperty("tone", tone)
     label.setProperty("role", role)
     return label
+
+
+def _error_label() -> QLabel:
+    """A form's line for what went wrong: hidden until `_say` fills it."""
+    label = _label(tone="error")
+    label.hide()
+    return label
+
+
+def _say(label: QLabel, text: str) -> None:
+    label.setText(text)
+    label.show()
 
 
 def _duration(seconds: float) -> str:
@@ -610,12 +627,20 @@ class MarkdownView(QTextBrowser):
         self.document().documentLayout().documentSizeChanged.connect(self._fit)
         self._boxes: list[tuple[QTextFrame, str]] = []  # each code block and its language
         self.code_buttons: list[QToolButton] = []  # one per code block; spares are hidden
+        self._markdown = ""
+        self._painted: theme.Palette | None = None  # the colours it was rendered in
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if _restyled(self, event):
+            self.setMarkdown(self._markdown)
 
     def setMarkdown(self, markdown: str) -> None:
         """Markdown with room to breathe: taller lines, space between paragraphs and list
         items, more above headings; inline code a little smaller, on a soft background; a
         code block in one round box under its language and a copy button, its lines
         together and wrapped when long."""
+        self._markdown, self._painted = markdown, theme.current()
         self._boxes = []
         super().setMarkdown(_code_blocks_apart(markdown))
         code = QTextCharFormat()
@@ -887,6 +912,13 @@ class AssistantBubble(QWidget):
         self.reasoning.hide()
         self.body = MarkdownView()
         self.body.setAccessibleName("Kaden")
+        # While it streams: the parts already whole, each rendered once, above the body,
+        # which renders the rest; once it is final, the body renders all of it.
+        self.parts: list[MarkdownView] = []
+        self._parted = ""  # the text the parts hold
+        self._text = QVBoxLayout()
+        self._text.setSpacing(0)
+        self._text.addWidget(self.body)
         self.marker = _label(selectable=False, tone="muted")
         # Shown while the pointer is on the reply: copy it, and how long ago it came.
         self.footer = QWidget()
@@ -910,7 +942,9 @@ class AssistantBubble(QWidget):
         self._copied.timeout.connect(self._paint_copy)
         self._paint_copy()
         layout.addWidget(self.thinking, 0, Qt.AlignmentFlag.AlignLeft)
-        for widget in (self.reasoning, self.body, self.marker, self.footer):
+        layout.addWidget(self.reasoning)
+        layout.addLayout(self._text)
+        for widget in (self.marker, self.footer):
             layout.addWidget(widget)
         self._timer = QTimer(self, singleShot=True, interval=RENDER_INTERVAL_MS)
         self._timer.timeout.connect(self._render)
@@ -943,8 +977,14 @@ class AssistantBubble(QWidget):
         self._copied.start()
 
     def _paint_copy(self, copied: bool = False) -> None:
-        self.copy.setIcon(theme.icon("check" if copied else "copy", theme.current().muted))
+        self._painted = theme.current()
+        self.copy.setIcon(theme.icon("check" if copied else "copy", self._painted.muted))
         self.copy.setToolTip("Copied" if copied else "Copy")
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if _restyled(self, event):
+            self._paint_copy(copied=self._copied.isActive())
 
     def _render_thinking(self) -> None:
         """"Thinking… 12s" while it thinks, counting; "Thought for 14s" once it is over."""
@@ -969,12 +1009,46 @@ class AssistantBubble(QWidget):
         item = self.item
         self._render_thinking()
         self.reasoning.setText(item.reasoning)
-        self.body.setVisible(bool(item.text))
-        self.body.setMarkdown(item.text)
+        self._render_text()
         marker = ("The model declined to answer." if item.refused
                   else "Interrupted before it finished." if item.interrupted else "")
         self.marker.setText(marker)
         self.marker.setVisible(bool(marker))
+
+
+    def _render_text(self) -> None:
+        text = self.item.text
+        if self.item.final or not text.startswith(self._parted):
+            for part in self.parts:
+                _discard(part)
+            self.parts, self._parted = [], ""
+        if not self.item.final and (end := _whole_part_end(text)) > len(self._parted):
+            part = MarkdownView()
+            part.setMarkdown(text[len(self._parted):end])
+            self._text.insertWidget(len(self.parts), part)
+            self.parts.append(part)
+            self._parted = text[:end]
+        rest = text[len(self._parted):]
+        self.body.setVisible(bool(rest.strip()))
+        self.body.setMarkdown(rest)
+
+
+def _whole_part_end(markdown: str) -> int:
+    """Where the whole blocks of a streaming reply end: after the last blank line outside a
+    code block, so what comes after it can still change; 0 for none."""
+    end, fence, position = 0, "", 0
+    for line in markdown.splitlines(keepends=True):
+        position += len(line)
+        found = _FENCE.match(line.rstrip("\n"))
+        if fence:
+            if (found and found[2][0] == fence[0] and len(found[2]) >= len(fence)
+                    and not found[3].strip()):
+                fence = ""
+        elif found:
+            fence = found[2]
+        elif not line.strip() and line.endswith("\n"):
+            end = position
+    return end
 
 
 class ToolCard(QFrame):
@@ -1712,13 +1786,20 @@ class Spinner(QWidget):
 
     SIZE, STEP_MS, STEP_DEGREES, ARC_DEGREES = 16, 60, 30, 100
 
-    def __init__(self, color: str) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self._color, self._angle = QColor(color), 0
+        self._angle = 0
         self.setFixedSize(self.SIZE, self.SIZE)
-        self._timer = QTimer(self)
+        self._timer = QTimer(self, interval=self.STEP_MS)
         self._timer.timeout.connect(self._turn)
-        self._timer.start(self.STEP_MS)
+
+    def showEvent(self, event: Any) -> None:
+        super().showEvent(event)
+        self._timer.start()
+
+    def hideEvent(self, event: Any) -> None:
+        super().hideEvent(event)
+        self._timer.stop()
 
     def _turn(self) -> None:
         self._angle = (self._angle + self.STEP_DEGREES) % 360
@@ -1727,7 +1808,8 @@ class Spinner(QWidget):
     def paintEvent(self, event: object) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(QPen(self._color, 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.setPen(QPen(QColor(theme.current().muted), 1.6, Qt.PenStyle.SolidLine,
+                            Qt.PenCapStyle.RoundCap))
         inset = self.SIZE * 0.1
         painter.drawArc(QRectF(inset, inset, self.SIZE - 2 * inset, self.SIZE - 2 * inset),
                         (90 - self._angle) * 16, self.ARC_DEGREES * 16)
@@ -1746,7 +1828,13 @@ class PlanCard(QFrame):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(16, 12, 16, 12)
         self._body: QWidget | None = None
+        self._painted: theme.Palette | None = None
         self._build()
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if _restyled(self, event):
+            self._build()
 
     def _build(self) -> None:
         item, outer = self.item, self.layout()
@@ -1760,7 +1848,7 @@ class PlanCard(QFrame):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         self._steps = item.steps
-        colors = theme.current()
+        colors = self._painted = theme.current()
         self._rows: list[tuple[str, str]] = []
         for step in self._steps:
             mark = str(step.status)  # done, doing, todo or dropped
@@ -1768,7 +1856,7 @@ class PlanCard(QFrame):
             row.setSpacing(8)
             icon: QWidget
             if mark == "doing":
-                icon = Spinner(colors.muted)
+                icon = Spinner()
             else:
                 icon = QLabel()
                 icon.setPixmap(theme.icon(mark, colors.muted, 16).pixmap(16, 16))
@@ -1817,8 +1905,9 @@ class WrapUpCard(QFrame):
         if card.question:
             text.addWidget(_label(card.question, role="strong"))
         top.addLayout(text, 1)
-        dismiss = QToolButton(objectName="windowControl")
-        dismiss.setIcon(theme.icon("close", theme.current().muted))
+        dismiss = self.dismiss = QToolButton(objectName="windowControl")
+        self._painted: theme.Palette | None = None
+        self._paint()
         dismiss.setToolTip("Close")
         dismiss.setAccessibleName("Close")
         dismiss.clicked.connect(close)
@@ -1836,6 +1925,15 @@ class WrapUpCard(QFrame):
             buttons.addStretch()
             layout.addLayout(buttons)
         self.setAccessibleName(card.question or "Turn summary")
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if _restyled(self, event):
+            self._paint()
+
+    def _paint(self) -> None:
+        self._painted = theme.current()
+        self.dismiss.setIcon(theme.icon("close", self._painted.muted))
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -2006,7 +2104,8 @@ class AttachmentChip(QFrame):
         else:
             row.addWidget(_label(clip(Path(path).name, 40), wrap=False, selectable=False))
         self.remove = QToolButton(objectName="removeAttachment")
-        self.remove.setIcon(theme.icon("close", theme.current().muted, 12))
+        self._painted: theme.Palette | None = None
+        self._paint()
         self.remove.setIconSize(QSize(12, 12))
         self.remove.setFixedSize(18, 18)
         self.remove.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -2014,6 +2113,15 @@ class AttachmentChip(QFrame):
         self.remove.setAccessibleName(f"Remove {Path(path).name}")
         self.remove.clicked.connect(self.removed)
         row.addWidget(self.remove, 0, Qt.AlignmentFlag.AlignTop)
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if _restyled(self, event):
+            self._paint()
+
+    def _paint(self) -> None:
+        self._painted = theme.current()
+        self.remove.setIcon(theme.icon("close", self._painted.muted, 12))
 
 
 class AttachmentStrip(QWidget):
@@ -2218,6 +2326,13 @@ class ConversationView(QScrollArea):
         body = widget.parentWidget()
         return body.parentWidget() if body is not None else None
 
+    def set_per_conversation(self, on: bool) -> None:
+        """Whether a permission card offers "this conversation" answers (not in the
+        life's view, whose one conversation is its whole life)."""
+        if self.per_conversation != on:
+            self.per_conversation = on
+            self._rebuild_prompts()
+
     def _rebuild_prompts(self) -> None:
         while (child := self.prompts.takeAt(0)) is not None:
             if child.widget() is not None:
@@ -2362,7 +2477,7 @@ class MainWindow(QMainWindow):
                                  context=Qt.ShortcutContext.WidgetShortcut)
             shortcut.activated.connect(lambda c=command: self._on_current(c))
         self.show_archived = QAction("Show &archived conversations", self, checkable=True)
-        self.show_archived.toggled.connect(lambda _: _spawn(self.fill_sidebar()))
+        self.show_archived.toggled.connect(lambda _: self.home.command(self.fill_sidebar()))
         self.switch_reason = _label(selectable=False, role="small")
         self.user_name = getpass.getuser()
         self.profile_button = QToolButton(objectName="profile", text=f" {self.user_name}")
@@ -2488,12 +2603,6 @@ class MainWindow(QMainWindow):
         self.conversation = ConversationView(lambda: self.controller, self.empty_state,
                                              self._notice_link)
         self.conversation.chose.connect(lambda: self.input.setFocus())
-        # Its parts, by the names the rest of the window has for them.
-        self.scroll = self.conversation
-        self.load_earlier = self.conversation.load_earlier
-        self.items_layout = self.conversation.items_layout
-        self.waiting_line = self.conversation.waiting_line
-        self.prompts = self.conversation.prompts
 
         self.composer = QFrame(objectName="composer")
         box = QVBoxLayout(self.composer)  # what is attached, then the row to write in
@@ -2519,6 +2628,8 @@ class MainWindow(QMainWindow):
         composer.setSpacing(8)
         box.addLayout(composer)
         self._pasted: Path | None = None  # the folder pasted pictures are saved in
+        self._pasting = asyncio.Lock()  # one saved at a time: each gets its own name
+        self._icons: tuple[Any, ...] | None = None  # what the icons were last painted for
         self.setAcceptDrops(True)  # files can be dropped anywhere on the window
         self.input = MessageBox()
         self.input.setPlaceholderText("Message Kaden")
@@ -2585,7 +2696,7 @@ class MainWindow(QMainWindow):
         bottom = QVBoxLayout(bottom_column)
         bottom.setContentsMargins(0, 0, 0, 0)
         bottom.setSpacing(0)
-        bottom.addLayout(self.prompts)
+        bottom.addLayout(self.conversation.prompts)
         bottom.addWidget(self.composer)
         bottom.addLayout(footer)
         bottom_row = QHBoxLayout()
@@ -2612,7 +2723,7 @@ class MainWindow(QMainWindow):
         banner_row.setContentsMargins(20, 10, 20, 0)
         banner_row.addWidget(self.banner)
         column.addLayout(banner_row)
-        column.addWidget(self.scroll, 1)
+        column.addWidget(self.conversation, 1)
         # Where the life's conversation comes while its process starts.
         self.waking = _label("Waking up…", selectable=False, tone="muted")
         self.waking.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -2631,7 +2742,13 @@ class MainWindow(QMainWindow):
         self._show_voice()
 
     def _paint_icons(self) -> None:
+        """Paint the window's icons, when what they show has changed since."""
         colors = theme.current()
+        painted = (colors, self.model.busy, self.voice.listening, self.voice.speaking,
+                   self.isMaximized(), self.user_name)
+        if painted == self._icons:
+            return
+        self._icons = painted
         self.send_button.setIcon(theme.icon("stop" if self.model.busy else "send",
                                             colors.text))
         self.gear_button.setIcon(theme.icon("gear", colors.muted, 18))
@@ -2701,12 +2818,13 @@ class MainWindow(QMainWindow):
             return
         self._leave_session()  # the chat starts in the window's own conversation
         task = self.home.new_in_folder(folder)
-        task.add_done_callback(lambda _: (self.input.setFocus(), _spawn(self.fill_sidebar())))
+        task.add_done_callback(lambda _: self.input.setFocus())  # its Reset fills the sidebar
 
     def changeEvent(self, event: QEvent) -> None:
         super().changeEvent(event)
         if event.type() in (QEvent.Type.PaletteChange,  # the system switched light or dark
                             QEvent.Type.WindowStateChange):  # maximize becomes restore
+            self._icons = None
             self._paint_icons()
 
     def choose_permissions(self, policy: PermissionPolicy) -> None:
@@ -2878,7 +2996,6 @@ class MainWindow(QMainWindow):
         if self._target is target:
             self._open()  # opened or refused: the conversation open here shows
             self.input.setFocus()
-            _spawn(self.fill_sidebar())
             self._deliver_notes()
 
     # ── view model changes ────────────────────────────────────────────────
@@ -2891,10 +3008,10 @@ class MainWindow(QMainWindow):
             self._notify_new_prompts()
         match change:
             case Reset():
-                _spawn(self.fill_sidebar())
-                _spawn(self.refresh_models())
+                self.home.command(self.fill_sidebar())
+                self.home.command(self.refresh_models())
             case ConversationListChanged():
-                _spawn(self.fill_sidebar())
+                self.home.command(self.fill_sidebar())
                 return
             case MemoryListChanged():
                 if self.memory_dialog is not None and self.memory_dialog.isVisible():
@@ -2924,9 +3041,10 @@ class MainWindow(QMainWindow):
             case _:
                 self.conversation.changed(change)
                 if self._life_on:  # its status line says what it is doing
-                    self._refresh_status()
+                    self._show_duty()
 
-    def _refresh_status(self) -> None:
+    def _show_duty(self) -> None:
+        """The note beside the title: the duty's next check-in, or what the life does."""
         model = self.model
         duty = (duty_status(model.conversation.duty, model.duty_wake_at, model.state,
                             model.help_needed) if model.conversation is not None else None)
@@ -2934,6 +3052,16 @@ class MainWindow(QMainWindow):
             duty = doing  # its life: what it does now, not just that it is busy
         self.duty_label.setText(duty or "")
         self.duty_label.setVisible(duty is not None)
+
+    def _show_title(self) -> None:
+        conversation = self.model.conversation
+        if conversation is not None and not self._life_on:
+            self.title_label.setText(conversation_label(
+                self._conversations.get(conversation.id, conversation)))
+
+    def _refresh_status(self) -> None:
+        model = self.model
+        self._show_duty()
         known = () if self._models is None or isinstance(self._models, str) else self._models
         names = {m.id: m.name for m in known}
         self.model_button.setText(names.get(model.model or "", model.model or ""))
@@ -2951,9 +3079,7 @@ class MainWindow(QMainWindow):
         conversation = model.conversation
         if self.life is not None:
             self.life_name.setText(self.life.name)
-        if conversation is not None and not self._life_on:
-            self.title_label.setText(conversation_label(
-                self._conversations.get(conversation.id, conversation)))
+        self._show_title()
         folder = conversation.folder if conversation is not None else None
         self.folder_action.setVisible(folder is not None)
         new_chat = (self._viewing is None and folder is not None and not model.items
@@ -3045,7 +3171,7 @@ class MainWindow(QMainWindow):
                     self.conversation_list.addItem(row)
                     if session.id == viewing:
                         self.conversation_list.setCurrentItem(row)
-        self._refresh_status()
+        self._show_title()  # its title, as the list has it now
 
     def conversation_info(self, conversation_id: str) -> ConversationInfo:
         return self._conversations[conversation_id]
@@ -3096,18 +3222,10 @@ class MainWindow(QMainWindow):
         dialog.open()
 
     def delete_conversation(self, info: ConversationInfo) -> None:
-        box = QMessageBox(QMessageBox.Icon.NoIcon, "Delete conversation",
-                          f"Delete “{conversation_label(info)}”?", parent=self)
         children = len(self.sessions.of(info.id, include_archived=True)) if self.sessions else 0
-        box.setInformativeText(delete_details(self.home.is_open(info.id), children))
-        cancel = box.addButton(QMessageBox.StandardButton.Cancel)
-        delete = box.addButton("Delete", QMessageBox.ButtonRole.DestructiveRole)
-        delete.setProperty("danger", True)
-        delete.style().polish(delete)
-        box.setDefaultButton(cancel)
-        box.buttonClicked.connect(lambda button: button is delete
-                                  and self.home.delete(info.id))
-        box.open()
+        confirm(self, f"Delete “{conversation_label(info)}”?",
+                lambda: self.home.delete(info.id), yes="Delete", danger=True,
+                details=delete_details(self.home.is_open(info.id), children))
 
     def _add_to_app_menu(self) -> None:
         def added(_: None) -> None:
@@ -3236,7 +3354,7 @@ class MainWindow(QMainWindow):
         messages, steps and prompts, and the message box talks to it. Its row stays
         highlighted while it opens, which may mean starting it again."""
         if session is not self._target.session:
-            _spawn(self._open_session(self._open(session=session)))
+            self.home.command(self._open_session(self._open(session=session)))
 
     async def _open_session(self, target: Target) -> None:
         session = target.session
@@ -3284,16 +3402,14 @@ class MainWindow(QMainWindow):
             self._name_life()  # its name and who it is, first
             return
         self._life_frame(on, waking=on)  # at once, before its process answers
-        _spawn(self._show_life(on))
+        self.home.command(self._show_life(on))
 
     def _life_frame(self, on: bool, *, waking: bool = False) -> None:
         """The window around the life's conversation (no sidebar; its ☰ and who it is
         in the title bar), or the chats'. While it wakes, a line
         stands where its conversation will be."""
         self._life_on = on
-        if self.conversation.per_conversation == on:
-            self.conversation.per_conversation = not on
-            self.conversation._rebuild_prompts()
+        self.conversation.set_per_conversation(not on)
         self.sidebar.setVisible(not on)
         self.title_label.setVisible(not on)
         for widget in (self.life_name, self.view_menu_button,
@@ -3301,7 +3417,7 @@ class MainWindow(QMainWindow):
             widget.setVisible(on)
         self._gear_balance.setFixedWidth(self.view_gear_button.sizeHint().width())
         self.waking.setVisible(waking)
-        self.scroll.setVisible(not waking)
+        self.conversation.setVisible(not waking)
         self.composer.setVisible(not waking)
         self._refresh_status()
         self._show_voice()  # the message box's hint names whom it talks to
@@ -3317,7 +3433,7 @@ class MainWindow(QMainWindow):
                 await life.set_identity(dialog.name.text(), dialog.about.toPlainText())
                 self._life_frame(True, waking=True)
                 await self._show_life(True)
-            _spawn(apply())
+            self.home.command(apply())
 
         dialog.accepted.connect(chosen)
         # not chosen: no life
@@ -3357,7 +3473,7 @@ class MainWindow(QMainWindow):
 
         async def fill() -> None:
             dialog.show_text(await life.read_journal())
-        _spawn(fill())
+        self.home.command(fill())
 
     def _notify_new_prompts(self) -> None:
         prompts = self.home.model.prompts
@@ -3428,10 +3544,12 @@ class MainWindow(QMainWindow):
             return str(path) if image.save(str(path), "PNG") else None
 
         async def attach() -> None:
-            if (path := await asyncio.to_thread(save)) is not None:
+            async with self._pasting:
+                path = await asyncio.to_thread(save)
+            if path is not None:
                 self.attachments.add([path])
 
-        _spawn(attach())
+        self.home.command(attach())
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if _local_files(event.mimeData()):
@@ -3567,10 +3685,10 @@ class MainWindow(QMainWindow):
                 await life.set_daily_usd(daily)
             if changes:
                 await life.runtime.update_settings(SettingsUpdate(tool_settings=changes))
-                _spawn(restart())
+                self.home.command(restart())
 
         async def load() -> None:
-            dialog = LifeSettingsDialog(self, life.name, life.about,
+            dialog = LifeSettingsDialog(self, self.home, life.name, life.about,
                                         await life.runtime.settings(), life.daily_usd)
             dialog.saved = saved
             self._dialog = dialog
@@ -3696,9 +3814,7 @@ class NoteDialog(QDialog):
         self.description = QLineEdit(note.description if note else "")
         self.description.setPlaceholderText("One line: what the note is about")
         self.text = QPlainTextEdit(note.text if note else "")
-        self.error = _label()
-        theme.mark(self.error, "tone", "error")
-        self.error.hide()
+        self.error = _error_label()
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
                                    | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._save)
@@ -3715,8 +3831,7 @@ class NoteDialog(QDialog):
 
         def failed(error: Exception) -> None:
             self.save_button.setEnabled(True)
-            self.error.setText(user_message(error))
-            self.error.show()
+            _say(self.error, user_message(error))
 
         self.memory.controller.save_note(
             self.title.text(), self.description.text(), self.text.toPlainText(),
@@ -3808,9 +3923,10 @@ class LifeSettingsDialog(QDialog):
     day (at once); what its tools declare (when its process starts again). Its provider
     and models follow the user's chats."""
 
-    def __init__(self, parent: QWidget, name: str, about: str, settings: Settings,
-                 daily_usd: float | None) -> None:
+    def __init__(self, parent: QWidget, controller: Controller, name: str, about: str,
+                 settings: Settings, daily_usd: float | None) -> None:
         super().__init__(parent)
+        self._controller = controller  # runs the save
         self.settings, self.daily_usd = settings, daily_usd
         self.identity = (name, about)
         self.setWindowTitle(f"Settings · {name}")
@@ -3840,9 +3956,7 @@ class LifeSettingsDialog(QDialog):
         column.addWidget(_setting("Saved answers", "What you said always or never to in their "
                                   "view. Theirs, apart from your chats'.", self.answers,
                                   below=True))
-        self.error = _label()
-        theme.mark(self.error, "tone", "error")
-        self.error.hide()
+        self.error = _error_label()
         column.addWidget(self.error)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
                                    | QDialogButtonBox.StandardButton.Cancel)
@@ -3875,9 +3989,8 @@ class LifeSettingsDialog(QDialog):
             if daily is not None and daily < 0:
                 raise ValueError
         except ValueError:
-            self.error.setText("Write the daily amount as dollars, like 1 or 2.50, or leave "
-                               "it empty for no limit.")
-            self.error.show()
+            _say(self.error, "Write the daily amount as dollars, like 1 or 2.50, or leave "
+                             "it empty for no limit.")
             return
         daily = UNCHANGED if daily == self.daily_usd else daily
         identity: tuple[str, str] | None = (self.name.text().strip() or NAME,
@@ -3900,11 +4013,10 @@ class LifeSettingsDialog(QDialog):
                 await self.saved(identity, daily, changes, rules)
             except Exception as e:  # noqa: BLE001 - shown in the dialog
                 self.save_button.setEnabled(True)
-                self.error.setText(user_message(e))
-                self.error.show()
+                _say(self.error, user_message(e))
                 return
             self.accept()
-        _spawn(save())
+        self._controller.command(save())
 
 
 class DutyDialog(QDialog):
@@ -3936,9 +4048,7 @@ class DutyDialog(QDialog):
             box.setValue(seconds / 60)
         self.plan = QPlainTextEdit(plan_text(info.plan))
         self.plan.setPlaceholderText("[todo] A step | due 2026-11-12 09:00 | a note")
-        self.error = _label()
-        theme.mark(self.error, "tone", "error")
-        self.error.hide()
+        self.error = _error_label()
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
         self.save_button = _primary(buttons.addButton(
             "Save" if info.duty else "Turn on", QDialogButtonBox.ButtonRole.AcceptRole))
@@ -3963,8 +4073,7 @@ class DutyDialog(QDialog):
 
     def _fail(self, error: Exception) -> None:
         self.save_button.setEnabled(True)
-        self.error.setText(user_message(error))
-        self.error.show()
+        _say(self.error, user_message(error))
 
     def _apply(self, duty: Duty | None) -> None:
         try:
@@ -4095,9 +4204,7 @@ class ServerDialog(QDialog):
         self.variables.setPlaceholderText("GITHUB_TOKEN=…")
         self.variables.setMaximumHeight(90)
         self.warning = _label(MCP_WARNING, tone="warning")
-        self.error = _label()
-        theme.mark(self.error, "tone", "error")
-        self.error.hide()
+        self.error = _error_label()
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
                                    | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._save)
@@ -4116,7 +4223,7 @@ class ServerDialog(QDialog):
             server = mcp_server(self.name.text(), self.target.text(),
                                 self.variables.toPlainText())
         except ValueError as e:
-            self._show_error(str(e))
+            _say(self.error, str(e))
             return
         servers = [server if self.original and s.name == self.original.name else s
                    for s in self.list.saved]
@@ -4130,13 +4237,9 @@ class ServerDialog(QDialog):
 
         def failed(error: Exception) -> None:
             self.save_button.setEnabled(True)
-            self._show_error(user_message(error))
+            _say(self.error, user_message(error))
 
         self.list.controller.command(self.list.save(servers), done=saved, failed=failed)
-
-    def _show_error(self, text: str) -> None:
-        self.error.setText(text)
-        self.error.show()
 
 
 # ── settings ──────────────────────────────────────────────────────────────
@@ -4148,7 +4251,8 @@ def confirm(parent: QWidget, text: str, then: Callable[[], None], *, yes: str = 
     box = QMessageBox(QMessageBox.Icon.NoIcon, "Kaden", text, parent=parent)
     box.setInformativeText(details)
     cancel = box.addButton(QMessageBox.StandardButton.Cancel)
-    action = box.addButton(yes, QMessageBox.ButtonRole.AcceptRole)
+    action = box.addButton(yes, QMessageBox.ButtonRole.DestructiveRole if danger
+                           else QMessageBox.ButtonRole.AcceptRole)
     if danger:
         action.setProperty("danger", True)
         action.style().polish(action)
@@ -4223,9 +4327,7 @@ class SettingsDialog(QDialog):
         self.instructions.setMinimumHeight(120)
         self.notice = _label(restart_notice(settings) or "", selectable=False, tone="warning")
         self.notice.setVisible(restart_notice(settings) is not None)
-        self.error = _label()
-        theme.mark(self.error, "tone", "error")
-        self.error.hide()
+        self.error = _error_label()
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
                                    | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._save)
@@ -4439,7 +4541,7 @@ class SettingsDialog(QDialog):
             update = settings_update(self.settings, self.form())
             child_limit = self._child_limit()
         except ValueError as e:
-            self._show_error(str(e))
+            _say(self.error, str(e))
             return
         if update == SettingsUpdate() and child_limit is UNCHANGED and not restart:
             self.accept()
@@ -4488,7 +4590,7 @@ class SettingsDialog(QDialog):
 
         def failed(error: Exception) -> None:
             self.save_button.setEnabled(True)
-            self._show_error(user_message(error))
+            _say(self.error, user_message(error))
 
         def saved(settings: Settings) -> None:
             self.accept()
@@ -4498,10 +4600,6 @@ class SettingsDialog(QDialog):
                         yes="Restart now", details=notice)
 
         self.controller.command(apply(), done=saved, failed=failed)
-
-    def _show_error(self, text: str) -> None:
-        self.error.setText(text)
-        self.error.show()
 
 
 # ── first run ─────────────────────────────────────────────────────────────
@@ -4559,9 +4657,7 @@ class WelcomeDialog(QDialog):
         self.key = QLineEdit(echoMode=QLineEdit.EchoMode.Password)
         self.key.setPlaceholderText("Paste your API key")
         self.key.setAccessibleName("API key")
-        self.key_error = _label()
-        theme.mark(self.key_error, "tone", "error")
-        self.key_error.hide()
+        self.key_error = _error_label()
         column.addWidget(self.key_intro)
         column.addWidget(get_key, 0, Qt.AlignmentFlag.AlignLeft)
         column.addWidget(self.key)
@@ -4589,9 +4685,7 @@ class WelcomeDialog(QDialog):
         column.addWidget(self.limit)
         column.addWidget(_label("Each chat works in a folder you choose for it. Kaden works "
                                 "freely there and asks before anything outside it."))
-        self.finish_error = _label()
-        theme.mark(self.finish_error, "tone", "error")
-        self.finish_error.hide()
+        self.finish_error = _error_label()
         column.addWidget(self.finish_error)
         column.addStretch()
         self.finish_button = _primary(QPushButton("Start using Kaden"))
@@ -4616,7 +4710,7 @@ class WelcomeDialog(QDialog):
     def _save_key(self) -> None:
         key = self.key.text().strip()
         if not key:
-            self._error(self.key_error, "Paste a key first.")
+            _say(self.key_error, "Paste a key first.")
             return
         provider = self._chosen()
         chosen = self.settings.modules["core"].chosen
@@ -4630,7 +4724,7 @@ class WelcomeDialog(QDialog):
             hint = (f"\nIf your computer has no keychain, set the environment variable "
                     f"{provider.key_name} to the key instead (see {DOCS_URL})."
                     if provider.key_name else "")
-            self._error(self.key_error, user_message(error) + hint)
+            _say(self.key_error, user_message(error) + hint)
 
         def saved(settings: Settings) -> None:
             self.settings = settings
@@ -4643,7 +4737,7 @@ class WelcomeDialog(QDialog):
         try:
             budget = limit_update(self.settings, self.limit.text())
         except ValueError as e:
-            self._error(self.finish_error, str(e))
+            _say(self.finish_error, str(e))
             return
         if budget != self.settings.budget:
             changes["budget"] = budget  # a first limit only tightens: no confirmation
@@ -4654,13 +4748,9 @@ class WelcomeDialog(QDialog):
 
         def failed(error: Exception) -> None:
             self.finish_button.setEnabled(True)
-            self._error(self.finish_error, user_message(error))
+            _say(self.finish_error, user_message(error))
 
         self.controller.command(self.runtime.update_settings(SettingsUpdate(**changes)),
                                 done=lambda _: self.accept(), failed=failed)
 
-    @staticmethod
-    def _error(label: QLabel, text: str) -> None:
-        label.setText(text)
-        label.show()
 
