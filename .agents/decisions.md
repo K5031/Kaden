@@ -725,7 +725,7 @@ Design: [Agent Note](notes/implemented/2026-11-11-duties.md).
 | Spending limit | `Budget.max_cost_usd` must be set: `set_duty` refuses without it; a duty whose limit was removed later pauses when the cycle ends, with `Failure(BUDGET)` |
 | Prompt | Appended to the system prompt after Memory's addendum: "## Your duty" (instruction, how it is woken, finish_goal for a goal) and "## Plan" (one line per item: status, text, due in local ISO time, note). A plan without a duty is shown alone. The current time is not in the system prompt, which would change every request and void the provider's prompt cache; every user message carries its sending time (Message times) and TodoWrite's result gives the time |
 | Notice | A cycle the runtime starts for a duty begins with a USER notice: "New goal: <instruction>" (or "New duty: …") when it is turned on, so the task stays in the transcript after a goal ends mid-cycle, when the system prompt no longer has it; then "A step in your plan is due.", "Time to check in on your duty." or "Background work finished.", each followed by "Carry on with your duty, or end your turn if there is nothing to do now." The event log keeps the cause ("duty: <cause>"); causes: the duty was turned on, a plan item is due, scheduled check-in, background work finished. User-message cycles get none |
-| TodoWrite | Replaces the whole list; `due` is ISO 8601 (local time without an offset) or `due_in_minutes`; an unreadable time is an ERROR result and changes nothing. Offered while the conversation has a duty or a plan; finish_goal only with a goal. finish_goal's description tells the agent to bring the plan up to date with TodoWrite in the same message, before it: with the duty gone, a plan left open sends the agent back for one more request (in a fleet, every agent paid for it) |
+| TodoWrite | Replaces the whole list; `due` is ISO 8601 (local time without an offset) or `due_in_minutes`; an unreadable time, or one more than a hundred years ahead, is an ERROR result and changes nothing. Offered while the conversation has a duty or a plan; finish_goal only with a goal. finish_goal's description tells the agent to bring the plan up to date with TodoWrite in the same message, before it: with the duty gone, a plan left open sends the agent back for one more request (in a fleet, every agent paid for it) |
 | Finishing a goal | `finish_goal` ends the duty and marks every step that is `doing` done: the step the agent is on when it declares the goal reached is the one that call completes (agents keep a step such as "Report" at doing, truthfully, while they make the call). A `todo` step stays open, and the agent is sent back for it, then `_close_plan` applies |
 | Schedule | Computed when a cycle ends idle (an asyncio timer); cancelled by any cycle request, Stop, start, failure, ending the duty and shutdown; recomputed when the duty or plan changes while idle. Overdue items wake at the minimum interval |
 | Events | `ConversationUpdated` for duty and plan changes; `DutyScheduled(wake_at)` and `RuntimeSnapshot.duty_wake_at` for the next wake; the event log records `duty`, `plan` (item count), `duty_scheduled` (delay, cause), `duty_paused`, `goal_finished` and each `cycle_requested` reason ("duty: <cause>") |
@@ -1174,7 +1174,7 @@ The design is in [the note](notes/implemented/2026-11-26-memory-recall.md); the 
 | Choice | Decision |
 |---|---|
 | The hook | `Runtime._came_in` collects the text appended from the inbox (the user's messages, `notify`'s notices, a kept watch's firings) and the conversation's own watches' firings; before the next inference, after upkeep and the budget check, `_recall` runs once for it. The activation notice and a duty's own notice add nothing to it |
-| The call | The maintenance model (`light`), `RECALL_SYSTEM`, at most 300 tokens out; it sees the end of what came in (4000 characters, between `<<<` and `>>>`) and `- title: description` per candidate; only exact titles (case ignored, bullets stripped) count, at most 5 (`RECALL_MAX`). Budgeted as maintenance; a refusal or failure is logged (`recall`, `failed`) and recalls nothing |
+| The call | The maintenance model (`light`), `RECALL_SYSTEM`, at most 300 tokens out; it sees the end of what came in (4000 characters, between `<<<` and `>>>`) and `- title: description` per candidate; only exact titles (case ignored, bullets stripped) count, at most 5 (`RECALL_MAX`). Budgeted as maintenance; raced against Stop; a refusal or failure (the Core's, or Memory's `notes()`/`assemble()`, logged by its type only) is logged (`recall`, `failed`) and recalls nothing. The notes are those of the conversation's folder (`Memory.notes(folder=...)`) |
 | The notice | Hidden, Kaden's: `RECALL_HEADER`, then per note `## <title>`, `(note "<id>", changed <updated_at>)` and its text |
 | Not twice | What the assembled context still holds of those lines (`_RECALLED`): a note recalled and still in view, unchanged, is not a candidate; a recall summarized away, or a note changed since, can come again. Notes with `MemoryNote.always_shown` (the built-in profile, the files module's `MEMORY.md`) are never candidates; with no other note, nothing is assembled or asked |
 | Built-in memory | Its save pass leaves out Kaden's hidden notices (a recalled note is not news); the files module's memory tool still asks for a note to be viewed before it is edited |
@@ -1192,3 +1192,72 @@ The design is in [the note](notes/implemented/2026-11-26-always-allow-for-chaine
 | Where chosen | `Runtime._gate` puts them in the question (`Prompt.details["always"]`, `["never"]`, as `str(rule)`); `_save_rules` saves them in one settings update under the settings lock, each replacing any rule with the same tool and prefix |
 | The card | `_kept_label`: “cp”, “echo” and “ls”; a tool by its name; labels past 60 characters cut with "…", the whole in the tooltip (`LABEL_CHARS`) |
 
+
+## The data folder in always_ask: by its name as a path segment (2026-11-26)
+
+`review.always_ask` matches Kaden's data folder by its full path and by its folder name as
+a path segment of its own (`.kaden` in `cd ~ && cat .kaden/settings.toml`,
+`../../.kaden/usage.json`), since a command may reach it from any directory. A data folder
+with a common name (`--data-dir ~/data`) makes every call that names such a folder ask:
+asking is the safe side, and the default `.kaden` is distinctive. Not attempted: resolving
+`cd` and relative paths in a command, which the shell, not a pattern, decides.
+
+A work folder inside the data folder (Continuous's `~/.kaden/life/home` in its data folder
+`~/.kaden/life`) is not Kaden's data: before matching, the paths that name it or lie in it
+(its resolved and given absolute forms, `~/`, `$HOME/`, `${HOME}/`) are taken out of the
+arguments, unless `..` follows in the same path. A data-folder path outside it still asks;
+the same folder reached by a relative path from elsewhere (`cd ~ && cat .kaden/life/home/x`)
+asks too, since only the name is seen.
+
+## A step falls due at most a hundred years ahead (2026-11-26)
+
+`duty.parse_plan` refuses a TodoWrite due time (`due` or `due_in_minutes`) more than
+`MAX_DUE_AHEAD_S`, a hundred years, ahead: one near year 9999 was saved and then broke
+every later request (`local()` raised). A hundred years leaves any real reminder alone.
+
+## An overdue open step wakes a duty at its minimum interval (2026-11-26)
+
+With a duty, an open step whose due time has passed keeps `next_wake` at
+`min_interval_s`, so the duty is woken at that interval until the step is closed or given
+a later time. This is what the Duty contract says (the earliest due open item, held
+between the intervals), and it is kept: an overdue step is work the duty has not done,
+the user chose the minimum interval, and a duty that waits on the user has ask_for_help,
+which pauses the check-ins. Not done: waking once per overdue step as reminders without
+a duty do, which would let a duty forget a step it left open.
+
+## What TaskOutput still finds (2026-11-26)
+
+TaskOutput finds the operations launched for the open conversation: opening another one
+forgets them (none runs then: `start()` refuses while one does). Of the finished ones it
+keeps the newest `KNOWN_OPS`, 200; an older one's outcome is in the conversation already,
+delivered when it finished.
+
+## What a conversation keeps when another one is opened (2026-11-26)
+
+`Runtime._leave`, before `start()` opens another conversation: its proposals are withdrawn,
+its watch tasks end (awaited, a call that outlasts `cancel_grace_s` left) and so do the
+watches' writes; messages that wait to be saved (an append failed) are saved into it,
+and if that fails again they are dropped and logged (`left_unsaved`); firings of its own
+watches held for a cycle are let go unconfirmed, so their watches see them again when it
+is back. Nothing of it reaches the next conversation. Watch files are written one at a
+time, in order, a write under way finished even when its caller is cancelled.
+
+## A life's prompts close after 3 minutes (2026-11-26)
+
+In a conversation whose duty is a life, a permission, AskUserQuestion or ExitPlanMode
+prompt left unanswered for `RuntimeConfig.life_prompt_timeout_s`, 180 s, closes by itself
+(`PromptClosed`, reply None; decision `prompt_timed_out`): the call is refused, the question
+or plan goes unanswered, each with "No answer in 3 minutes: the user may be away from the
+computer.", and the life carries on. The user talks with it from elsewhere (Bilibili on the
+phone), where no card can be answered, and a waiting prompt held its whole conversation.
+Three minutes is long enough to answer at the computer. Other conversations wait as before;
+proposals never hold a conversation and are left alone.
+
+## A life rests with Rest (2026-11-26)
+
+| Choice | Decision |
+|---|---|
+| The tool | `Rest` (`api.DUTY_TOOLS`), offered only when the duty is a life; read-only, never gated, not counted. `until` (ISO 8601, local without an offset) or `minutes`; with neither, until something wakes it. Always capped at the duty's `max_interval_s`; an unreadable time is an ERROR result |
+| The rest | Kept in the runtime only (`Runtime._rest_until`), not in the conversation: a restart wakes the life as before. Any cycle ends it, whatever started the cycle; `next_wake` takes the earlier of the rest's end and a step that falls due before it, never sooner than `min_interval_s` |
+| The prompt | `duty.prompt` names Rest beside a plan step's due time, as ways it can rest |
+| The notice | A life's scheduled check-in says `<span> passed; it is HH:MM.` (local time), the span since its last cycle ended (`duty.span`). After a restart, with no last cycle in this process, it is "Time has passed." |

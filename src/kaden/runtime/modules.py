@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import importlib
 import logging
 import os
+import pkgutil
 import re
 import shlex
 import sys
@@ -80,11 +80,8 @@ def installed(kind: str) -> list[Installed]:
 
 
 def load_entry(kind: str, module_id: str, target: str) -> Installed | None:
-    module_name, _, attr = target.partition(":")
     try:
-        factory: Any = importlib.import_module(module_name)
-        for part in attr.split("."):
-            factory = getattr(factory, part)
+        factory: Any = pkgutil.resolve_name(target)
     except Exception:
         logger.info("module %s %r (%s) does not load", kind, module_id, target, exc_info=True)
         return None
@@ -96,9 +93,8 @@ def load_entry(kind: str, module_id: str, target: str) -> Installed | None:
 def declared_settings(target: str) -> tuple[ToolSetting, ...]:
     """The settings a Tools factory declares (its user_config); none if it declares none,
     declares them wrongly, or does not load (building it says why). Blocks (imports it)."""
-    module_name, _, attr = target.partition(":")
     try:
-        factory: Any = getattr(importlib.import_module(module_name), attr)
+        factory: Any = pkgutil.resolve_name(target)
     except Exception:
         logger.info("tools %s do not load", target, exc_info=True)
         return ()
@@ -275,44 +271,42 @@ class ModuleSettings:
                 if not value and await get_stored_key(mcp_key(server.name, variable)) is None:
                     raise ValueError(f"give a value for {variable} of {server.name!r}")
 
-    async def _store_server_keys(self, servers: list[McpServer] | tuple[McpServer, ...]
-                                 ) -> None:
-        """Values given now go to the keychain; variables no longer listed leave it."""
-        for server in servers:
-            for variable, value in server.env.items():
-                if value:
-                    await store_key(mcp_key(server.name, variable), value)
-                    self.key_saved = True
-        kept = {mcp_key(s.name, v) for s in servers for v in s.env}
-        for server in self.mcp_servers:
-            for variable in server.env:
-                if (key := mcp_key(server.name, variable)) not in kept:
-                    await store_key(key, None)
-        self.mcp_servers = tuple(
-            McpServer(s.name, s.command, s.url, dict.fromkeys(s.env, "")) for s in servers)
-
     async def commit(self, u: SettingsUpdate, saved: dict[str, Any]) -> None:
-        """Store the key, then save; on failure the keychain entry is restored."""
-        key_name = None
+        """Store the keys (the API key, the MCP servers' values given now), then save; on
+        failure the keychain entries are put back. Then the variables no longer listed
+        leave the keychain."""
+        keys: dict[str, str] = {}
         if u.api_key is not None:
             core = (u.modules or {}).get("core") or self.chosen["core"]
             info = await asyncio.to_thread(find, "core", core)
             assert info is not None and info.key_name is not None
-            key_name = info.key_name
-            old_key = await get_stored_key(key_name)
-            await store_key(key_name, u.api_key)
+            keys[info.key_name] = u.api_key
+        for server in u.mcp_servers or ():
+            keys |= {mcp_key(server.name, variable): value
+                     for variable, value in server.env.items() if value}
+        old = {name: await get_stored_key(name) for name in keys}
         try:
+            for name, value in keys.items():
+                await store_key(name, value)
             if saved:
                 await asyncio.to_thread(save_settings, self.data_dir, saved,
                                         tables=("modules",))
         except BaseException:
-            if key_name is not None:
+            for name, value in old.items():
                 with contextlib.suppress(ValueError):
-                    await store_key(key_name, old_key)
+                    await store_key(name, value)
             raise
         self.chosen.update(saved.get("modules", {}))
         self.work_folder = saved.get("work_folder", self.work_folder)
         self.tool_values = saved.get("tool_settings", self.tool_values)
-        self.key_saved = self.key_saved or key_name is not None
+        self.key_saved = self.key_saved or bool(keys)
         if u.mcp_servers is not None:
-            await self._store_server_keys(u.mcp_servers)
+            listed = {mcp_key(s.name, v) for s in u.mcp_servers for v in s.env}
+            for server in self.mcp_servers:
+                for variable in server.env:
+                    if (key := mcp_key(server.name, variable)) not in listed:
+                        with contextlib.suppress(ValueError):  # left over, unused
+                            await store_key(key, None)
+            self.mcp_servers = tuple(McpServer(s.name, s.command, s.url,
+                                               dict.fromkeys(s.env, ""))
+                                     for s in u.mcp_servers)

@@ -14,10 +14,12 @@ from collections.abc import Callable, Iterable
 from datetime import date
 from pathlib import Path
 
+from kaden.runtime.instance import LOCK_FILE
+
 BACKUPS = "backups"  # in the data folder
 PARTIAL = ".partial-"  # a backup being written; renamed to its date when whole
 SKIPPED = {"voice", BACKUPS}  # in the data folder: the speech models, and the backups
-SKIPPED_FILES = {"instance.lock"}
+SKIPPED_FILES = {LOCK_FILE}
 SKIPPED_ENDINGS = ("-wal", "-shm", "-journal", ".tmp")  # a database's own files; half-written
 KEEP = (("daily", 7), ("weekly", 4), ("monthly", 6))
 CHECK_S = 3600.0  # while the app runs: a new day gets its backup within this

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import fields, replace
 from typing import Any, NoReturn
@@ -52,6 +53,7 @@ class SetupRuntime:
         config.data_dir.mkdir(parents=True, exist_ok=True)
         self._ceiling = PermissionPolicy.inherited_ceiling()
         self._closed = False
+        self._settings_lock = asyncio.Lock()
         self._modules = ModuleSettings(config.data_dir, config.modules, frontend_kind, error,
                                        already_open)
         self._bus = EventBus(config.subscriber_queue_size, EventLog())
@@ -80,6 +82,10 @@ class SetupRuntime:
                         system_prompt=cfg.system_prompt, **await self._modules.fields())
 
     async def update_settings(self, update: SettingsUpdate) -> Settings:
+        async with self._settings_lock:  # one change at a time, as Runtime does
+            return await self._update_settings(update)
+
+    async def _update_settings(self, update: SettingsUpdate) -> Settings:
         if update.model is not None or update.maintenance_model is not None:
             raise ValueError("the model can be chosen once Kaden has started")
         own = runtime_changes(update)

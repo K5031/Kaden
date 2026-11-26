@@ -74,7 +74,8 @@ def read_key(name: str) -> str | None:
 
 
 def read_secret(name: str) -> str | None:
-    """A keychain entry only (no environment variable has such a name). Blocks."""
+    """A keychain entry only (no environment variable has such a name); None without
+    one. Blocks: get_stored_key reads it off the event loop."""
     try:
         return keyring.get_password(KEYCHAIN_SERVICE, name)
     except keyring.errors.KeyringError:
@@ -86,10 +87,7 @@ async def has_key(name: str | None) -> bool:
 
 
 async def get_stored_key(name: str) -> str | None:
-    try:
-        return await asyncio.to_thread(keyring.get_password, KEYCHAIN_SERVICE, name)
-    except keyring.errors.KeyringError:
-        return None
+    return await asyncio.to_thread(read_secret, name)
 
 
 async def store_key(name: str, value: str | None) -> None:

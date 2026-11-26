@@ -95,8 +95,10 @@ says why. If the check fails or the spending limit is reached, Kaden asks too.
   a file cannot talk it into allowing something.
 - Anything that touches keys and passwords (SSH and GPG keys, `.env` files, shell
   startup files such as `~/.bashrc`, password stores, cloud credentials, browser
-  profiles, the keychain) or Kaden's own data folder
-  always asks you, without a check: a secret the agent reads goes to your AI provider, and
+  profiles, the keychain, on a Mac also `~/Library/Keychains` and the `security`
+  command) or Kaden's own data folder (named by its path or just by its folder name, such
+  as `.kaden`; a work folder inside it, such as Continuous's home, is not counted) always
+  asks you, without a check: a secret the agent reads goes to your AI provider, and
   Kaden's data folder holds your conversations and the very settings that limit the
   agent.
 - Each check is a small request to your provider and counts toward the spending limit. Set
@@ -162,9 +164,9 @@ Everything is in Kaden's data folder, `~/.kaden` (or `--data-dir`, or `$KADEN_DA
 | `config.toml` | Optional hand-written configuration, for advanced use |
 | `memory.db` | Your conversations and long-term memory |
 | `memory-files.db`, `projects/` | The same, with the files-per-project memory |
-| `skills/` | Your own [skills](concepts.md#skills) |
+| `usage.json` | What has been spent so far; delete it, while Kaden is closed, to start counting from zero. One Kaden cannot read (another version, damaged) stops the first conversation from opening, and is left as it is |
 | `usage.json` | What has been spent so far; delete it, while Kaden is closed, to start counting from zero |
-| `events.jsonl` | Activity log of what Kaden did and when; it holds no message text, tool input or tool output |
+| `events.jsonl` | Activity log of what Kaden did and when; it holds no message text, tool input or tool output, and no duty, plan, question, MCP command or permission rule text |
 
 Settings from the screen override `config.toml`, and command-line options override both.
 To see the result, with defaults filled in and secrets hidden:

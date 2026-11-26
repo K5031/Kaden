@@ -624,7 +624,7 @@ async def test_time_passing_wakes_a_life(make):
     h = await duty_harness(make, [Step(text=""), Step(text="")])
     await h.runtime.set_duty(LIFE)
     await idle(h, 2)
-    assert "Time has passed." in notices(h.core.requests[1])[-1]
+    assert " passed; it is " in notices(h.core.requests[1])[-1]
 
 
 async def test_a_restart_does_not_pause_a_life(make):
@@ -696,3 +696,75 @@ async def test_a_days_spending_starts_again_the_next_day(tmp_path):
     tracker.charge(Usage(1, 1), 0.2)  # not its own time
     assert tracker.day_cost() == pytest.approx(0.3)
     assert tracker.totals.cost_usd == pytest.approx(1.1)  # the lifetime total goes on
+
+
+@pytest.mark.parametrize("due", [{"due_in_minutes": 1e12}, {"due_in_minutes": float("inf")},
+                                 {"due": "2999-01-01T09:00"}])
+def test_a_due_time_too_far_ahead_is_refused(due):
+    from kaden.runtime.duty import parse_plan
+
+    with pytest.raises(ValueError, match="at most"):
+        parse_plan([{"status": "pending", "content": "x", "activeForm": "x", **due}],
+                   time.time())
+    parse_plan([{"status": "pending", "content": "x", "activeForm": "x",
+                 "due_in_minutes": 60 * 24 * 365}], time.time())  # a year: fine
+
+
+# ── A life rests ──
+
+RESTFUL = Duty("You are Mira.", DutyKind.LIFE, min_interval_s=0.05, max_interval_s=3600)
+
+
+def rest(**arguments: Any) -> Step:
+    return Step(calls=[call("Rest", arguments, id=f"rest{len(arguments)}")])
+
+
+async def wake_in(h: Harness) -> float:
+    await eventually(lambda: h.runtime.snapshot().duty_wake_at is not None
+                     and h.runtime.snapshot().state == AgentState.IDLE)
+    return h.runtime.snapshot().duty_wake_at - time.time()
+
+
+async def test_a_life_can_rest_until_a_time_and_a_message_still_wakes_it(make):
+    h = await duty_harness(make, [rest(minutes=10), Step(text=""), Step(text="Hi!")])
+    await h.runtime.set_duty(RESTFUL)
+    assert 590 < await wake_in(h) <= 600
+    assert "Rest" in {t.name for t in h.core.requests[0].tools}
+    asked = len(h.core.requests)
+    await h.runtime.send("hello Mira")
+    await idle(h, asked + 1)
+    assert await wake_in(h) < 1  # the rest is over: it goes on as before
+
+
+@pytest.mark.parametrize("arguments", [{}, {"minutes": 10_000_000},
+                                       {"until": "2999-01-01T00:00"}])
+async def test_a_rest_is_at_most_the_longest_wait(make, arguments):
+    h = await duty_harness(make, [rest(**arguments), Step(text="")])
+    await h.runtime.set_duty(RESTFUL)
+    assert 3590 < await wake_in(h) <= 3600
+
+
+async def test_a_rest_until_a_time_ends_then(make):
+    until = datetime.fromtimestamp(time.time() + 1800).isoformat(timespec="seconds")
+    h = await duty_harness(make, [rest(until=until), Step(text="")])
+    await h.runtime.set_duty(RESTFUL)
+    assert 1790 < await wake_in(h) <= 1801
+
+
+async def test_only_a_life_rests(make):
+    h = await duty_harness(make, [Step(text="")])
+    await h.runtime.set_duty(QUIET)
+    await idle(h, 1)
+    assert "Rest" not in {t.name for t in h.core.requests[0].tools}
+
+
+def test_a_lifes_prompt_names_resting_as_one_way_to_wait():
+    section = duties.prompt(RESTFUL, [])
+    assert "Rest" in section and "due time" in section
+
+
+def test_a_lifes_check_in_says_how_long_it_rested_and_the_time():
+    now = datetime(2026, 11, 26, 22, 15).timestamp()
+    said = duties.notice(duties.CHECK_IN, RESTFUL, rested_s=61, now=now)
+    assert said == "1 minute passed; it is 22:15."
+    assert duties.notice(duties.CHECK_IN, RESTFUL) == "Time has passed."

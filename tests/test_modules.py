@@ -523,3 +523,24 @@ async def test_saved_mcp_servers_offer_their_tools_after_a_start(tmp_path, monke
     scripted(monkeypatch, script)
     await asyncio.wait_for(launcher.launch(args(tmp_path), TERMINAL), 30)
     assert "mcp__notes__add" in seen and "recall" in seen
+
+
+def test_every_loader_reads_a_factory_path_alike(tmp_path, monkeypatch):
+    """package.module:attribute, the attribute dotted as entry points allow."""
+    from kaden.api import Core, InstancePaths, ToolSetting
+    from kaden.runtime.instance import load_module
+    from kaden.runtime.modules import declared_settings, load_entry
+
+    (tmp_path / "boxed_modules.py").write_text(
+        "from tests.fakes.core import factory as core\n"
+        "from kaden.api import ToolSetting\n"
+        "class Box:\n"
+        "    factory = staticmethod(core)\n"
+        "Box.factory.user_config = (ToolSetting('fast', 'Go fast', 'boolean', False),)\n"
+        "Box.factory.event_loop = print\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    target = "boxed_modules:Box.factory"
+    assert isinstance(load_module(ModuleSpec(target), Core, InstancePaths(tmp_path)), Core)
+    assert load_entry("core", "boxed", target) is not None
+    assert declared_settings(target) == (ToolSetting("fast", "Go fast", "boolean", False),)
+    assert launcher.frontend_loop(ModuleSpec(target)) is print

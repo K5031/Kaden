@@ -1063,6 +1063,21 @@ DUTY_TOOLS: Mapping[str, ToolSpec] = {
          "properties": {"question": {"type": "string", "minLength": 1}, "replies": _REPLIES},
          "required": ["question"]},
     ),
+    # A life's only (DutyKind.LIFE).
+    "Rest": ToolSpec(
+        "Rest",
+        "Rest: time does not wake you until then, at most your longest wait ahead. Give "
+        "until or minutes; with neither, you rest until something wakes you. The user "
+        "writing, something you watch happening or your background work finishing still "
+        "wakes you at once. Then end your turn.",
+        {"type": "object", "properties": {
+            "until": {"type": "string", "description":
+                      "ISO 8601 (e.g. 2026-11-12T09:00), local time unless an offset is "
+                      "given."},
+            "minutes": {"type": "number", "minimum": 0,
+                        "description": "Instead of until: minutes from now."}}},
+        read_only=True,
+    ),
     "finish_goal": ToolSpec(
         "finish_goal",
         "Declare your goal reached, with a short report for the user. Your duty then ends. "

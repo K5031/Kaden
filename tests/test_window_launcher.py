@@ -144,4 +144,4 @@ def test_the_window_makes_no_folder_of_its_own(tmp_path, monkeypatch):
     window_frontends(monkeypatch, script)
     window.main(["--data-dir", str(tmp_path)])
     assert roots == [(str(tmp_path), True)]
-    assert len(loads) == 2  # to choose the loop, then to run on it: never by the launcher itself
+    assert len(loads) == 1  # once, to choose the loop: not again on it (keychain reads)

@@ -140,7 +140,7 @@ from kaden.runtime.config import (
     Restart,
     RuntimeConfig,
 )
-from kaden.runtime.events import EventBus, EventLog
+from kaden.runtime.events import EventBus, EventLog, settings_saved
 from kaden.runtime.instance import InstanceLock
 from kaden.runtime.modules import ModuleSettings
 from kaden.runtime.operations import Context, Operation
@@ -182,6 +182,7 @@ class _Open:
 
 _SAME = object()  # _close_prompt: the future gets the reply itself
 _IN_WORDS = object()  # a question answered by the person's message that follows
+_NO_ANSWER = object()  # a life's prompt that closed unanswered (life_prompt_timeout_s)
 
 
 def _definition(spec: ToolSpec) -> dict[str, Any]:
@@ -216,6 +217,7 @@ PLAN_MODE_PROMPT = (
     "are refused. Read and search to understand the task, ask with AskUserQuestion where "
     "the approach is open, then present a concise plan with ExitPlanMode and wait for the "
     "user's approval.")
+KNOWN_OPS = 200  # finished operations TaskOutput still finds; their outcome is delivered
 DEFER_OVER_CHARS = 40_000  # deferrable tools' definitions together, about 10k tokens
 
 
@@ -452,13 +454,16 @@ class Runtime:
         self._fired: list[_Firing] = []
         self._confirms: dict[str, _Firing] = {}
         self._keeping: asyncio.Task[None] | None = None
+        self._watch_writing = asyncio.Lock()
+        self._watch_saves: set[asyncio.Task[None]] = set()
         # Whether the agent was last told the user talks to it; None: not looked up yet.
         self._spoken: bool | None = None
         # What came in since the last recall (the user's messages, notices, firings).
         self._came_in: list[str] = []
         self._pending_results: list[tuple[OperationResult, ToolFinished]] = []
         self._ops: dict[CallId, Operation] = {}  # running
-        self._known_ops: dict[CallId, Operation] = {}  # launched by this process
+        # Launched for the open conversation (TaskOutput), the newest KNOWN_OPS finished.
+        self._known_ops: dict[CallId, Operation] = {}
         # What waits on the person (Prompt), by id, and what each reply settles.
         self._open: dict[str, _Open] = {}
         # Tool name -> whether the grant also covers calls that reach outside the work
@@ -478,6 +483,10 @@ class Runtime:
         self._duty_timer: asyncio.Task[None] | None = None
         self._duty_wake_at: float | None = None
         self._duty_cause: str | None = None  # why the next cycle was requested for a duty
+        self._rest_until: float | None = None  # a life rests until then (Rest), this turn
+        # When the last cycle of the open conversation ended: a life rested since. None:
+        # not since it was opened.
+        self._turn_ended: float | None = None
         # Without a duty: steps due up to this time have reminded, or fell due while the
         # conversation was closed and wait for the user.
         self._reminded = 0.0
@@ -563,14 +572,19 @@ class Runtime:
         if self._state() not in (AgentState.NOT_STARTED, AgentState.IDLE, AgentState.STOPPED,
                                  AgentState.FAILED):
             raise RuntimeStateError(f"cannot start while {self._state()}", Refusal.BUSY)
-        await self._withdraw_proposals()  # a proposal belongs to its conversation
-        if self._ops:
+        if self._ops.keys() - self._proposals().keys():  # proposals are withdrawn below
             raise RuntimeStateError("operations are still outstanding", Refusal.BUSY)
         if options.conversation_id is not None and (options.seed_from is not None
                                                     or options.folder is not None):
             raise ValueError("seed_from and folder apply to a new conversation only")
         if options.folder is not None and not Path(options.folder).expanduser().is_dir():
             raise ValueError(f"{options.folder} is not a folder")
+        # What is opened, looked up first: a start refused for an unknown id changes nothing.
+        found = None
+        if options.conversation_id is not None:
+            found = await self._find_conversation(options.conversation_id)
+        elif options.seed_from is not None:
+            await self._find_conversation(options.seed_from)
         if not self._models:
             await self._refresh_models()
         model = options.model or self._model or next(iter(self._models), None)
@@ -584,15 +598,25 @@ class Runtime:
 
         if not self._started:
             data_dir = self._config.data_dir
+            try:
+                await asyncio.to_thread(self._budget.load, data_dir / USAGE_FILE)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"{data_dir / USAGE_FILE} cannot be read: {e}") from None
             self._started = True
-            await asyncio.to_thread(self._budget.load, data_dir / USAGE_FILE)
             self._budget.save()
             await self._budget.flush()
             self._log.open(data_dir / EVENT_LOG_FILE)
             self._loop_task = asyncio.create_task(self._run_loop())
 
-        self._end_watch_tasks()  # the conversation left keeps them, for when it is back
-        conversation, resumed = await self._open_conversation(options)
+        await self._leave()
+        try:
+            conversation, resumed = await self._open_conversation(options, found)
+        except Exception:  # the open conversation goes on as it was
+            if self._conversation is not None:
+                with contextlib.suppress(ValueError):
+                    await self._use_folder(self._conversation.folder)
+                await self._resume_watches()
+            raise
         if self._conversation is None or conversation.id != self._conversation.id:
             self._grants.clear()
             self._set_plan_mode(False, "conversation")
@@ -604,9 +628,9 @@ class Runtime:
         self._agent_config = AgentConfig(self._config.budget, self._permissions)
         # A resumed conversation has no pending wake-up: it waits for the user.
         self._wake_set, self._immediate_wake, self._unseen = None, False, False
+        self._rest_until = self._turn_ended = None
         self._cancel_duty()
         self._answered()
-        self._backlog.clear()
         if resumed:
             await self._repair()
         self._log.decision("start", conversation=conversation.id, resumed=resumed,
@@ -618,6 +642,27 @@ class Runtime:
             self._schedule_duty()
         await self._resume_watches()
         return conversation
+
+    async def _leave(self) -> None:
+        """What belongs to the open conversation stays with it: its proposals are
+        withdrawn, its watch tasks end (it keeps the watches, for when it is back), the
+        messages waiting to be saved are saved into it, and the firings it holds are let
+        go unconfirmed, so their watches see them again."""
+        await self._withdraw_proposals()
+        await self._end_watch_tasks()
+        self._known_ops.clear()  # nothing runs: start() refuses while something does
+        if self._conversation is not None and (self._inbox or self._backlog):
+            try:
+                await self._deliver_inbox()
+                await self._append()
+            except _AppendFailed:
+                self._log.decision("left_unsaved",
+                                   messages=len(self._inbox) + len(self._backlog))
+        self._inbox.clear()
+        self._backlog.clear()
+        self._fired.clear()
+        self._confirms.clear()
+        self._came_in.clear()
 
     async def select_model(self, model_id: str) -> None:
         await self._refresh_models()
@@ -932,13 +977,33 @@ class Runtime:
         self._update_state()
 
     async def _wait_for_person(self, prompt: Prompt) -> Any:
-        """Open `prompt` and wait for its reply; closed unanswered if the wait ends first
-        (Stop)."""
-        answered = self._open_prompt(prompt)
+        """Open `prompt` and wait for its reply (_reply); closed unanswered if the wait ends
+        first (Stop)."""
         try:
-            return await answered
+            return await self._reply(prompt)
         finally:
             self._close_prompt(prompt.id, None)
+
+    async def _reply(self, prompt: Prompt) -> Any:
+        """Open `prompt` and wait for its reply. In a life, whose user may be away from the
+        computer (talking to it elsewhere), one left unanswered for life_prompt_timeout_s
+        closes by itself: _NO_ANSWER."""
+        answered = self._open_prompt(prompt)
+        duty = self._conversation.duty if self._conversation is not None else None
+        if duty is None or duty.kind != DutyKind.LIFE:
+            return await answered
+        try:
+            return await asyncio.wait_for(asyncio.shield(answered),
+                                          self._config.life_prompt_timeout_s)
+        except TimeoutError:
+            self._log.decision("prompt_timed_out", prompt_id=prompt.id, kind=prompt.kind,
+                               after_s=self._config.life_prompt_timeout_s)
+            self._close_prompt(prompt.id, None, outcome=_NO_ANSWER)
+            return _NO_ANSWER
+
+    def _no_answer(self) -> str:
+        return (f"No answer in {duties.span(self._config.life_prompt_timeout_s)}: the user "
+                "may be away from the computer.")
 
     def _answered_in_words(self, prompt: Prompt, text: str) -> None:
         """A message answers `prompt` (one that takes words): its result says the answer
@@ -966,7 +1031,7 @@ class Runtime:
     async def _shut_down(self) -> None:
         self._cycle_requested = False
         self._cancel_duty()
-        self._end_watch_tasks()
+        await self._end_watch_tasks()
         await self.stop()
         if self._stop_task is not None:
             await self._stop_task
@@ -989,7 +1054,10 @@ class Runtime:
                 logger.exception("module aclose failed")
         if self._started:
             self._budget.save()
-            await self._budget.flush()
+            try:
+                await self._budget.flush()
+            except Exception:  # the data folder is let go all the same
+                logger.exception("usage could not be saved")
         if self._inherited is None:
             os.environ.pop(PERMISSION_CEILING_ENV, None)
         else:
@@ -1095,10 +1163,8 @@ class Runtime:
                                          permissions=permissions)
         model_changed = model != self._model
         self._model = model
-        self._log.decision(
-            "settings", changed=changed, loosened=loosened,
-            **{k: v for k, v in saved.items() if k != "system_prompt"},
-            **({"system_prompt_chars": len(u.system_prompt)} if u.system_prompt else {}))
+        self._log.decision("settings", changed=changed, loosened=loosened,
+                           **settings_saved(saved))
         if model_changed and model is not None:
             self._emit(ModelSelected(model))
         settings = await self.settings()
@@ -1211,10 +1277,15 @@ class Runtime:
                 specs["ask_for_help"] = DUTY_TOOLS["ask_for_help"]
             if conversation.duty is not None and conversation.duty.kind == DutyKind.GOAL:
                 specs["finish_goal"] = DUTY_TOOLS["finish_goal"]
+            if conversation.duty is not None and conversation.duty.kind == DutyKind.LIFE:
+                specs["Rest"] = DUTY_TOOLS["Rest"]
         await self._load_skills()
         if self._skills:
             specs[SKILL_TOOL.name] = SKILL_TOOL
-        self._memory_tools, self._tool_owner = set(), {}
+        # Built apart and put in place at once: a call, a watch or a proposal looking
+        # meanwhile finds the tables of the last listing whole.
+        memory_tools: set[str] = set()
+        owners: dict[str, Tools] = {}
         for module in (self._memory, self._core, *self._tools):
             try:
                 offered = await module.list_tools()
@@ -1229,9 +1300,10 @@ class Runtime:
                     continue
                 specs[spec.name] = spec
                 if module is self._memory:
-                    self._memory_tools.add(spec.name)
+                    memory_tools.add(spec.name)
                 elif module is not self._core:
-                    self._tool_owner[spec.name] = module
+                    owners[spec.name] = module
+        self._memory_tools, self._tool_owner = memory_tools, owners
         deferrable = [s for s in specs.values() if s.deferrable and not s.deferred]
         searchable = [s for s in specs.values() if s.deferred]  # always, however few
         if sum(len(json.dumps(_definition(s))) for s in deferrable) > DEFER_OVER_CHARS:
@@ -1293,12 +1365,13 @@ class Runtime:
 
     # ── Conversations and resume repair ──────────────────────────────────
 
-    async def _open_conversation(self, options: StartOptions) -> tuple[ConversationInfo, bool]:
-        """Find or create the conversation and move the Tools to its folder."""
-        if options.conversation_id is not None:
-            info = await self._find_conversation(options.conversation_id)
-            await self._use_folder(info.folder)
-            return info, True
+    async def _open_conversation(self, options: StartOptions, found: ConversationInfo | None
+                                 ) -> tuple[ConversationInfo, bool]:
+        """`found` (the conversation resumed), or one created; the Tools moved to its
+        folder."""
+        if found is not None:
+            await self._use_folder(found.folder)
+            return found, True
         folder = options.folder
         if folder is None and options.seed_from is not None:
             folder = (await self._find_conversation(options.seed_from)).folder
@@ -1312,14 +1385,8 @@ class Runtime:
         if options.seed_from is None:  # stored with its first use (_save_draft)
             now = time.time()
             return ConversationInfo(_new_id(), None, now, now, folder=folder), False
-        try:
-            info = await self._memory.create_conversation(seed_from=options.seed_from,
-                                                          folder=folder)
-        except BaseException:
-            if self._conversation is not None:
-                with contextlib.suppress(ValueError):
-                    await self._use_folder(self._conversation.folder)
-            raise
+        info = await self._memory.create_conversation(seed_from=options.seed_from,
+                                                      folder=folder)
         return info, False
 
     async def _use_folder(self, folder: str | None) -> bool:
@@ -1471,6 +1538,8 @@ class Runtime:
                 continue
             if self._flush_tasks:
                 await asyncio.wait(self._flush_tasks)
+                if not self._cycle_requested or self._stopping or self._closed:
+                    continue  # Stop came meanwhile
             self._cycle_requested = False
             self._cycle_active = True
             self._cycle_task = asyncio.create_task(self._cycle())
@@ -1490,6 +1559,7 @@ class Runtime:
         finally:
             self._cycle_active = False
             self._phase = AgentState.THINKING
+            self._turn_ended = time.time()
             self._log.decision("cycle_end", state=self._base)
             if not self._stopping:
                 await self._flush_outside_cycle()
@@ -1510,15 +1580,17 @@ class Runtime:
     async def _cycle_body(self) -> None:
         self._set_phase(AgentState.THINKING)
         self._sent_back = False
+        self._rest_until = None  # whatever woke it ends the rest
         await self._append()  # drain any backlog first
         await self._flush_results()
         await self._deliver_inbox()
-        self._own_time = self._duty_cause is not None  # a duty's, not the user's
-        duty_started = self._duty_cause is not None
+        # A duty's, not the user's.
+        duty_started = self._own_time = self._duty_cause is not None
         if self._duty_cause is not None:
             cause, self._duty_cause = self._duty_cause, None
             duty = self._conversation.duty if self._conversation is not None else None
-            notice = duties.notice(cause, duty)
+            notice = duties.notice(cause, duty, rested_s=None if self._turn_ended is None
+                                   else time.time() - self._turn_ended)
             if duty is None and cause == duties.DUE and self._conversation is not None:
                 self._reminded = time.time()
                 notice = duties.reminder(self._conversation.plan, self._reminded)
@@ -1636,7 +1708,8 @@ class Runtime:
             self._log.decision("duty_held", reason="the day's amount is spent")
             self._wake_in(max(0.0, next_day() - time.time()), duties.NEW_DAY)
             return
-        self._wake_in(*duties.next_wake(duty, self._conversation.plan))
+        self._wake_in(*duties.next_wake(duty, self._conversation.plan,
+                                        rest_until=self._rest_until))
 
     def _day_spent(self) -> bool:
         """A life has spent today's amount (Budget.max_cost_usd_per_day)."""
@@ -1685,10 +1758,12 @@ class Runtime:
 
     async def _duration_watchdog(self) -> None:
         """While operations run, cancel them all as Stop does once the duration budget is
-        exhausted. Inference has its own deadline (_race_stop_or_deadline)."""
+        exhausted. Inference has its own deadline (_attempt)."""
         while self._ops:
             remaining = self._budget.seconds_until_duration_exhausted()
-            if remaining:
+            if remaining is None:  # the limit was removed
+                return
+            if remaining > 0:
                 await asyncio.sleep(remaining)
                 continue
             self._log.decision("duration_exhausted", operations=list(self._ops))
@@ -1748,25 +1823,31 @@ class Runtime:
             self._failure(kind, f"Memory maintenance failed: {exc}")
         return False
 
-    async def _race_stop(self, task: asyncio.Future[Any]) -> bool:
-        """Wait for task or Stop. On Stop, cancel it and allow the grace period.
-        Returns True if Stop interrupted the task."""
+    async def _race_stop(self, task: asyncio.Future[Any], *, timeout: float | None = None,
+                         what: str = "A module call") -> bool:
+        """Wait for task, Stop or `timeout`. On Stop, end the task (_end_task). Returns
+        True if Stop interrupted the task; after a timeout it may still run."""
         stopper = asyncio.ensure_future(self._stop_event.wait())
         try:
-            await asyncio.wait({task, stopper}, return_when=asyncio.FIRST_COMPLETED)
+            await asyncio.wait({task, stopper}, return_when=asyncio.FIRST_COMPLETED,
+                               timeout=timeout)
         except asyncio.CancelledError:
             task.cancel()
             raise
         finally:
             stopper.cancel()
-        if task.done():
+        if task.done() or not self._stop_event.is_set():
             return False
+        await self._end_task(task, what)
+        return True
+
+    async def _end_task(self, task: asyncio.Future[Any], what: str) -> None:
+        """Cancel it and allow the grace period; one that outlasts it is abandoned, said."""
         task.cancel()
         await asyncio.wait({task}, timeout=self._config.cancel_grace_s)
         if not task.done():
             self._failure(FailureKind.INTERNAL,
-                          "A module call did not confirm cancellation; it was abandoned.")
-        return True
+                          f"{what} did not confirm cancellation; it was abandoned.")
 
     # ── Inference ────────────────────────────────────────────────────────
 
@@ -1862,25 +1943,27 @@ class Runtime:
         task = asyncio.ensure_future(self._consume(request, stream, info, foreground))
         try:
             if foreground:
-                stopped = await self._race_stop_or_deadline(task)
+                stopped = await self._race_stop(
+                    task, timeout=self._budget.seconds_until_duration_exhausted(),
+                    what="Inference")
             else:
                 await asyncio.wait({task})
                 stopped = False
+            # Not stopped and not done: the duration budget ran out while streaming.
+            timed_out = not stopped and not task.done()
+            if timed_out:
+                await self._end_task(task, "Inference")
         except asyncio.CancelledError:
             task.cancel()
             self._charge(stream.estimate(), info)
             raise
         finally:
             self._budget.end_activity()
-        if stopped:
+        if stopped or timed_out:
             self._charge(stream.estimate(), info)
             await self._commit_partial(stream)
-            raise _Stopped
-        if not task.done():  # duration budget ran out while streaming
-            task.cancel()
-            await asyncio.wait({task}, timeout=self._config.cancel_grace_s)
-            self._charge(stream.estimate(), info)
-            await self._commit_partial(stream)
+            if stopped:
+                raise _Stopped
             raise _BudgetHit(self._budget.exhausted() or "max_duration_s exhausted")
         exc = None if task.cancelled() else task.exception()
         if stream.completed is not None and exc is None:
@@ -1893,21 +1976,6 @@ class Runtime:
         if exc is None:
             raise CoreError("inference was cancelled")
         raise exc
-
-    async def _race_stop_or_deadline(self, task: asyncio.Future[Any]) -> bool:
-        stopper = asyncio.ensure_future(self._stop_event.wait())
-        try:
-            await asyncio.wait({task, stopper}, return_when=asyncio.FIRST_COMPLETED,
-                               timeout=self._budget.seconds_until_duration_exhausted())
-        finally:
-            stopper.cancel()
-        if task.done() or not self._stop_event.is_set():
-            return False
-        task.cancel()
-        await asyncio.wait({task}, timeout=self._config.cancel_grace_s)
-        if not task.done():
-            self._failure(FailureKind.INTERNAL, "Inference did not confirm cancellation.")
-        return True
 
     async def _consume(self, request: InferenceRequest, st: _Stream, info: ModelInfo,
                        foreground: bool) -> None:
@@ -2048,14 +2116,16 @@ class Runtime:
                                    said=outcome.said[:500])
         return "\n".join(said) or None
 
-    async def _run_module_call(self, call: ToolCall, spec: ToolSpec
-                               ) -> tuple[ToolResult, float]:
+    async def _cleared(self, call: ToolCall, spec: ToolSpec) -> tuple[ToolResult | None, bool]:
+        """What comes before a module's call runs: Stop, the hooks, the permission policy
+        and the budget, which counts it. A refusal, or None and whether its module judged
+        it confined."""
         not_started = ToolResult(call.id, ToolStatus.CANCELLED,
                                  "Not started: the agent was stopped.")
         if self._stopping:
-            return not_started, 0.0
+            return not_started, False
         if said := await self._hooked("before", call):
-            return ToolResult(call.id, ToolStatus.REFUSED, f"Refused by a hook: {said}"), 0.0
+            return ToolResult(call.id, ToolStatus.REFUSED, f"Refused by a hook: {said}"), False
         try:
             owner = self._tool_owner.get(call.name)
             confined = owner is not None and await owner.confined(self._bare(call))
@@ -2063,15 +2133,22 @@ class Runtime:
             logger.exception("Tools.confined failed for %s", call.name)
             confined = False
         if refusal := await self._gate(call, spec, confined):
-            return ToolResult(call.id, ToolStatus.REFUSED, refusal), 0.0
+            return ToolResult(call.id, ToolStatus.REFUSED, refusal), False
         if self._stopping:
-            return not_started, 0.0
+            return not_started, False
         reason = self._budget.reserve_tool_call()
         self._log.decision("budget_check", before="tool", call_id=call.id, ok=reason is None,
                            reason=reason)
         if reason:
-            return ToolResult(call.id, ToolStatus.REFUSED, f"Refused: budget {reason}."), 0.0
+            return ToolResult(call.id, ToolStatus.REFUSED, f"Refused: budget {reason}."), False
         self._emit(UsageUpdated(self._budget.snapshot()))
+        return None, confined
+
+    async def _run_module_call(self, call: ToolCall, spec: ToolSpec
+                               ) -> tuple[ToolResult, float]:
+        refused, confined = await self._cleared(call, spec)
+        if refused is not None:
+            return refused, 0.0
         wait: float | None = self._config.initial_wait_s
         asked_background = False
         if spec.foreground:
@@ -2117,31 +2194,34 @@ class Runtime:
         return [w for w in self._watches if w.conversation_id == self._conversation.id]
 
     async def _save_watches(self) -> None:
+        """Written whole, one write at a time, in order; one under way is finished even
+        when its caller is cancelled, and shutdown waits for it (_end_watch_tasks)."""
         assert self._watches is not None
-        try:
-            await asyncio.to_thread(watch_files.save, self._config.data_dir, self._watches)
-        except OSError:
-            logger.exception("the watches could not be kept")
+        watches = list(self._watches)
+
+        async def write() -> None:
+            async with self._watch_writing:
+                try:
+                    await asyncio.to_thread(watch_files.save, self._config.data_dir, watches)
+                except OSError:
+                    logger.exception("the watches could not be kept")
+
+        task = asyncio.ensure_future(write())
+        self._watch_saves.add(task)
+        task.add_done_callback(self._watch_saves.discard)
+        await asyncio.shield(task)
 
     async def _start_watch(self, call: ToolCall, spec: ToolSpec) -> ToolResult:
-        """Through the usual checks, then kept: answered at once with its id."""
-        if said := await self._hooked("before", call):
-            return ToolResult(call.id, ToolStatus.REFUSED, f"Refused by a hook: {said}")
-        try:
-            owner = self._tool_owner.get(call.name)
-            confined = owner is not None and await owner.confined(self._bare(call))
-        except Exception:  # module calls are wrapped; not knowing means asking
-            logger.exception("Tools.confined failed for %s", call.name)
-            confined = False
-        if refusal := await self._gate(call, spec, confined):
-            return ToolResult(call.id, ToolStatus.REFUSED, refusal)
-        if reason := self._budget.reserve_tool_call():
-            return ToolResult(call.id, ToolStatus.REFUSED, f"Refused: budget {reason}.")
+        """The one there is, or through the usual checks (_cleared), then kept: answered at
+        once with its id."""
         arguments = dict(self._bare(call).arguments)
         if same := next((w for w in self._watch_list()
                          if w.name == call.name and w.arguments == arguments), None):
             return ToolResult(call.id, ToolStatus.OK, f"Already watching ({same.id}): "
                               f"{call.name}. TaskStop with {same.id} ends it.")
+        refused, _ = await self._cleared(call, spec)
+        if refused is not None:
+            return refused
         watch = await self._add_watch(call.name, arguments, kept=False)
         return ToolResult(call.id, ToolStatus.OK, (
             f"Watching ({watch.id}): {call.name}. Each time it fires you are told, in a "
@@ -2179,14 +2259,19 @@ class Runtime:
         if watch.id not in self._watch_tasks:
             self._watch_tasks[watch.id] = asyncio.create_task(self._watch_loop(watch))
 
-    def _end_watch_tasks(self) -> None:
-        """Stop the tasks, not the watches: they start again when the conversation is."""
-        for task in self._watch_tasks.values():
-            task.cancel()
+    async def _end_watch_tasks(self) -> None:
+        """Stop the tasks, not the watches: they start again when the conversation is.
+        Waits for them (a call that outlasts the grace period is left) and for the
+        watches' writes."""
+        tasks = [*self._watch_tasks.values(), *filter(None, [self._keeping])]
         self._watch_tasks.clear()
-        if self._keeping is not None:
-            self._keeping.cancel()
-            self._keeping = None
+        self._keeping = None
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.wait(tasks, timeout=self._config.cancel_grace_s)
+        if self._watch_saves:
+            await asyncio.wait(set(self._watch_saves))
 
     async def _resume_watches(self) -> None:
         """The opened conversation's watches, started again silently; then those the
@@ -2197,12 +2282,10 @@ class Runtime:
             except (OSError, ValueError) as e:
                 logger.warning("the watches were not read: %s", e)
                 self._watches = []
-        if not self._watch_list():
-            await self._keep_standing()
-            return
-        await self._offered_tools()  # which module runs each
-        for watch in self._watch_list():
-            self._run_watch(watch)
+        if self._watch_list():
+            await self._offered_tools()  # which module runs each
+            for watch in self._watch_list():
+                self._run_watch(watch)
         await self._keep_standing()
 
     def _keep_standing_soon(self) -> None:
@@ -2229,9 +2312,9 @@ class Runtime:
                 await self._drop_watch(watch)
         if named:
             await self._offered_tools()
-        running = {(w.name, str(w.arguments), w.as_user) for w in self._watch_list() if w.kept}
+        running = [(w.name, w.arguments, w.as_user) for w in self._watch_list() if w.kept]
         for name, arguments, as_user in named:
-            if (name, str(arguments), as_user) not in running:
+            if (name, arguments, as_user) not in running:
                 await self._add_watch(name, arguments, kept=True, as_user=as_user)
 
     async def _watch_loop(self, watch: watch_files.Watch) -> None:
@@ -2334,7 +2417,7 @@ class Runtime:
         # the call touches what always asks (Kaden's own data, credentials).
         if (self._ceiling is None
                 and PermissionRule.allows(self._config.permission_rules, bare)
-                and always_ask(call, self._config.data_dir) is None):
+                and always_ask(call, self._config.data_dir, self._project()) is None):
             auto(Decision.ALLOW_ALWAYS, "rule")
             return None
         if call.name in self._grants and (confined or self._grants[call.name]):
@@ -2362,12 +2445,16 @@ class Runtime:
         # What "always" and "never" would keep, chosen once: the card names them.
         always = PermissionRule.for_calls(bare, have=self._config.permission_rules)
         never = PermissionRule.for_calls(bare, allow=False)
-        decision = Decision(await self._open_prompt(Prompt(
+        reply = await self._reply(Prompt(
             _new_id(), PromptKind.PERMISSION,
             description if isinstance(description, str) and description else call.name,
             call, {"read_only": spec.read_only, "confined": confined,
                    "reason": reason, "always": [str(r) for r in always],
-                   "never": [str(r) for r in never]})))
+                   "never": [str(r) for r in never]}))
+        if reply is _NO_ANSWER:
+            auto(Decision.DENY, "no answer")
+            return f"Refused: {self._no_answer()}"
+        decision = Decision(reply)
         if decision is Decision.ALLOW_ALWAYS and not always:
             decision = Decision.ALLOW_ONCE  # nothing to keep: as once
         if decision in (Decision.ALLOW_ALWAYS, Decision.DENY_ALWAYS):
@@ -2389,7 +2476,7 @@ class Runtime:
 
     async def _review(self, call: ToolCall, spec: ToolSpec) -> Verdict:
         """The automatic permission check (review.py). Fails closed: any problem asks."""
-        if reason := always_ask(call, self._config.data_dir):
+        if reason := always_ask(call, self._config.data_dir, self._project()):
             self._log.decision("permission_review", call_id=call.id, allow=False, by="rule")
             return Verdict(False, reason)
         if reason := self._check_budget("review"):
@@ -2520,6 +2607,9 @@ class Runtime:
                        on_late=self._on_late)
         self._ops[call.id] = op
         self._known_ops[call.id] = op
+        finished = [i for i, known in self._known_ops.items() if known.result is not None]
+        for old in finished[:max(0, len(finished) - KNOWN_OPS)]:
+            del self._known_ops[old]
         if call.id not in self._uncounted:
             self._budget.begin_activity()
         self._watch_duration()
@@ -2581,10 +2671,20 @@ class Runtime:
         """Before the agent answers what came in: the long-term memory notes relevant to
         it, chosen by the maintenance model from their titles and descriptions, into the
         conversation as a hidden notice. Not those every request shows, nor those still in
-        view and unchanged. A failure recalls nothing."""
+        view and unchanged. A failure recalls nothing; Stop ends it."""
         came_in, self._came_in = "\n\n".join(self._came_in)[-RECALL_INPUT_CHARS:], []
+        task = asyncio.ensure_future(self._recall_notes(came_in, specs))
+        if await self._race_stop(task) or task.cancelled():
+            return
+        if (exc := task.exception()) is not None:
+            expected = isinstance(exc, BudgetExhausted | CoreError)
+            if not expected:  # Memory's: its message may quote what it keeps
+                logger.error("recall failed", exc_info=exc)
+            self._log.decision("recall", failed=str(exc) if expected else type(exc).__name__)
+
+    async def _recall_notes(self, came_in: str, specs: dict[str, ToolSpec]) -> None:
         try:
-            notes = await self._memory.notes()
+            notes = await self._memory.notes(folder=self._project())
         except NotImplementedError:
             return
         if not any(not n.always_shown for n in notes):
@@ -2601,16 +2701,9 @@ class Runtime:
         if not candidates:
             return
         listed = "\n".join(f"- {n.title}: {n.description}" for n in candidates.values())
-        request = (f"## What came in\n<<<\n{came_in}\n>>>\n\n## The notes\n{listed}")
-        try:
-            if reason := self._check_budget("maintenance"):
-                raise BudgetExhausted(reason)
-            answer = await _Completion(self)._request(
-                RECALL_SYSTEM, [Message(_new_id(), Role.USER, (Text(request),), time.time())],
-                RECALL_MAX_TOKENS, light=True)
-        except (BudgetExhausted, CoreError) as e:
-            self._log.decision("recall", candidates=len(candidates), failed=str(e))
-            return
+        answer = await self._ask_light(
+            RECALL_SYSTEM, f"## What came in\n<<<\n{came_in}\n>>>\n\n## The notes\n{listed}",
+            RECALL_MAX_TOKENS)
         chosen: list[MemoryNote] = []
         for line in answer.splitlines():
             note = candidates.get(line.strip().lstrip("-*• ").strip().casefold())
@@ -2623,16 +2716,23 @@ class Runtime:
                 f"\n\n## {n.title}\n(note {json.dumps(n.id)}, changed {n.updated_at!r})\n"
                 f"{n.text}" for n in chosen), hidden=True)
 
+    async def _ask_light(self, system: str, request: str, max_tokens: int) -> str:
+        """One metered request to the maintenance model. BudgetExhausted or CoreError
+        when it cannot answer."""
+        if reason := self._check_budget("maintenance"):
+            raise BudgetExhausted(reason)
+        return await _Completion(self)._request(
+            system, [Message(_new_id(), Role.USER, (Text(request),), time.time())],
+            max_tokens, light=True)
+
     async def _answer(self, prompt: str, output: ToolOutput) -> ToolOutput:
         """The maintenance model's answer to `prompt` from a tool's output (answers_prompt);
         the output itself, with why, when it cannot answer."""
-        request = (f"{prompt}\n\n--- The content to answer from ---\n{output.content}")
         try:
-            if reason := self._check_budget("maintenance"):
-                raise BudgetExhausted(reason)
-            answer = await _Completion(self)._request(
-                ANSWER_SYSTEM, [Message(_new_id(), Role.USER, (Text(request),), time.time())],
-                ANSWER_MAX_TOKENS, light=True)
+            answer = await self._ask_light(
+                ANSWER_SYSTEM,
+                f"{prompt}\n\n--- The content to answer from ---\n{output.content}",
+                ANSWER_MAX_TOKENS)
         except (BudgetExhausted, CoreError) as e:
             return replace(output, content=f"[Could not answer the prompt ({e}); the content "
                                            f"itself follows.]\n{output.content}")
@@ -2713,6 +2813,20 @@ class Runtime:
                 self._emit(HelpNeeded(self._help))
                 return ToolStatus.OK, ("Asked. Your check-ins pause until your supervisor "
                                        "answers; end your turn.")
+            case "Rest":
+                duty = self._conversation.duty
+                if duty is None or duty.kind != DutyKind.LIFE:
+                    return ToolStatus.ERROR, "Only a life rests."
+                now = time.time()
+                try:
+                    self._rest_until = duties.rest_until(args, duty, now)
+                except ValueError as e:
+                    return ToolStatus.ERROR, str(e)
+                self._log.decision("rest", in_s=round(self._rest_until - now, 3))
+                return ToolStatus.OK, (
+                    f"Resting until {duties.local(self._rest_until)}. The user writing, "
+                    "something you watch happening or your background work finishing wakes "
+                    "you sooner. End your turn.")
             case "finish_goal":
                 duty = self._conversation.duty
                 if duty is None or duty.kind != DutyKind.GOAL:
@@ -2773,6 +2887,8 @@ class Runtime:
         if answers is _IN_WORDS:
             return ("The user answered in their own words, in the message that follows. "
                     "You can now continue with the user's answers in mind.")
+        if answers is _NO_ANSWER:
+            return f"{self._no_answer()} Go on without the answers."
         said = ", ".join(f'"{q["question"]}"="{answers.get(q["question"], "(no answer)")}"'
                          for q in questions)
         return (f"User has answered your questions: {said}. You can now continue with the "
@@ -2802,8 +2918,12 @@ class Runtime:
         Code's ExitPlanMode does."""
         plan = call.arguments["plan"]
         self._log.decision("plan_proposed", call_id=call.id, plan_chars=len(plan))
-        approved, feedback, in_words = await self._wait_for_person(Prompt(
+        outcome = await self._wait_for_person(Prompt(
             call.id, PromptKind.PLAN, "Approve the plan", call, {"plan": plan}, words=True))
+        if outcome is _NO_ANSWER:
+            return ToolStatus.REFUSED, (f"{self._no_answer()} The plan is not approved; you "
+                                        "are still in plan mode.")
+        approved, feedback, in_words = outcome
         if approved:
             return ToolStatus.OK, ("User has approved your plan. You can now start coding. "
                                    "Start with updating your todo list if applicable.\n\n"

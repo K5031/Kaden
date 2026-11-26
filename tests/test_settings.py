@@ -333,3 +333,16 @@ async def test_a_limit_that_would_stop_the_next_start_is_refused(make, tmp_path,
     assert (await h.runtime.settings()).budget == before.budget
     saved = h.runtime._config.data_dir / "settings.toml"
     assert not saved.exists() or "budget" not in saved.read_text()
+
+
+async def test_clearing_every_limit_stays_cleared_after_a_restart(make, tmp_path):
+    import kaden.__main__ as launcher
+
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "config.toml").write_text("[runtime.budget]\nmax_tokens = 1000\n")
+    h = await make(data_dir=data, budget=Budget(max_tokens=1000))
+    await h.runtime.update_settings(SettingsUpdate(budget=Budget()))
+    await h.close()
+    config = launcher.load_config(launcher.parse_args(["--data-dir", str(data)]))
+    assert config.runtime.budget == Budget()

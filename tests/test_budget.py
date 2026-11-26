@@ -15,6 +15,7 @@ from kaden.api import (
     Failure,
     FailureKind,
     PermissionPolicy,
+    SettingsUpdate,
     ToolFinished,
     ToolStatus,
     TransientCoreError,
@@ -247,3 +248,64 @@ async def test_usage_is_written_off_the_loop_with_the_latest_totals(tmp_path):
     await tracker.flush()
     saved = json.loads((tmp_path / "usage.json").read_text())
     assert saved["input_tokens"] == 500 and saved["cost_usd"] == pytest.approx(0.5)
+
+
+async def test_removing_the_duration_limit_lets_running_calls_go_on(make: Any) -> None:
+    tools = FakeTools()
+    tools.hanging("bg")
+    core = ScriptedCore([Step(calls=[call("bg", id="bg")]), Step(text="started")])
+    h: Harness = await make(core=core, tools=tools, initial_wait_s=0.05,
+                            budget=Budget(max_duration_s=0.4))
+    await h.start()
+    await h.turn("go")
+    await h.runtime.update_settings(SettingsUpdate(budget=Budget()))
+    await asyncio.sleep(0.6)
+    assert tools.cancelled == []
+    assert [op.call.id for op in h.runtime.snapshot().operations] == ["bg"]
+
+
+async def test_a_stream_the_duration_limit_cannot_end_is_reported(make: Any) -> None:
+    held = asyncio.Event()
+    core = ScriptedCore([Step(text="partial", hang=True, ignore_cancel=held)])
+    h: Harness = await make(core=core, budget=Budget(max_duration_s=0.2))
+    await h.start()
+    await h.runtime.send("go")
+    try:
+        await h.rec.wait_state(AgentState.FAILED, timeout=3)
+    finally:
+        held.set()
+    kinds = [f.kind for f in h.rec.of(Failure)]
+    assert FailureKind.INTERNAL in kinds and kinds[-1] == FailureKind.BUDGET
+
+
+@pytest.mark.parametrize("content", [
+    {"schema_version": 2, "input_tokens": 5},
+    {"schema_version": 1, "input_tokens": 5, "spent_on_cake": 1},
+    {"input_tokens": 5},
+])
+async def test_usage_of_another_kind_is_refused_and_left_as_it_is(
+        make: Any, tmp_path: Any, content: dict[str, Any]) -> None:
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "usage.json").write_text(json.dumps(content))
+    h: Harness = await make(data_dir=data)
+    with pytest.raises(ValueError, match="usage.json"):
+        await h.start()
+    await h.close()
+    assert json.loads((data / "usage.json").read_text()) == content
+
+
+async def test_a_failed_usage_write_still_lets_go_of_the_data_folder(
+        make: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    from kaden.runtime import budget
+    from kaden.runtime.instance import InstanceLock
+
+    h: Harness = await make()
+    await h.start()
+
+    def fail(path: Any, data: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(budget, "_write_json", fail)
+    await h.close()
+    InstanceLock.acquire(h.data_dir).release()  # free again

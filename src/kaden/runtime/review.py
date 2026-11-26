@@ -73,6 +73,9 @@ CREDENTIALS = re.compile("|".join([
     r"\.config/fish/config\.fish|\.config/environment\.d\b",
     r"\.docker/config\.json|\.config/(?:gcloud|gh|google-chrome|chromium|BraveSoftware)\b",
     r"\.local/share/(?:keyrings|kwalletd)\b|\bkwallet|\bsecret-tool\b|\bid_(?:rsa|ed25519|ecdsa)",
+    # macOS: the Keychain, the command that reads it, and the browsers' profiles.
+    r"Library/Keychains\b|\bsecurity\s+(?:find-(?:generic|internet)-password|dump-keychain)\b",
+    r"Library/Application[\\ ]+Support/(?:Google/Chrome|Chromium|BraveSoftware|Firefox)\b",
 ]))
 CREDENTIALS_REASON = ("It may read or change keys or passwords, which Kaden never decides on "
                       "its own.")
@@ -80,19 +83,43 @@ DATA_REASON = ("It reaches Kaden's own data (conversations, settings, spending),
                "never decides on its own.")
 
 
-def always_ask(call: ToolCall, data_dir: Path) -> str | None:
-    """Why this call must ask without a review, or None. Looks at every argument value."""
+def always_ask(call: ToolCall, data_dir: Path, work_folder: str | None = None) -> str | None:
+    """Why this call must ask without a review, or None. Looks at every argument value.
+    The data folder is matched by its path and, since a command may reach it from
+    anywhere (`cd ~ && cat .kaden/settings.toml`, `../../.kaden`), by its name as a path
+    segment of its own. A `work_folder` inside the data folder (Continuous's home) is not
+    Kaden's data: paths named in it, by any of its forms, are left out, unless they climb
+    out with `..`."""
     text = json.dumps(call.arguments, ensure_ascii=False)
-    home, data = Path.home(), data_dir.expanduser().resolve()
-    forms = [str(data)]
-    if data.is_relative_to(home) and data != home:
-        rel = data.relative_to(home).as_posix()
-        forms += [f"~/{rel}", f"$HOME/{rel}", f"${{HOME}}/{rel}"]
-    if any(form in text for form in forms):
+    data = data_dir.expanduser().resolve()
+    if work_folder is not None:
+        text = _without_folder(text, Path(work_folder).expanduser(), data)
+    if str(data) in text or str(data_dir.expanduser().absolute()) in text:
+        return DATA_REASON
+    if data != Path.home() and data.name and re.search(
+            rf"{_START}{re.escape(data.name)}{_END}", text):
         return DATA_REASON
     if CREDENTIALS.search(text):
         return CREDENTIALS_REASON
     return None
+
+
+_CLIMBS = r"""(?![^\s'";|&)<>]*/\.\.(?:[\s'"/;|&)<>]|$))"""  # no ".." later in the path
+
+
+def _without_folder(text: str, folder: Path, data: Path) -> str:
+    """`text` with the paths in `folder` taken out, when it lies inside `data`."""
+    work = folder.resolve()
+    if work == data or not work.is_relative_to(data):
+        return text
+    forms = {str(work), str(folder.absolute())}
+    home = Path.home()
+    if work.is_relative_to(home):
+        rel = work.relative_to(home).as_posix()
+        forms |= {f"~/{rel}", f"$HOME/{rel}", f"${{HOME}}/{rel}"}
+    for form in sorted(forms, key=len, reverse=True):
+        text = re.sub(rf"{re.escape(form)}(?={_END}){_CLIMBS}", " ", text)
+    return text
 
 
 def user_requests(history: Sequence[Message]) -> list[str]:
