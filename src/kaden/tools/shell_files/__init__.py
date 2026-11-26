@@ -330,9 +330,6 @@ class ShellFilesTools(Tools):
             "Glob": self._list_files,
             "Grep": self._search_files,
             "NotebookEdit": self._notebook_edit,
-            **{name: self._web_call(name) for name in web.NAMES},
-            **{name: self._bili_call(name) for name in bilibili.NAMES},
-            screen.NAME: self._screenshot,
         }
 
     def _set_root(self, root: Path) -> None:
@@ -370,9 +367,8 @@ class ShellFilesTools(Tools):
         if call.name in web.NAMES or call.name in bilibili.NAMES:
             return True
         if call.name in bili_account.NAMES:  # reading the account's feed and follows only
-            return call.name in ("BiliFeed", "BiliFollowing", "BiliMessages", "BiliWatchFeed",
-                                 "BiliWatchMessages")
-        if not self._bounded or call.name not in self._handlers or call.name == screen.NAME:
+            return call.name in bili_account.READ_ONLY
+        if not self._bounded or call.name not in self._handlers:  # the screen too
             return False
         if call.name == SHELL.name:
             return (self._sandbox is not None
@@ -403,7 +399,7 @@ class ShellFilesTools(Tools):
         except jsonschema.ValidationError as e:
             return ToolOutput(f"Invalid arguments: {e.message}", is_error=True)
         try:
-            result = await self._handlers[call.name](call.arguments, ctx)
+            result = await self._run(call, ctx)
             return result if isinstance(result, ToolOutput) else ToolOutput(result)
         except (ToolError, web.WebError, screen.ScreenError, bilibili.BiliError) as e:
             return ToolOutput(str(e), is_error=True)
@@ -413,8 +409,14 @@ class ShellFilesTools(Tools):
         except OSError as e:
             return ToolOutput(f"{type(e).__name__}: {e}", is_error=True)
 
-    async def _screenshot(self, args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
-        return await self._screen.run()
+    async def _run(self, call: ToolCall, ctx: ToolContext) -> str | ToolOutput:
+        if call.name in web.NAMES:
+            return await self._web.run(call.name, call.arguments)
+        if call.name in bilibili.NAMES:
+            return await self._bili.run(call.name, call.arguments)
+        if call.name == screen.NAME:
+            return await self._screen.run()
+        return await self._handlers[call.name](call.arguments, ctx)
 
     async def _account_call(self, call: ToolCall) -> ToolOutput:
         assert self._account is not None
@@ -431,19 +433,6 @@ class ShellFilesTools(Tools):
         except httpx2.HTTPError as e:
             return ToolOutput(f"Bilibili could not be reached: {type(e).__name__}: {e}",
                               is_error=True)
-
-    def _bili_call(self, name: str
-                   ) -> Callable[[dict[str, Any], ToolContext], Awaitable[str | ToolOutput]]:
-        async def call(args: dict[str, Any], ctx: ToolContext) -> str | ToolOutput:
-            return await self._bili.run(name, args)
-
-        return call
-
-    def _web_call(self, name: str) -> Callable[[dict[str, Any], ToolContext], Awaitable[str]]:
-        async def call(args: dict[str, Any], ctx: ToolContext) -> str:
-            return await self._web.run(name, args)
-
-        return call
 
     def _path(self, raw: str | None) -> Path:
         path = Path(raw or ".").expanduser()

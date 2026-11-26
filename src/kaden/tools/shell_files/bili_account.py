@@ -130,6 +130,7 @@ MESSAGE_SPECS: tuple[ToolSpec, ...] = (
 )
 MESSAGE_NAMES = frozenset(s.name for s in MESSAGE_SPECS)
 NAMES = ACCOUNT_NAMES | MESSAGE_NAMES | {LOGIN.name}
+READ_ONLY = frozenset(s.name for s in (*ACCOUNT_SPECS, *MESSAGE_SPECS) if s.read_only)
 
 
 class LoginGone(BiliError):
