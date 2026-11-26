@@ -197,9 +197,16 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   view if it alone is too big), then the summary, then the newest long-term entries (at
   most 5% of the budget), then older verbatim messages as far back as fits.
 - Storage format 2: blocks are `{"type": tag, "data": {...}}` with `BLOCK_TYPES` tags.
-  `OpaqueBlock(type, data)` is stored as exactly that. An unknown tag, or a known tag whose
-  data the current class cannot take (a field added later), decodes to `OpaqueBlock`, so it
-  re-encodes unchanged. Appending a block class without a tag raises TypeError.
+  `OpaqueBlock(type, data)` is stored as exactly that, also as a tool result's attachment.
+  An unknown tag decodes to `OpaqueBlock`, so it re-encodes unchanged. An `OpaqueBlock`
+  under a tag this version knows is refused at `append` (ValueError): it would be stored
+  as a block that cannot be read back. Data a known class cannot take is not decoded
+  leniently: only another schema version could hold it, and that store is refused.
+  Appending a block class without a tag raises TypeError.
+- The `messages.format` column (`codec.FORMAT_VERSION`) is written and never read. It
+  stays: dropping it needs a new schema version, which refuses every existing store
+  (no migration code), and an unused integer per row costs nothing. Drop it with the next
+  schema change that happens anyway.
 - Stores use only the stable tags from the start; no code reads Python import-path tags.
   Version 1 stores written by the pre-migration module with import-path tags are refused
   rather than read as opaque blocks. Schema versions: see "SqliteMemory schema" below.
@@ -212,8 +219,14 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   score = −bm25 (higher is better). Unknown `conversation_id` raises KeyError.
 - Concurrency: WAL journal, one connection per `SqliteMemory` on a dedicated worker
   thread; a second process opening the same file reads and writes alongside it (SQLite's
-  default 5 s busy timeout). Token counting in `assemble`/`maintain` runs on the event loop
-  (the counter is the runtime's fast estimate).
+  default 5 s busy timeout). Encoding and decoding blocks runs on that thread too. Token
+  counting in `assemble`/`maintain` runs on the event loop (the counter is the runtime's
+  fast estimate).
+- Schema scripts run one statement at a time inside the open transaction
+  (`executescript` would commit it); a statement ends where `sqlite3.complete_statement`
+  says, so a trigger body's own semicolons and line breaks are safe.
+- recall with scope "all" lists the conversations, then searches them; a conversation
+  deleted in between (KeyError) is handled by listing once more and searching again.
 
 ### Core (`kaden.core.anthropic`, `kaden.core.openai_compat`)
 
@@ -479,16 +492,20 @@ Design: [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md).
   forgotten texts (casefolded, whitespace collapsed); compaction drops a new entry whose
   fingerprint is there. A reworded fact is new to it.
 - `summaries`: one row per conversation, its current summary; writing a new one deletes
-  the old row in the same transaction (`_replace_summary`). Summaries are derived from
+  the old row in the same transaction (`_commit_summary`). Summaries are derived from
   messages the archive keeps, so they are working state, not part of the append-only
   archive.
 - Seeding: while `seed_from` is set and the conversation has no summary row, `maintain`
   first runs the compaction prompt (light model) on the source's current summary and as
   many of its newest exchanges as fit, and stores the result as a summary with
   `through_seq` 0. Long-term lines in that output are ignored (the source already
-  contributed them). An empty source writes nothing. An empty result writes nothing and
-  skips that maintain's compaction too, since a first summary from compaction would end
-  seeding; the next maintain tries again.
+  contributed them). Only the source's messages created before the conversation was are
+  read; its summary is the current one, which covers later messages only if the source
+  was compacted since. An empty source writes an empty summary row, so it is read once
+  and what it gets later is not seeded. A source deleted while maintain runs is no seed
+  (its `seed_from` is NULL by then). An empty result writes nothing and skips that
+  maintain's compaction too, since a first summary from compaction would end seeding;
+  the next maintain tries again.
 - Titles: after seeding and compaction, a conversation with no title gets one from its
   first USER message with Text (2000 characters at most), light model, 20 output tokens,
   prompt `_TITLE_PROMPT`. The first non-empty line is kept, quotes, `#*_` and a trailing
@@ -585,6 +602,8 @@ Design: [Agent Note](notes/implemented/2026-11-10-memory-notes.md). Tools offere
 | Save pass | In `maintain` when the newest message is an answer calling no tool and comes after the last saved one; reads the messages since (the newest part when long), the profile, notes' texts within 5 % of the light model's window (most recently written first, stopping at the first that does not fit) and the rest as an index; writes `<save>` (whole text) and `<append>` changes; up to 1 024 output tokens; a CoreError is logged and the exchange is read again after the next answer |
 | Runtime | `maintain` is called once more after a cycle's last answer, before IDLE; when it acted, `MemoriesChanged(saved)` names the notes whose latest revision is new (read with `notes()` before and after); the event log keeps their number, not their titles |
 | Notice | Frontends show a non-empty `saved` as a line after the answer: "Memory updated: Trip, About you", with an "Open memory" link in the desktop app. Saves by the agent's tools show as steps, and the user's own edits are not announced |
+| Concurrent edits | The save pass writes from notes as it read them before the light-model call. A `<save>` of a note whose current revision is no longer the one read (edited by the user or the agent's `save_note` meanwhile, or created under that title meanwhile) is skipped and logged; that edit stays. `<append>` adds to the current text, so it still applies |
+| Agent deletion | `forget_note` erases the note with its revisions, when the user asks or the agent finds it no longer true. The user decided this on 2026-11-26; AGENTS.md's archive rule names notes as the exception. Messages are never erased by the agent |
 | Compaction | Writes the summary only; facts are the save pass's |
 | Checked | Against Claude Haiku 5.5 (2026-11-10): a self-introduction made a profile and a project note, small talk saved nothing, a later plan was appended to the project note; about one cent for three turns |
 
@@ -913,7 +932,8 @@ The design is in [the note](notes/implemented/2026-11-12-voice-conversation.md);
 |---|---|
 | Shared archive | `SqliteArchive` (`kaden.memory.sqlite`): messages, summaries, search, conversation metadata, erasure. Hooks `_long_term(info) -> LongTerm(head, lines, render)`, `_after_answer`, `_erase`. `SqliteMemory` adds notes (schema 9, `memory.db`); `FilesMemory` adds the memory folders (schema 2, `memory-files.db`) |
 | Budget | The head (rules or profile) whenever it fits the room, then lines from the top within the long-term fraction |
-| Files as notes | Id and title = path, description = frontmatter `description`, text = body. Saving writes Claude Code frontmatter (not for `MEMORY.md`); a new title renames the file. No revisions |
+| Files as notes | Id and title = path, description = frontmatter `description`, text = body. Saving writes Claude Code frontmatter (not for `MEMORY.md`), the description on one line (its whitespace collapsed, as the built-in memory does); a new title renames the file, and one that another file has is refused (ValueError). No revisions |
+| Other files | Hidden files and folders (`.DS_Store`, `.git`) and files that are not UTF-8 text are not memories: `notes()` and `view ""` leave them out, and viewing one by path answers that it is not a text file |
 | Folder | The runtime passes the open conversation's work folder to `notes`, `save_note`, `delete_note`; `SqliteMemory` ignores it |
 | Project | `FilesMemory` names the memory folder after `folder.project_root`: the nearest folder with a `.git` directory, or for a `.git` file (a worktree) the repository its `commondir` points to; a submodule is its own project. Found once per work folder and process (`FilesMemory._keys`) |
 | `modified` | UTC, ISO 8601 with milliseconds and `Z`, under `metadata`; replaced on each write, added with a `metadata` block when the frontmatter has none; a file without frontmatter and `MEMORY.md` are not stamped |

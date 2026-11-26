@@ -154,13 +154,25 @@ class MemoryFolder:
         return self.root.joinpath(*parts)
 
     def files(self) -> list[MemoryFile]:
+        """The memory files: what is not hidden (.DS_Store) and reads as UTF-8 text."""
         if not self.root.is_dir():
             return []
-        found = sorted(p for p in self.root.rglob("*") if p.is_file())
+        found = sorted(p for p in self.root.rglob("*") if p.is_file() and not any(
+            part.startswith(".") for part in p.relative_to(self.root).parts))
         found.sort(key=lambda p: p.relative_to(self.root).as_posix() != MEMORY_INDEX)
-        return [self._file(p) for p in found]
+        files = []
+        for path in found:
+            try:
+                files.append(self._file(path))
+            except ValueError:
+                continue
+        return files
+
+    def exists(self, relative: str) -> bool:
+        return self.path(relative).is_file()
 
     def read(self, relative: str) -> MemoryFile:
+        """KeyError when there is no such file; ValueError when it is not UTF-8 text."""
         path = self.path(relative)
         if not path.is_file():
             raise KeyError(f"no memory file {relative}")
@@ -193,8 +205,12 @@ class MemoryFolder:
             return ""
 
     def _file(self, path: Path) -> MemoryFile:
-        return MemoryFile(path.relative_to(self.root).as_posix(),
-                          path.read_text(encoding="utf-8"), path.stat().st_mtime)
+        relative = path.relative_to(self.root).as_posix()
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            raise ValueError(f"{relative} is not a text file") from None
+        return MemoryFile(relative, text, path.stat().st_mtime)
 
 
 def split_frontmatter(text: str) -> tuple[dict[str, str], str]:
@@ -214,6 +230,8 @@ def split_frontmatter(text: str) -> tuple[dict[str, str], str]:
 
 
 def join_frontmatter(name: str, description: str, kind: str, body: str) -> str:
-    """A memory file in Claude Code's format."""
+    """A memory file in Claude Code's format. Each field is one line: the description's
+    words are joined by single spaces."""
+    description = " ".join(description.split())
     return (f"---\nname: {name}\ndescription: {description}\nmetadata:\n  type: {kind}\n"
             f"---\n\n{body.strip()}\n")

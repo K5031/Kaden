@@ -2,8 +2,8 @@
 
 A block is stored as {"type": tag, "data": {field: value}} with the stable tags of
 `api.BLOCK_TYPES`. A field that holds blocks itself (a tool result's attachments) stores
-each the same way. A tag this version does not know (or data its class cannot take)
-decodes to an `OpaqueBlock`, which re-encodes to exactly what was stored.
+each the same way. A tag this version does not know decodes to an `OpaqueBlock`, which
+re-encodes to exactly what was stored.
 """
 
 from __future__ import annotations
@@ -37,6 +37,9 @@ def decode_blocks(raw: str) -> tuple[Block, ...]:
 
 def encode_block(block: Block) -> dict[str, Any]:
     if isinstance(block, OpaqueBlock):
+        if block.type in BLOCK_TYPES:
+            raise ValueError(f"an OpaqueBlock is for tags this version does not know, "
+                             f"not {block.type!r}")
         return {"type": block.type, "data": block.data}
     tag = _TAGS.get(type(block))
     if tag is None:
@@ -46,7 +49,8 @@ def encode_block(block: Block) -> dict[str, Any]:
 
 
 def _encode_value(value: Any) -> Any:
-    if isinstance(value, (list, tuple)) and value and all(type(v) in _TAGS for v in value):
+    if isinstance(value, (list, tuple)) and value and all(
+            type(v) in _TAGS or isinstance(v, OpaqueBlock) for v in value):
         return [encode_block(v) for v in value]
     return list(value) if isinstance(value, tuple) else value
 
@@ -66,18 +70,15 @@ def decode_block(item: dict[str, Any]) -> Block:
     if cls is None:
         return OpaqueBlock(tag, data)
     hints = _HINTS[tag]
-    try:
-        kwargs = {}
-        for name, value in data.items():
-            hint = hints[name]
-            if isinstance(hint, type) and issubclass(hint, Enum):
-                value = hint(value)
-            elif _holds_blocks(hint):
-                value = tuple(decode_block(v) for v in value)
-            kwargs[name] = value
-        return cls(**kwargs)
-    except (KeyError, TypeError, ValueError):
-        return OpaqueBlock(tag, data)  # e.g. a field added by a later version
+    kwargs = {}
+    for name, value in data.items():
+        hint = hints[name]
+        if isinstance(hint, type) and issubclass(hint, Enum):
+            value = hint(value)
+        elif _holds_blocks(hint):
+            value = tuple(decode_block(v) for v in value)
+        kwargs[name] = value
+    return cls(**kwargs)
 
 
 def searchable_text(raw: str) -> str:

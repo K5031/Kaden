@@ -1,13 +1,16 @@
 """SQLite Memory: append-only archive, rolling summary, long-term entries.
 
 The archive is the single source of truth for messages. Active context is the archived
-messages after the latest summary's `through_seq`, so compaction removes nothing: it
-inserts one summary row (plus any long-term entries) in a single transaction. All token
+messages after the latest summary's `through_seq`, so compaction removes no message: it
+replaces the conversation's summary in a single transaction. An earlier summary is
+derived from messages the archive still holds, and nothing reads it, so it goes. All token
 figures come from the runtime's `TokenCounter`; thresholds are fractions of the window.
 
-The only removal is erasure the user asks for (delete_conversation, forget). It runs with
-`secure_delete` on, so erased content is overwritten in the file, and checkpoints the
-write-ahead log afterwards so no copy stays there.
+Messages and notes are removed only by erasure: of a conversation, which the user asks
+for (delete_conversation), or of a note, by the user or by the agent when the note is no
+longer true (delete_note). It runs with `secure_delete` on, so erased content is
+overwritten in the file, and checkpoints the write-ahead log afterwards so no copy stays
+there.
 """
 
 from __future__ import annotations
@@ -445,11 +448,9 @@ class SqliteArchive(Memory):
     async def append(
         self, conversation_id: ConversationId, messages: Sequence[Message]
     ) -> None:
-        rows = [
-            (m, m.role.value, m.created_at, codec.encode_blocks(m.blocks)) for m in messages
-        ]
-
         def run(conn: sqlite3.Connection) -> None:
+            rows = [(m, m.role.value, m.created_at, codec.encode_blocks(m.blocks))
+                    for m in messages]
             now = time.time()
             with _transaction(conn):
                 _require_conversation(conn, conversation_id)
@@ -556,13 +557,18 @@ class SqliteArchive(Memory):
     async def _seed(self, state: _State, complete: Completion, context: ContextRequest
                     ) -> bool | None:
         """Write the first summary of a conversation continued from another: the source's
-        summary merged with as much of its verbatim tail as the light model takes. False
-        when the source is empty; None when the summary came back empty (tried again by the
-        next maintain)."""
+        summary merged with as much of its verbatim tail, as it was when the conversation
+        was continued, as the light model takes. False when the source is empty (an empty
+        summary is written, so it is not read again) or was deleted meanwhile; None when
+        the summary came back empty (tried again by the next maintain)."""
         count = context.count_tokens
-        source = await self._run(_read_state, state.info.seed_from)
-        messages = source.view()
+        try:
+            source = await self._run(_read_state, state.info.seed_from)
+        except KeyError:  # deleted since `state` was read: its seed_from is None now
+            return False
+        messages = [m for m in source.view() if m.created_at <= state.info.created_at]
         if not source.summary and not messages:
+            await self._run(_commit_summary, state.info.id, 0, "")
             return False
         system, summary_tokens = self._prompt(state, source.summary, context)
         output_tokens = summary_tokens + _SUMMARY_TAG_TOKENS
@@ -577,12 +583,7 @@ class SqliteArchive(Memory):
         summary = _parse_output(output, summary_tokens, count)
         if not summary:
             return None
-
-        def commit(conn: sqlite3.Connection) -> None:
-            with _transaction(conn):
-                _replace_summary(conn, state.info.id, 0, summary, time.time())
-
-        await self._run(commit)
+        await self._run(_commit_summary, state.info.id, 0, summary)
         return True
 
     async def _compact(
@@ -611,13 +612,7 @@ class SqliteArchive(Memory):
             logger.warning("compaction of %s returned no summary; nothing compacted",
                            conversation_id)
             return False
-        through_seq = state.active[cut - 1].seq
-
-        def commit(conn: sqlite3.Connection) -> None:
-            with _transaction(conn):
-                _replace_summary(conn, conversation_id, through_seq, summary, time.time())
-
-        await self._run(commit)
+        await self._run(_commit_summary, conversation_id, state.active[cut - 1].seq, summary)
         return True
 
     async def _title(self, conversation_id: ConversationId, complete: Completion) -> bool:
@@ -779,10 +774,7 @@ class SqliteMemory(SqliteArchive):
         into the profile and notes. A failed request is tried again after the next answer;
         an exhausted budget propagates."""
         count = context.count_tokens
-        rows, notes = await self._run(_unsaved, conversation_id)
-        # Not Kaden's hidden notices: a recalled note there is not news.
-        messages = [m for r in rows if not ((m := _message(r[1:])).hidden
-                                             and m.author is Author.KADEN)]
+        last, messages, notes = await self._run(_unsaved, conversation_id)
         if not messages or messages[-1].role is not Role.ASSISTANT or any(
                 isinstance(b, ToolCall) for b in messages[-1].blocks):
             return False
@@ -813,21 +805,32 @@ class SqliteMemory(SqliteArchive):
             logger.warning("saving the exchange of %s failed: %s", conversation_id, e)
             return False
         changes = _parse_saves(output)
-        last = rows[-1][0]
 
-        def commit(conn: sqlite3.Connection) -> None:
+        def commit(conn: sqlite3.Connection) -> bool:
             now = time.time()
+            read = {_key(n.title): n for n in notes}  # as the pass was shown them
+            applied = False
             with _transaction(conn):
                 _require_conversation(conn, conversation_id)
                 for kind, title, description, text in changes:
-                    _apply_change(conn, kind, title, description, text, conversation_id, now)
+                    title = title.strip().lstrip("#").strip()  # a heading copied as title
+                    current = _note_titled(conn, title)
+                    if kind == "save" and current != read.get(_key(title)):
+                        # Written meanwhile (the user, the agent's save_note): that stays.
+                        logger.info("the pass after an answer left a note changed meanwhile")
+                        continue
+                    if kind == "append" and current is not None:
+                        text = f"{current.text}\n{text.strip()}".strip()
+                    saved = _save(conn, title, description, text, None, conversation_id, now)
+                    read[_key(saved.title)] = saved
+                    applied = True
                 conn.execute(
                     "INSERT INTO saved_exchanges VALUES (?, ?) ON CONFLICT(conversation_id)"
                     " DO UPDATE SET through_seq = excluded.through_seq",
                     (conversation_id, last))
+            return applied
 
-        await self._run(commit)
-        return bool(changes)
+        return await self._run(commit)
 
     # ── Long-term memory ──────────────────────────────────────────────────
 
@@ -899,10 +902,16 @@ def _open(path: Path, schema: str, schema_version: int) -> sqlite3.Connection:
 
 
 def _execute_script(conn: sqlite3.Connection, script: str) -> None:
-    """executescript() would commit the open transaction; run statements singly."""
-    for statement in script.split(";\n"):
-        if statement.strip():
+    """executescript() would commit the open transaction; run statements singly, each
+    ending where SQLite says a statement is complete."""
+    statement = ""
+    for line in script.splitlines(keepends=True):
+        statement += line
+        if sqlite3.complete_statement(statement):
             conn.execute(statement)
+            statement = ""
+    if statement.strip():
+        raise ValueError(f"incomplete statement in schema: {statement!r}")
 
 
 def _checkpoint(conn: sqlite3.Connection) -> None:
@@ -942,9 +951,8 @@ def _conversation_info(row: Sequence[Any], first_user_blocks: str | None = None
     duty = None
     if row[7] is not None:
         d = json.loads(row[7])
-        duty = Duty(d["instruction"], DutyKind(d["kind"]), d["min_interval_s"],
-                    d["max_interval_s"], d.get("model"))
-    plan = tuple(PlanItem(i["text"], PlanStatus(i["status"]), i["due"], i["note"])
+        duty = Duty(**{**d, "kind": DutyKind(d["kind"])})
+    plan = tuple(PlanItem(**{**i, "status": PlanStatus(i["status"])})
                  for i in json.loads(row[8]))
     return ConversationInfo(row[0], row[1], row[2], row[3],
                             archived=bool(row[4]), seed_from=row[5],
@@ -976,10 +984,15 @@ def _require_note(conn: sqlite3.Connection, note_id: str) -> MemoryNote:
     return _note(row)
 
 
+def _key(title: str) -> str:
+    """What a note is found by: its title's words, whatever the spacing and case."""
+    return " ".join(title.split()).casefold()
+
+
 def _note_titled(conn: sqlite3.Connection, title: str) -> MemoryNote | None:
-    key = " ".join(title.split()).casefold()  # its words, whatever the spacing and case
-    return next((n for n in map(_note, conn.execute(_CURRENT_NOTES))
-                 if " ".join(n.title.split()).casefold() == key), None)
+    key = _key(title)
+    return next((n for n in map(_note, conn.execute(_CURRENT_NOTES)) if _key(n.title) == key),
+                None)
 
 
 def _save(conn: sqlite3.Connection, title: str, description: str, text: str,
@@ -1013,20 +1026,11 @@ def _save(conn: sqlite3.Connection, title: str, description: str, text: str,
     return _require_note(conn, note_id)
 
 
-def _apply_change(conn: sqlite3.Connection, kind: str, title: str, description: str,
-                  text: str, source: ConversationId, now: float) -> None:
-    """One change from the pass after an answer: `save` writes the whole text, `append`
-    adds to a note's text (creating the note when there is none)."""
-    title = title.strip().lstrip("#").strip()  # a heading copied as a title is the title
-    if kind == "append" and (current := _note_titled(conn, title)) is not None:
-        text = f"{current.text}\n{text.strip()}".strip()
-    _save(conn, title, description, text, None, source, now)
-
-
 def _unsaved(conn: sqlite3.Connection, conversation_id: ConversationId
-             ) -> tuple[list[Sequence[Any]], list[MemoryNote]]:
-    """What the pass after an answer reads: the messages since its last save, and the
-    notes (the profile first)."""
+             ) -> tuple[int, list[Message], list[MemoryNote]]:
+    """What the pass after an answer reads: how far the conversation goes, its messages
+    since the last save (not Kaden's hidden notices: a recalled note there is not news),
+    and the notes (the profile first)."""
     with _transaction(conn, "DEFERRED"):
         _require_conversation(conn, conversation_id)
         row = conn.execute("SELECT through_seq FROM saved_exchanges WHERE conversation_id = ?",
@@ -1037,7 +1041,9 @@ def _unsaved(conn: sqlite3.Connection, conversation_id: ConversationId
             " WHERE conversation_id = ? AND seq > ? ORDER BY seq",
             (conversation_id, through)).fetchall()
         notes = [_note(r) for r in conn.execute(_CURRENT_NOTES + _NOTES_ORDER)]
-    return rows, notes
+    messages = [m for r in rows if not ((m := _message(r[1:])).hidden
+                                         and m.author is Author.KADEN)]
+    return (rows[-1][0] if rows else through), messages, notes
 
 
 def _parse_saves(output: str) -> list[tuple[str, str, str, str]]:
@@ -1047,16 +1053,18 @@ def _parse_saves(output: str) -> list[tuple[str, str, str, str]]:
     return [c for _, c in sorted(changes) if c[1].strip() and c[3].strip()]
 
 
-def _replace_summary(conn: sqlite3.Connection, conversation_id: ConversationId,
-                     through_seq: int, text: str, now: float) -> None:
+def _commit_summary(conn: sqlite3.Connection, conversation_id: ConversationId,
+                    through_seq: int, text: str) -> None:
     """A conversation keeps only its newest summary: older ones are derived from messages
     the archive still holds, and nothing reads them."""
-    conn.execute("DELETE FROM summaries WHERE conversation_id = ?", (conversation_id,))
-    conn.execute(
-        "INSERT INTO summaries (conversation_id, through_seq, text, created_at)"
-        " VALUES (?, ?, ?, ?)",
-        (conversation_id, through_seq, text, now),
-    )
+    with _transaction(conn):
+        _require_conversation(conn, conversation_id)
+        conn.execute("DELETE FROM summaries WHERE conversation_id = ?", (conversation_id,))
+        conn.execute(
+            "INSERT INTO summaries (conversation_id, through_seq, text, created_at)"
+            " VALUES (?, ?, ?, ?)",
+            (conversation_id, through_seq, text, time.time()),
+        )
 
 
 def _message(row: Sequence[Any]) -> Message:

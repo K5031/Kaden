@@ -178,7 +178,8 @@ Kaden keeps every message of every conversation until you delete the conversatio
 - After each answer, Kaden's cheaper upkeep model reads the exchange and saves what will
   matter later (decisions, plans, lasting facts) into the notes. It skips small talk, news
   of recent work and anything Kaden can read again in your files, and rewrites a note that
-  has gone out of date, so you do not have to tidy memory yourself.
+  has gone out of date, so you do not have to tidy memory yourself. A note you or the
+  agent edit while it reads keeps that edit.
   When it saves something, a line under the answer says so ("Memory updated: Trip"), with
   a link to Memory.
   The agent also saves when you ask it to remember something, and deletes a note when you

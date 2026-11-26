@@ -112,13 +112,9 @@ async def run_memory_tool(memory: Memory, call: ToolCall, ctx: ToolContext) -> T
     args = call.arguments
     match call.name:
         case "recall":
-            scope = [ctx.conversation_id]
-            if args.get("scope", "conversation") == "all":
-                scope += [c.id for c in await memory.list_conversations()
-                          if c.id != ctx.conversation_id]
-            hits = await memory.search(args["query"], conversation_ids=scope,
-                                       limit=args.get("limit", 5))
-            return ToolOutput(_format_hits(hits))
+            return ToolOutput(_format_hits(await _recall(
+                memory, ctx.conversation_id, args["query"], args.get("limit", 5),
+                everywhere=args.get("scope", "conversation") == "all")))
         case "read_around":
             return await _read_around(memory, args.get("conversation_id") or ctx.conversation_id,
                                       args["message_id"], args.get("before", 3),
@@ -145,6 +141,25 @@ async def run_memory_tool(memory: Memory, call: ToolCall, ctx: ToolContext) -> T
                 return ToolOutput(str(e), is_error=True)
             return ToolOutput(f"Forgotten: {note.title}")
     return ToolOutput(f"Unknown tool {call.name!r}.", is_error=True)
+
+
+async def _recall(memory: Memory, conversation_id: str, query: str, limit: int, *,
+                  everywhere: bool) -> Sequence[ArchiveHit]:
+    """Search this conversation, or with `everywhere` every one listed. One deleted between
+    the listing and the search (KeyError) is left out by listing them again."""
+
+    async def search() -> Sequence[ArchiveHit]:
+        scope = [conversation_id]
+        if everywhere:
+            scope += [c.id for c in await memory.list_conversations() if c.id != conversation_id]
+        return await memory.search(query, conversation_ids=scope, limit=limit)
+
+    try:
+        return await search()
+    except KeyError:
+        if not everywhere:
+            raise
+    return await search()
 
 
 async def _titled(memory: Memory, title: str) -> MemoryNote | None:

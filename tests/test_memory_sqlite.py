@@ -491,15 +491,6 @@ async def test_stored_tags_are_stable_names(open_store, db: Path):
     assert [b["type"] for b in _raw_blocks(db)[0]] == ["text", "reasoning", "tool_call"]
 
 
-async def test_known_tag_with_unknown_fields_stays_opaque(open_store, db: Path):
-    memory = open_store()
-    conv = await memory.create_conversation(title="test")
-    future = OpaqueBlock("text", {"text": "hi", "lang": "en"})
-    await memory.append(conv.id, [Message("m", Role.USER, (future,), 1.0)])
-    assert (await memory.history(conv.id))[0].blocks == (future,)
-    assert _raw_blocks(db)[0] == [{"type": "text", "data": {"text": "hi", "lang": "en"}}]
-
-
 async def test_history_returns_the_full_transcript(open_store):
     memory = open_store()
     conv = await memory.create_conversation(title="test")
@@ -781,3 +772,181 @@ def test_a_summary_and_a_search_hit_say_which_words_are_kadens():
         "[1970-01-01 00:00 user] Watch my inbox",
         "[1970-01-01 00:01 notice from Kaden, not the user] Time to check in on your duty."]
     assert " user " in _line("c", said) and " notice " in _line("c", notice)
+
+
+async def test_the_pass_leaves_a_note_changed_while_it_ran(open_store):
+    """The pass after an answer rewrites a note from the text it was shown. Edited
+    meanwhile (by the user, or the agent's save_note), the note keeps that edit: the pass's
+    save of it is skipped. Its other changes still apply."""
+    memory = open_store()
+    conv = await memory.create_conversation(title="test")
+    await memory.save_note("Trip", "The Oslo trip", "Leaves Friday.")
+
+    class EditsMeanwhile(FakeCompletion):
+        async def __call__(self, system, messages, *, max_tokens, light=False,
+                           compacting=False):
+            await memory.save_note("Trip", "", "Leaves Saturday, by train.")
+            return ('<save title="Trip" description="The trip">Leaves Friday.</save>'
+                    '<save title="Tea" description="Drinks">Green tea.</save>')
+
+    await memory.append(conv.id, [text_message("tok0001"), answer()])
+    assert await maintain(memory, conv.id, EditsMeanwhile())
+    notes = {n.title: n for n in await memory.notes()}
+    assert notes["Trip"].text == "Leaves Saturday, by train."
+    assert notes["Tea"].text == "Green tea."
+
+
+async def test_the_pass_does_not_overwrite_a_note_written_while_it_ran(open_store):
+    memory = open_store()
+    conv = await memory.create_conversation(title="test")
+
+    class SavesMeanwhile(FakeCompletion):
+        async def __call__(self, system, messages, *, max_tokens, light=False,
+                           compacting=False):
+            await memory.save_note("Trip", "The Oslo trip", "Leaves Saturday.")
+            return '<save title="Trip" description="The trip">Leaves Friday.</save>'
+
+    await memory.append(conv.id, [text_message("tok0001"), answer()])
+    await maintain(memory, conv.id, SavesMeanwhile())
+    assert [n.text for n in await memory.notes() if n.title == "Trip"] == ["Leaves Saturday."]
+
+
+async def test_a_tool_result_with_an_opaque_attachment_is_stored(open_store):
+    memory = open_store()
+    conv = await memory.create_conversation(title="test")
+    result = ToolResult("c", ToolStatus.OK, "shot", (OpaqueBlock("hologram", {"v": 1}),))
+    message = Message("m", Role.TOOL, (result,), 1.0)
+    await memory.append(conv.id, [message])
+    [stored] = await memory.history(conv.id)
+    assert stored == message
+    other = await memory.create_conversation(title="other")
+    await memory.append(other.id, [stored])  # what was read goes back as it came
+    assert await memory.history(other.id) == [message]
+
+
+async def test_an_opaque_block_with_a_tag_this_version_knows_is_refused(open_store):
+    """OpaqueBlock is for tags this version does not know: under a known tag, its data
+    would be stored as a block it cannot read back."""
+    memory = open_store()
+    conv = await memory.create_conversation(title="test")
+    with pytest.raises(ValueError):
+        await memory.append(conv.id, [Message("m", Role.USER, (
+            OpaqueBlock("text", {"text": "hi", "lang": "en"}),), 1.0)])
+    assert await memory.history(conv.id) == []
+
+
+async def test_an_empty_source_is_read_once(open_store):
+    """Continued from a conversation with nothing in it, there is nothing to seed: what the
+    source gets later is not the conversation's."""
+    memory = open_store()
+    source = await memory.create_conversation(title="source")
+    seeded = await memory.create_conversation(title="seeded", seed_from=source.id)
+    await fill(memory, seeded.id, ["tok0500"])
+    completion = FakeCompletion(keep=200, render=tagged)
+    await maintain(memory, seeded.id, completion)
+    await fill(memory, source.id, ["tok0777"])
+    await fill(memory, seeded.id, tokens(501, 40))  # enough to compact
+    await maintain(memory, seeded.id, completion)
+    assert "tok0777" not in await addendum(memory, seeded.id)
+    assert all("tok0777" not in repr(c["messages"]) for c in completion.calls)
+
+
+async def test_a_seed_is_what_the_source_had_when_continued(open_store):
+    memory = open_store()
+    source = await memory.create_conversation(title="source")
+    await fill(memory, source.id, ["tok0001"])
+    seeded = await memory.create_conversation(title="seeded", seed_from=source.id)
+    later = Message("later", Role.USER, (Text("tok0002 later"),), time.time() + 60)
+    await memory.append(source.id, [later])
+    await fill(memory, seeded.id, ["tok0500"])
+    assert await maintain(memory, seeded.id, FakeCompletion(keep=200, render=tagged))
+    text = await addendum(memory, seeded.id)
+    assert "tok0001" in text and "tok0002" not in text
+
+
+async def test_a_source_deleted_meanwhile_is_no_seed(open_store, monkeypatch):
+    """The source can be deleted while the conversation continued from it is maintained."""
+    from kaden.memory.sqlite import memory as module
+
+    memory = open_store()
+    source = await memory.create_conversation(title="source")
+    await fill(memory, source.id, ["tok0001"])
+    seeded = await memory.create_conversation(title="seeded", seed_from=source.id)
+    await fill(memory, seeded.id, ["tok0500"])
+    read_state = module._read_state
+    deleted = []
+
+    def deleted_after_read(conn, conversation_id, with_active=True):
+        state = read_state(conn, conversation_id, with_active)
+        if conversation_id == seeded.id and not deleted:  # the source goes in between
+            deleted.append(source.id)
+            conn.execute("INSERT INTO erasing VALUES (?)", (source.id,))
+            conn.execute("DELETE FROM messages WHERE conversation_id = ?", (source.id,))
+            conn.execute("UPDATE conversations SET seed_from = NULL WHERE seed_from = ?",
+                         (source.id,))
+            conn.execute("DELETE FROM conversations WHERE id = ?", (source.id,))
+        return state
+
+    monkeypatch.setattr(module, "_read_state", deleted_after_read)
+    await maintain(memory, seeded.id, FakeCompletion(render=tagged))  # no KeyError
+    assert (await memory.inspect(seeded.id)).summary == ""
+
+
+async def test_recall_everywhere_skips_a_conversation_deleted_meanwhile(open_store):
+    from kaden.api import ToolCall as Call
+    from kaden.memory.tools import run_memory_tool
+
+    memory = open_store()
+    here = await memory.create_conversation(title="here")
+    gone = await memory.create_conversation(title="gone")
+    await fill(memory, here.id, ["tok0001"])
+    listed = await memory.list_conversations()
+    await memory.delete_conversation(gone.id)
+
+    current = memory.list_conversations
+
+    async def stale_once(*, include_archived: bool = False):
+        memory.list_conversations = current  # type: ignore[method-assign]
+        return listed  # as it was before the delete
+
+    memory.list_conversations = stale_once  # type: ignore[method-assign]
+
+    class Ctx:
+        conversation_id = here.id
+        call_id = "c"
+
+    out = await run_memory_tool(memory, Call("r", "recall", {"query": "tok0001",
+                                                              "scope": "all"}), Ctx())
+    assert not out.is_error and "tok0001" in out.content
+
+
+async def test_blocks_are_encoded_off_the_event_loop(open_store, monkeypatch):
+    import threading
+
+    from kaden.memory.sqlite import codec
+
+    memory = open_store()
+    conv = await memory.create_conversation(title="test")
+    threads = []
+    encode = codec.encode_blocks
+
+    def recorded(blocks):
+        threads.append(threading.current_thread())
+        return encode(blocks)
+
+    monkeypatch.setattr(codec, "encode_blocks", recorded)
+    await memory.append(conv.id, [text_message("tok0001")])
+    assert threads and threading.main_thread() not in threads
+
+
+def test_a_schema_script_runs_statements_whole():
+    """A trigger's body holds statements of its own, whatever its line breaks."""
+    from kaden.memory.sqlite.memory import _execute_script
+
+    conn = sqlite3.connect(":memory:", isolation_level=None)
+    _execute_script(conn, "CREATE TABLE t (x INTEGER);\nCREATE TRIGGER no_update\n"
+                          "BEFORE UPDATE ON t\nBEGIN\n  SELECT RAISE(ABORT, 'no;\nway');\n"
+                          "END;\nINSERT INTO t VALUES (1);")
+    assert conn.execute("SELECT x FROM t").fetchall() == [(1,)]
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE t SET x = 2")

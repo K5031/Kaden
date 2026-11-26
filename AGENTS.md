@@ -15,7 +15,7 @@ Python 3.14 (`requires-python >= 3.12`), asyncio, uv, pytest + pytest-asyncio, r
 - No migration or compatibility code for older data folders, settings or flags. A store of another schema version is refused.
 - Prefer established libraries over custom mechanisms.
 - Modules must never block the event loop.
-- Memory archive: append-only, full-fidelity, schema-versioned. The one exception is deletion the user explicitly asks for.
+- Memory archive: append-only, full-fidelity, schema-versioned. The exceptions are deletion the user explicitly asks for, and long-term memory notes, which the agent may also delete (with their revisions) when they are no longer true: a note is the agent's own working knowledge, and a wrong one kept would mislead every later conversation. Messages stay either way.
 - Each instance writes a JSONL event log of runtime decisions (state changes, tool starts, stops, budget checks).
 
 ## Ambiguity
