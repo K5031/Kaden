@@ -780,7 +780,9 @@ class SqliteMemory(SqliteArchive):
         an exhausted budget propagates."""
         count = context.count_tokens
         rows, notes = await self._run(_unsaved, conversation_id)
-        messages = [_message(r[1:]) for r in rows]
+        # Not Kaden's hidden notices: a recalled note there is not news.
+        messages = [m for r in rows if not ((m := _message(r[1:])).hidden
+                                             and m.author is Author.KADEN)]
         if not messages or messages[-1].role is not Role.ASSISTANT or any(
                 isinstance(b, ToolCall) for b in messages[-1].blocks):
             return False
@@ -962,7 +964,7 @@ def _clean_title(output: str) -> str:
 
 def _note(row: Sequence[Any]) -> MemoryNote:
     return MemoryNote(str(row[0]), row[1], row[2], row[3], row[4], row[5],
-                      fixed=row[0] == _PROFILE_ID)
+                      fixed=row[0] == _PROFILE_ID, always_shown=row[0] == _PROFILE_ID)
 
 
 def _require_note(conn: sqlite3.Connection, note_id: str) -> MemoryNote:

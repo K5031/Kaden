@@ -55,7 +55,8 @@ class MemoryStore:
     conversations: dict[ConversationId, Conversation] = field(default_factory=dict)
     # note id -> revisions, oldest first; the last one is current; "1" is the profile
     long_term: dict[str, list[MemoryNote]] = field(default_factory=lambda: {
-        "1": [MemoryNote("1", PROFILE, "Who the user is", "", None, 0.0, fixed=True)]})
+        "1": [MemoryNote("1", PROFILE, "Who the user is", "", None, 0.0, fixed=True,
+                         always_shown=True)]})
     next_id: int = 1
 
     def save(self, title: str, description: str, text: str, note_id: str | None,
@@ -81,7 +82,8 @@ class MemoryStore:
         previous = self.long_term[note_id][-1] if self.long_term[note_id] else None
         note = MemoryNote(note_id, PROFILE if note_id == "1" else title,
                           description or (previous.description if previous else ""),
-                          text.strip(), source, time.time(), fixed=note_id == "1")
+                          text.strip(), source, time.time(), fixed=note_id == "1",
+                          always_shown=note_id == "1")
         self.long_term[note_id].append(note)
         return note
 

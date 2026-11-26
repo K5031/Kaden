@@ -32,6 +32,7 @@ from kaden.api import (
     Usage,
     UsageReport,
 )
+from kaden.runtime.orchestrator import RECALL_SYSTEM
 from kaden.runtime.settings import read_key
 
 DEFAULT_MODELS = (
@@ -122,6 +123,8 @@ class ScriptedCore(Core):
         self.requests.append(request)
         if request.maintenance and self.maintenance is not None:
             source = self.maintenance
+        elif request.maintenance and request.system == RECALL_SYSTEM:
+            source = Step(text="")  # recall, unscripted: recalls nothing
         else:
             source = self.steps.popleft() if self.steps else self.default
         step = source(request) if callable(source) else source

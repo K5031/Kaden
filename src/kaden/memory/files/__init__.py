@@ -175,4 +175,4 @@ def _render(rules: str, index: Sequence[str]) -> str:
 def _note(file: MemoryFile) -> MemoryNote:
     fields, body = split_frontmatter(file.text)
     return MemoryNote(file.path, file.path, fields.get("description", ""), body, None,
-                      file.updated_at)
+                      file.updated_at, always_shown=file.path == MEMORY_INDEX)

@@ -170,6 +170,11 @@ Kaden keeps every message of every conversation until you delete the conversatio
   (who you are, how you like answers) and one note per project, person or topic, each with
   a one-line description. Every conversation sees About you and the list of notes; the
   agent opens a note when it is relevant, so memory stays cheap as it grows.
+- **Recall:** before the agent answers your message (or, in Continuous, something that
+  woke them, such as a Bilibili message), the cheaper upkeep model picks up to five notes
+  that look relevant from their titles and descriptions, and the agent gets their full
+  text with the message, as Claude Code does. A note is not brought up again while it is
+  still in view and unchanged.
 - After each answer, Kaden's cheaper upkeep model reads the exchange and saves what will
   matter later (decisions, plans, lasting facts) into the notes. It skips small talk, news
   of recent work and anything Kaden can read again in your files, and rewrites a note that

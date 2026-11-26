@@ -621,6 +621,9 @@ class MemoryNote:
     source_conversation_id: ConversationId | None
     updated_at: float
     fixed: bool = False  # cannot be renamed or deleted, only emptied (the built-in profile)
+    # Its text is in every request already (the built-in profile, the files module's
+    # index): the runtime does not recall it.
+    always_shown: bool = False
 
 
 @dataclass(frozen=True, slots=True)
