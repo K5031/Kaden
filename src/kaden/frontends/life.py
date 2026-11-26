@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import sys
 import tomllib
@@ -24,6 +25,7 @@ from typing import Any
 import tomli_w
 
 from kaden.api import (
+    PERMISSION_CEILING_ENV,
     DutyKind,
     EventEnvelope,
     MessageCommitted,
@@ -143,9 +145,14 @@ class Life:
         command = [*self.command, "--headless", "--data-dir", str(self.folder)]
         if self.conversation_id is not None:
             command += ["--conversation", self.conversation_id]
+        # Without the ceiling the app's runtime sets for what it starts: that is for a
+        # Kaden an agent starts, whose saved answers an agent could have written. The life
+        # is the user's, and so are its answers; its permission level follows theirs.
+        env = {k: v for k, v in os.environ.items() if k != PERMISSION_CEILING_ENV}
         process = await asyncio.create_subprocess_exec(
             *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, cwd=self.folder / HOME, limit=16 * 1024 * 1024)
+            stderr=asyncio.subprocess.PIPE, cwd=self.folder / HOME, env=env,
+            limit=16 * 1024 * 1024)
         live = self._live = RemoteRuntime(Channel(process), self._event)
         if self.conversation_id is None:
             info = await live.channel.request("start")

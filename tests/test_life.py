@@ -224,3 +224,23 @@ def test_what_it_asks_the_user_reaches_the_app(tmp_path):
     prompt = Prompt("p1", "permission", "May I send a message?")
     life._event(EventEnvelope(1, PromptOpened(prompt)))
     assert heard == [prompt]
+
+
+async def test_it_lives_without_a_ceiling_on_what_the_user_allows_it(
+        tmp_path, child_env, monkeypatch):
+    """The ceiling is for a Kaden an agent starts, whose saved answers an agent could have
+    written. The life is the user's: the app starts it, and its answers are the user's."""
+    import psutil
+
+    from kaden.api import PERMISSION_CEILING_ENV
+
+    monkeypatch.setenv(PERMISSION_CEILING_ENV, "auto")  # as the app's own runtime sets it
+    data = home(tmp_path, [{"text": ""}])
+    life = Life(data, pace_s=(0.05, 30))
+    try:
+        await life.start()
+        await eventually(lambda: life.snapshot)
+        child = psutil.Process(life.runtime.channel.process.pid)
+        assert PERMISSION_CEILING_ENV not in child.environ()
+    finally:
+        await life.aclose()
