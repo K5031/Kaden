@@ -73,6 +73,9 @@ CREDENTIALS = re.compile("|".join([
     r"\.config/fish/config\.fish|\.config/environment\.d\b",
     r"\.docker/config\.json|\.config/(?:gcloud|gh|google-chrome|chromium|BraveSoftware)\b",
     r"\.local/share/(?:keyrings|kwalletd)\b|\bkwallet|\bsecret-tool\b|\bid_(?:rsa|ed25519|ecdsa)",
+    # macOS: the Keychain, the command that reads it, and the browsers' profiles.
+    r"Library/Keychains\b|\bsecurity\s+(?:find-(?:generic|internet)-password|dump-keychain)\b",
+    r"Library/Application[\\ ]+Support/(?:Google/Chrome|Chromium|BraveSoftware|Firefox)\b",
 ]))
 CREDENTIALS_REASON = ("It may read or change keys or passwords, which Kaden never decides on "
                       "its own.")
@@ -81,14 +84,16 @@ DATA_REASON = ("It reaches Kaden's own data (conversations, settings, spending),
 
 
 def always_ask(call: ToolCall, data_dir: Path) -> str | None:
-    """Why this call must ask without a review, or None. Looks at every argument value."""
+    """Why this call must ask without a review, or None. Looks at every argument value.
+    The data folder is matched by its path and, since a command may reach it from
+    anywhere (`cd ~ && cat .kaden/settings.toml`, `../../.kaden`), by its name as a path
+    segment of its own."""
     text = json.dumps(call.arguments, ensure_ascii=False)
-    home, data = Path.home(), data_dir.expanduser().resolve()
-    forms = [str(data)]
-    if data.is_relative_to(home) and data != home:
-        rel = data.relative_to(home).as_posix()
-        forms += [f"~/{rel}", f"$HOME/{rel}", f"${{HOME}}/{rel}"]
-    if any(form in text for form in forms):
+    data = data_dir.expanduser().resolve()
+    if str(data) in text or str(data_dir.expanduser().absolute()) in text:
+        return DATA_REASON
+    if data != Path.home() and data.name and re.search(
+            rf"{_START}{re.escape(data.name)}{_END}", text):
         return DATA_REASON
     if CREDENTIALS.search(text):
         return CREDENTIALS_REASON

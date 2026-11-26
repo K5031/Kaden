@@ -1129,3 +1129,12 @@ The design is in [the note](notes/implemented/2026-11-26-always-allow-for-chaine
 | Where chosen | `Runtime._gate` puts them in the question (`Prompt.details["always"]`, `["never"]`, as `str(rule)`); `_save_rules` saves them in one settings update under the settings lock, each replacing any rule with the same tool and prefix |
 | The card | `_kept_label`: “cp”, “echo” and “ls”; a tool by its name; labels past 60 characters cut with "…", the whole in the tooltip (`LABEL_CHARS`) |
 
+
+## The data folder in always_ask: by its name as a path segment (2026-11-26)
+
+`review.always_ask` matches Kaden's data folder by its full path and by its folder name as
+a path segment of its own (`.kaden` in `cd ~ && cat .kaden/settings.toml`,
+`../../.kaden/usage.json`), since a command may reach it from any directory. A data folder
+with a common name (`--data-dir ~/data`) makes every call that names such a folder ask:
+asking is the safe side, and the default `.kaden` is distinctive. Not attempted: resolving
+`cd` and relative paths in a command, which the shell, not a pattern, decides.
