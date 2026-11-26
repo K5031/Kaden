@@ -18,6 +18,7 @@ from kaden.api import (
     ToolOutput,
     ToolSpec,
     ToolStatus,
+    UsageUpdated,
 )
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
@@ -255,3 +256,42 @@ async def test_a_watch_looks_again_only_once_its_news_is_in_the_conversation(mak
     await source.items.put("a headline")
     await eventually(lambda: source.calls == 2)
     assert looks == [["a headline"]]
+
+
+async def test_a_watch_is_counted_once(make):
+    source, tools = Source(), FakeTools()
+    watching(tools, source)
+    core = ScriptedCore([Step(calls=[call("news", {"topic": "x"}, id="a")]),
+                         Step(calls=[call("news", {"topic": "x"}, id="b")]), Step(text="ok")])
+    h: Harness = await make(core=core, tools=tools, **FAST_WATCH)
+    await h.start()
+    await h.turn("watch x")
+    assert h.runtime.snapshot().usage.tool_calls == 1  # the second is the one there is
+    assert max(e.snapshot.tool_calls for e in h.rec.of(UsageUpdated)) == 1
+
+
+class Shuffling(Keeping):
+    """Keeps one watch, its arguments in another order each time it is asked."""
+
+    asked = 0
+
+    async def standing_watches(self) -> list[StandingWatch]:
+        self.asked += 1
+        arguments = {"a": 1, "b": 2} if self.asked % 2 else {"b": 2, "a": 1}
+        return [StandingWatch("inbox", arguments, as_user=True)]
+
+
+async def test_a_kept_watch_is_kept_once_whatever_the_order_of_its_arguments(make):
+    inbox, tools = Source(), Shuffling()
+    tools.add(ToolSpec("inbox", "Waits for mail", {"type": "object"}, True, watch=True),
+              inbox.run)
+    life = Duty("You are Mira.", DutyKind.LIFE, min_interval_s=30, max_interval_s=60)
+    h: Harness = await make(core=ScriptedCore(default=Step(text="")), tools=tools,
+                            **FAST_WATCH)
+    await h.start()
+    await h.runtime.set_duty(life)
+    await idle(h)
+    await h.turn("hello")
+    await eventually(lambda: tools.asked >= 2)
+    await asyncio.sleep(0.1)  # what it asked is acted on
+    assert [w.name for w in h.runtime._watch_list()] == ["inbox"]

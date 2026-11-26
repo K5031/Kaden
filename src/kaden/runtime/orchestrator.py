@@ -452,6 +452,8 @@ class Runtime:
         self._fired: list[_Firing] = []
         self._confirms: dict[str, _Firing] = {}
         self._keeping: asyncio.Task[None] | None = None
+        self._watch_writing = asyncio.Lock()
+        self._watch_saves: set[asyncio.Task[None]] = set()
         # Whether the agent was last told the user talks to it; None: not looked up yet.
         self._spoken: bool | None = None
         # What came in since the last recall (the user's messages, notices, firings).
@@ -591,7 +593,7 @@ class Runtime:
             self._log.open(data_dir / EVENT_LOG_FILE)
             self._loop_task = asyncio.create_task(self._run_loop())
 
-        self._end_watch_tasks()  # the conversation left keeps them, for when it is back
+        await self._end_watch_tasks()  # the conversation left keeps them, for when it is back
         conversation, resumed = await self._open_conversation(options)
         if self._conversation is None or conversation.id != self._conversation.id:
             self._grants.clear()
@@ -966,7 +968,7 @@ class Runtime:
     async def _shut_down(self) -> None:
         self._cycle_requested = False
         self._cancel_duty()
-        self._end_watch_tasks()
+        await self._end_watch_tasks()
         await self.stop()
         if self._stop_task is not None:
             await self._stop_task
@@ -2045,14 +2047,16 @@ class Runtime:
                                    said=outcome.said[:500])
         return "\n".join(said) or None
 
-    async def _run_module_call(self, call: ToolCall, spec: ToolSpec
-                               ) -> tuple[ToolResult, float]:
+    async def _cleared(self, call: ToolCall, spec: ToolSpec) -> tuple[ToolResult | None, bool]:
+        """What comes before a module's call runs: Stop, the hooks, the permission policy
+        and the budget, which counts it. A refusal, or None and whether its module judged
+        it confined."""
         not_started = ToolResult(call.id, ToolStatus.CANCELLED,
                                  "Not started: the agent was stopped.")
         if self._stopping:
-            return not_started, 0.0
+            return not_started, False
         if said := await self._hooked("before", call):
-            return ToolResult(call.id, ToolStatus.REFUSED, f"Refused by a hook: {said}"), 0.0
+            return ToolResult(call.id, ToolStatus.REFUSED, f"Refused by a hook: {said}"), False
         try:
             owner = self._tool_owner.get(call.name)
             confined = owner is not None and await owner.confined(self._bare(call))
@@ -2060,15 +2064,22 @@ class Runtime:
             logger.exception("Tools.confined failed for %s", call.name)
             confined = False
         if refusal := await self._gate(call, spec, confined):
-            return ToolResult(call.id, ToolStatus.REFUSED, refusal), 0.0
+            return ToolResult(call.id, ToolStatus.REFUSED, refusal), False
         if self._stopping:
-            return not_started, 0.0
+            return not_started, False
         reason = self._budget.reserve_tool_call()
         self._log.decision("budget_check", before="tool", call_id=call.id, ok=reason is None,
                            reason=reason)
         if reason:
-            return ToolResult(call.id, ToolStatus.REFUSED, f"Refused: budget {reason}."), 0.0
+            return ToolResult(call.id, ToolStatus.REFUSED, f"Refused: budget {reason}."), False
         self._emit(UsageUpdated(self._budget.snapshot()))
+        return None, confined
+
+    async def _run_module_call(self, call: ToolCall, spec: ToolSpec
+                               ) -> tuple[ToolResult, float]:
+        refused, confined = await self._cleared(call, spec)
+        if refused is not None:
+            return refused, 0.0
         wait: float | None = self._config.initial_wait_s
         asked_background = False
         if spec.foreground:
@@ -2114,31 +2125,34 @@ class Runtime:
         return [w for w in self._watches if w.conversation_id == self._conversation.id]
 
     async def _save_watches(self) -> None:
+        """Written whole, one write at a time, in order; one under way is finished even
+        when its caller is cancelled, and shutdown waits for it (_end_watch_tasks)."""
         assert self._watches is not None
-        try:
-            await asyncio.to_thread(watch_files.save, self._config.data_dir, self._watches)
-        except OSError:
-            logger.exception("the watches could not be kept")
+        watches = list(self._watches)
+
+        async def write() -> None:
+            async with self._watch_writing:
+                try:
+                    await asyncio.to_thread(watch_files.save, self._config.data_dir, watches)
+                except OSError:
+                    logger.exception("the watches could not be kept")
+
+        task = asyncio.ensure_future(write())
+        self._watch_saves.add(task)
+        task.add_done_callback(self._watch_saves.discard)
+        await asyncio.shield(task)
 
     async def _start_watch(self, call: ToolCall, spec: ToolSpec) -> ToolResult:
-        """Through the usual checks, then kept: answered at once with its id."""
-        if said := await self._hooked("before", call):
-            return ToolResult(call.id, ToolStatus.REFUSED, f"Refused by a hook: {said}")
-        try:
-            owner = self._tool_owner.get(call.name)
-            confined = owner is not None and await owner.confined(self._bare(call))
-        except Exception:  # module calls are wrapped; not knowing means asking
-            logger.exception("Tools.confined failed for %s", call.name)
-            confined = False
-        if refusal := await self._gate(call, spec, confined):
-            return ToolResult(call.id, ToolStatus.REFUSED, refusal)
-        if reason := self._budget.reserve_tool_call():
-            return ToolResult(call.id, ToolStatus.REFUSED, f"Refused: budget {reason}.")
+        """The one there is, or through the usual checks (_cleared), then kept: answered at
+        once with its id."""
         arguments = dict(self._bare(call).arguments)
         if same := next((w for w in self._watch_list()
                          if w.name == call.name and w.arguments == arguments), None):
             return ToolResult(call.id, ToolStatus.OK, f"Already watching ({same.id}): "
                               f"{call.name}. TaskStop with {same.id} ends it.")
+        refused, _ = await self._cleared(call, spec)
+        if refused is not None:
+            return refused
         watch = await self._add_watch(call.name, arguments, kept=False)
         return ToolResult(call.id, ToolStatus.OK, (
             f"Watching ({watch.id}): {call.name}. Each time it fires you are told, in a "
@@ -2176,14 +2190,19 @@ class Runtime:
         if watch.id not in self._watch_tasks:
             self._watch_tasks[watch.id] = asyncio.create_task(self._watch_loop(watch))
 
-    def _end_watch_tasks(self) -> None:
-        """Stop the tasks, not the watches: they start again when the conversation is."""
-        for task in self._watch_tasks.values():
-            task.cancel()
+    async def _end_watch_tasks(self) -> None:
+        """Stop the tasks, not the watches: they start again when the conversation is.
+        Waits for them (a call that outlasts the grace period is left) and for the
+        watches' writes."""
+        tasks = [*self._watch_tasks.values(), *filter(None, [self._keeping])]
         self._watch_tasks.clear()
-        if self._keeping is not None:
-            self._keeping.cancel()
-            self._keeping = None
+        self._keeping = None
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.wait(tasks, timeout=self._config.cancel_grace_s)
+        if self._watch_saves:
+            await asyncio.wait(set(self._watch_saves))
 
     async def _resume_watches(self) -> None:
         """The opened conversation's watches, started again silently; then those the
@@ -2194,12 +2213,10 @@ class Runtime:
             except (OSError, ValueError) as e:
                 logger.warning("the watches were not read: %s", e)
                 self._watches = []
-        if not self._watch_list():
-            await self._keep_standing()
-            return
-        await self._offered_tools()  # which module runs each
-        for watch in self._watch_list():
-            self._run_watch(watch)
+        if self._watch_list():
+            await self._offered_tools()  # which module runs each
+            for watch in self._watch_list():
+                self._run_watch(watch)
         await self._keep_standing()
 
     def _keep_standing_soon(self) -> None:
@@ -2226,9 +2243,9 @@ class Runtime:
                 await self._drop_watch(watch)
         if named:
             await self._offered_tools()
-        running = {(w.name, str(w.arguments), w.as_user) for w in self._watch_list() if w.kept}
+        running = [(w.name, w.arguments, w.as_user) for w in self._watch_list() if w.kept]
         for name, arguments, as_user in named:
-            if (name, str(arguments), as_user) not in running:
+            if (name, arguments, as_user) not in running:
                 await self._add_watch(name, arguments, kept=True, as_user=as_user)
 
     async def _watch_loop(self, watch: watch_files.Watch) -> None:
