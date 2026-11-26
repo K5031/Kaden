@@ -3,6 +3,7 @@ duty wakes next."""
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Sequence
 from datetime import datetime
@@ -17,6 +18,7 @@ FINISHED = "background work finished"
 NEW_DAY = "a new day"  # a life held back by its daily amount wakes again
 WATCH = "something it watches happened"  # a standing watch fired (ToolSpec.watch)
 OPEN = (PlanStatus.TODO, PlanStatus.DOING)
+MAX_DUE_AHEAD_S = 100 * 365.25 * 24 * 3600  # the furthest a step may fall due
 CLOSE_PLAN = (
     "Steps are still open. Before you end your turn, bring the todo list up to date with "
     "TodoWrite: mark what you finished completed, leave out what you gave up, and finish "
@@ -153,19 +155,23 @@ def finish(plan: Sequence[PlanItem]) -> str:
 
 
 def parse_plan(items: Sequence[dict[str, Any]], now: float) -> list[PlanItem]:
-    """TodoWrite's todos; ValueError for a due time that cannot be read."""
+    """TodoWrite's todos; ValueError for a due time that cannot be read, or that is more
+    than MAX_DUE_AHEAD_S ahead (one that far could not be shown)."""
     plan = []
     for item in items:
         due = None
         if "due_in_minutes" in item:
-            due = now + 60 * float(item["due_in_minutes"])
+            minutes = float(item["due_in_minutes"])
+            due = now + 60 * minutes if math.isfinite(minutes) else math.inf
         elif item.get("due"):
             try:
                 when = datetime.fromisoformat(item["due"])
-            except ValueError:
+                due = (when if when.tzinfo else when.astimezone()).timestamp()
+            except (ValueError, OverflowError):
                 raise ValueError(f"Cannot read the due time {item['due']!r}: use ISO 8601, "
                                  "e.g. 2026-11-12T09:00.") from None
-            due = (when if when.tzinfo else when.astimezone()).timestamp()
+        if due is not None and due - now > MAX_DUE_AHEAD_S:
+            raise ValueError("A due time is at most a hundred years ahead.")
         plan.append(PlanItem(item["content"], PLAN_STATUS[item["status"]], due,
                              item.get("note", "")))
     return plan

@@ -696,3 +696,15 @@ async def test_a_days_spending_starts_again_the_next_day(tmp_path):
     tracker.charge(Usage(1, 1), 0.2)  # not its own time
     assert tracker.day_cost() == pytest.approx(0.3)
     assert tracker.totals.cost_usd == pytest.approx(1.1)  # the lifetime total goes on
+
+
+@pytest.mark.parametrize("due", [{"due_in_minutes": 1e12}, {"due_in_minutes": float("inf")},
+                                 {"due": "2999-01-01T09:00"}])
+def test_a_due_time_too_far_ahead_is_refused(due):
+    from kaden.runtime.duty import parse_plan
+
+    with pytest.raises(ValueError, match="at most"):
+        parse_plan([{"status": "pending", "content": "x", "activeForm": "x", **due}],
+                   time.time())
+    parse_plan([{"status": "pending", "content": "x", "activeForm": "x",
+                 "due_in_minutes": 60 * 24 * 365}], time.time())  # a year: fine

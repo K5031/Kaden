@@ -1138,3 +1138,19 @@ a path segment of its own (`.kaden` in `cd ~ && cat .kaden/settings.toml`,
 with a common name (`--data-dir ~/data`) makes every call that names such a folder ask:
 asking is the safe side, and the default `.kaden` is distinctive. Not attempted: resolving
 `cd` and relative paths in a command, which the shell, not a pattern, decides.
+
+## A step falls due at most a hundred years ahead (2026-11-26)
+
+`duty.parse_plan` refuses a TodoWrite due time (`due` or `due_in_minutes`) more than
+`MAX_DUE_AHEAD_S`, a hundred years, ahead: one near year 9999 was saved and then broke
+every later request (`local()` raised). A hundred years leaves any real reminder alone.
+
+## An overdue open step wakes a duty at its minimum interval (2026-11-26)
+
+With a duty, an open step whose due time has passed keeps `next_wake` at
+`min_interval_s`, so the duty is woken at that interval until the step is closed or given
+a later time. This is what the Duty contract says (the earliest due open item, held
+between the intervals), and it is kept: an overdue step is work the duty has not done,
+the user chose the minimum interval, and a duty that waits on the user has ask_for_help,
+which pauses the check-ins. Not done: waking once per overdue step as reminders without
+a duty do, which would let a duty forget a step it left open.
