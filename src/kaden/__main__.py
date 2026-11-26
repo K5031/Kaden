@@ -419,42 +419,51 @@ def frontend_loop(spec: ModuleSpec) -> EventLoop:
     return getattr(factory, "event_loop", asyncio.run)
 
 
-async def launch(args: Launch, launcher: str, *, restart: Restart | None = None,
+async def launch(args: Launch, launcher: str, config: InstanceConfig, *,
+                 restart: Restart | None = None,
                  runs_here: Callable[[InstanceConfig], bool] = lambda config: True,
                  ) -> Restart | None:
-    """Run instances until the user quits. A Restart is returned for the caller when it is
-    to a frontend of another kind, or to one that `runs_here` says needs another loop."""
+    """Run instances until the user quits, the first from `config` (built for
+    `restart`), each next one built off the event loop. A Restart is returned for the
+    caller when it is to a frontend of another kind, or to one that `runs_here` says needs
+    another loop."""
     while True:
-        config = load_config(args, launcher=launcher, restart=restart)
         if not runs_here(config):
             return restart
         restart = await run_instance(config, fallback=LAUNCHER_FRONTENDS.get(launcher))
         if restart is None or restart.frontend_kind != launcher:
             return restart
+        # Off the loop: building it reads the keychain, which may block or ask.
+        config = await asyncio.to_thread(load_config, args, launcher=launcher,
+                                         restart=restart)
 
 
 async def _fail(error: SystemExit) -> None:
     raise error
 
 
-def run_frontends(args: Launch, launcher: str) -> Restart | None:
+def run_frontends(args: Launch, launcher: str, config: InstanceConfig | None = None
+                  ) -> Restart | None:
     """Run instances, each frontend on the event loop it names, until the user quits or
-    a Restart asks for a frontend of the other kind (returned)."""
+    a Restart asks for a frontend of the other kind (returned). `config`: the first
+    instance's, when the caller has built it already."""
     restart: Restart | None = None
     while True:
-        try:
-            config = load_config(args, launcher=launcher, restart=restart)
-        except SystemExit as e:
-            # A bad config file, before any frontend is chosen: the launcher's own
-            # frontend says so on its loop (a window's stderr is unseen).
-            if (built_in := LAUNCHER_FRONTENDS.get(launcher)) is not None:
-                frontend_loop(ModuleSpec(targets("frontend")[built_in]))(_fail(e))
-            raise
+        if config is None:
+            try:
+                config = load_config(args, launcher=launcher, restart=restart)
+            except SystemExit as e:
+                # A bad config file, before any frontend is chosen: the launcher's own
+                # frontend says so on its loop (a window's stderr is unseen).
+                if (built_in := LAUNCHER_FRONTENDS.get(launcher)) is not None:
+                    frontend_loop(ModuleSpec(targets("frontend")[built_in]))(_fail(e))
+                raise
         run = frontend_loop(config.frontend)
-        restart = run(launch(args, launcher, restart=restart,
+        restart = run(launch(args, launcher, config, restart=restart,
                              runs_here=lambda c, run=run: frontend_loop(c.frontend) is run))
         if restart is None or restart.frontend_kind != launcher:
             return restart
+        config = None
 
 
 def window_command(args: Launch, restart: Restart) -> list[str]:
@@ -507,7 +516,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                   message="Kaden opens in the desktop app.")
         return
     try:
-        restart = run_frontends(args, TERMINAL)
+        restart = run_frontends(args, TERMINAL, config)
     except ModuleLoadError as e:
         print(f"kaden: {e}", file=sys.stderr)
         raise SystemExit(1) from None
