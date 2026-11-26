@@ -82,6 +82,7 @@ from __future__ import annotations
 import abc
 import os
 import re
+import shlex
 from collections.abc import AsyncIterator, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -1261,46 +1262,168 @@ class AgentState(StrEnum):
 class Decision(StrEnum):
     ALLOW_ONCE = "allow_once"
     ALLOW_CONVERSATION = "allow_conversation"  # in memory only; keyed by tool name
-    ALLOW_ALWAYS = "allow_always"  # saved: PermissionRule.for_call, in every conversation
+    ALLOW_ALWAYS = "allow_always"  # saved: PermissionRule.for_calls, in every conversation
     DENY = "deny"
     DENY_ALWAYS = "deny_always"  # saved: calls like it are refused without asking
 
 
-# Programs that run code of any kind: a rule for one is the whole command, since "python"
-# alone would allow everything.
-_RUNS_CODE = frozenset({"bash", "bun", "deno", "env", "eval", "exec", "node", "npx", "perl",
-                        "php", "python", "python3", "ruby", "sh", "sudo", "uv", "xargs",
-                        "zsh"})
-_CHAINED = re.compile(r"[;&|`\n<>]|\$\(")  # what joins or feeds commands
+# Programs that run what they are given (code, other commands): a rule for one is the
+# whole command, since "python" alone would allow everything.
+_RUNS_CODE = frozenset({
+    ".", "awk", "bash", "bun", "dash", "deno", "doas", "env", "eval", "exec", "find",
+    "fish", "gawk", "make", "node", "npx", "parallel", "perl", "php", "python", "python3",
+    "ruby", "sed", "sh", "source", "ssh", "su", "sudo", "uv", "watch", "xargs", "zsh"})
+_CHAINED = re.compile(r"[;&|`\n<>]|\$\(")  # what joins or feeds commands, for a refusal
+# What a command is not read with certainty with: no allow covers it (a second command
+# after a newline, a comment, a substitution, a subshell, a here-doc).
+_UNREAD = re.compile(r"[\n#`()]|<<")
+_SEPARATORS = frozenset({"&&", "||", ";", "|", "|&", "&"})
+_TO_NOWHERE = frozenset({">", ">>", "&>", "&>>"})  # allowed only into /dev/null
+_WRAPPERS = frozenset({"time", "nohup", "command", "nice"})  # skipped when bare
+_RULES_KEPT = 5  # at most this many answers from one "always"
+# Programs whose second word says what they do (`git status`, `npm run`): an "always"
+# keeps both; for any other program, the program.
+_SUBCOMMANDS = frozenset({
+    "apt", "apt-get", "brew", "bundle", "cargo", "composer", "conda", "docker", "dotnet",
+    "flatpak", "gcloud", "gh", "git", "go", "gradle", "helm", "hg", "just", "kubectl",
+    "mix", "mvn", "nix", "npm", "pip", "pip3", "pnpm", "podman", "poetry", "rustup",
+    "snap", "svn", "systemctl", "terraform", "yarn"})
+
+
+def _command_parts(command: str) -> list[list[str]] | None:
+    """A shell command's parts, each its words without wrappers or harmless redirections;
+    None when it is not read with certainty (Claude Code's limits, and stricter)."""
+    if _UNREAD.search(command):
+        return None
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lexer.whitespace_split, lexer.commenters = True, ""
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return None
+    parts: list[list[str]] = [[]]
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token in _SEPARATORS:
+            parts.append([])
+        elif token in _TO_NOWHERE:
+            if tokens[i + 1:i + 2] != ["/dev/null"]:
+                return None
+            if parts[-1] and parts[-1][-1].isdigit():
+                parts[-1].pop()  # 2> /dev/null: the stream's number
+            i += 1
+        elif token == ">&":
+            if not tokens[i + 1:i + 2] or not tokens[i + 1].isdigit():
+                return None
+            if parts[-1] and parts[-1][-1].isdigit():
+                parts[-1].pop()
+            i += 1
+        elif set(token) <= set("();<>|&"):
+            return None  # an operator not read here
+        else:
+            parts[-1].append(token)
+        i += 1
+    words_of = [_unwrapped(part) for part in parts]
+    if any(not words for words in words_of):
+        return None
+    return words_of  # type: ignore[return-value]
+
+
+def _unwrapped(words: list[str]) -> list[str] | None:
+    """The words without leading wrappers; None for what is not read here (a variable
+    set in front, a wrapper's options)."""
+    while words:
+        first = words[0]
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", first):
+            return None
+        if first == "timeout":
+            if len(words) < 2 or not re.fullmatch(r"\d+(\.\d+)?[smhd]?", words[1]):
+                return None
+            words = words[2:]
+        elif first in _WRAPPERS:
+            if len(words) > 1 and words[1].startswith("-"):
+                return None
+            words = words[1:]
+        else:
+            return words
+    return None
+
+
+def _kept(words: list[str]) -> str:
+    """What an "always" keeps for one command: its program and subcommand (`git status`),
+    its program, or all of it where the program runs what it is given."""
+    program = words[0]
+    if program in _RUNS_CODE or (program == "git" and len(words) > 1
+                                 and words[1].startswith("-")):
+        return " ".join(w if re.fullmatch(r"[\w@%+=:,./{}-]+", w) else shlex.quote(w)
+                        for w in words)
+    if program in _SUBCOMMANDS and len(words) > 1 and re.fullmatch(r"[a-z][\w-]*", words[1]):
+        return f"{program} {words[1]}"
+    return program
 
 
 @dataclass(frozen=True, slots=True)
 class PermissionRule:
     """A saved answer: calls of `tool` (a shell command: one that is `prefix`, or starts
-    with it and a space) run without asking (`allow`) or are refused without asking."""
+    with its words) run without asking (`allow`) or are refused without asking. An allow
+    covers a chain of commands only with every part covered (PermissionRule.allows)."""
 
     tool: str
     prefix: str | None = None
     allow: bool = True
 
     @classmethod
-    def for_call(cls, call: ToolCall, *, allow: bool = True) -> PermissionRule:
-        """The rule an "always" or "never" answer to `call` saves: a shell command's
-        program and its subcommand (`git status`), the whole command where the program
-        runs code of any kind or commands are chained, else the tool."""
+    def for_calls(cls, call: ToolCall, *, allow: bool = True,
+                  have: Sequence[PermissionRule] = ()) -> tuple[PermissionRule, ...]:
+        """What an "always" (`allow`) or "never" answer to `call` saves: for a shell
+        command, one answer per part not yet allowed (`have`), at most five, none for a
+        command not read with certainty; a "never" keeps the whole of a chain. Other
+        tools: the tool."""
         command = call.arguments.get("command")
         if call.name != "Bash" or not isinstance(command, str) or not command.split():
-            return cls(call.name, allow=allow)
-        words = command.split()
-        if words[0] in _RUNS_CODE or _CHAINED.search(command):
-            return cls(call.name, command.strip(), allow)
-        if len(words) > 1 and re.fullmatch(r"[a-z][\w-]*", words[1]):
-            return cls(call.name, f"{words[0]} {words[1]}", allow)
-        return cls(call.name, words[0], allow)
+            return (cls(call.name, allow=allow),)
+        parts = _command_parts(command)
+        if not allow:
+            whole = parts is None or len(parts) > 1
+            return (cls(call.name, command.strip() if whole else _kept(parts[0]), False),)
+        if parts is None:
+            return ()
+        rules: list[PermissionRule] = []
+        for words in parts:
+            rule = cls(call.name, _kept(words))
+            if rule not in rules and not any(r.allow and r._covers(words) for r in have):
+                rules.append(rule)
+        return tuple(rules) if len(rules) <= _RULES_KEPT else ()
+
+    @staticmethod
+    def allows(rules: Sequence[PermissionRule], call: ToolCall) -> bool:
+        """Whether saved allows cover `call`: a shell command only when every part of it
+        is covered, or the command is exactly what one of them says."""
+        mine = [r for r in rules if r.allow and r.tool == call.name]
+        if any(r.prefix is None for r in mine):
+            return True
+        command = call.arguments.get("command")
+        if not mine or not isinstance(command, str):
+            return False
+        if any(r.prefix == command.strip() for r in mine):
+            return True
+        parts = _command_parts(command)
+        return parts is not None and all(any(r._covers(words) for r in mine)
+                                         for words in parts)
+
+    def _covers(self, words: list[str]) -> bool:
+        try:
+            mine = shlex.split(self.prefix or "")
+        except ValueError:
+            return False
+        return bool(mine) and words[:len(mine)] == mine
 
     def matches(self, call: ToolCall) -> bool:
-        """Whether the rule covers `call`. A rule that allows covers a command only when
-        nothing is chained to it; one that refuses covers any part of a chain."""
+        """Whether the rule covers `call`: an allow as `allows` with it alone; a refusal
+        covers any part of a chain, split on every joining character."""
+        if self.allow:
+            return PermissionRule.allows((self,), call)
         if call.name != self.tool:
             return False
         if self.prefix is None:
@@ -1308,14 +1431,8 @@ class PermissionRule:
         command = call.arguments.get("command")
         if not isinstance(command, str):
             return False
-        command = command.strip()
-        if command == self.prefix:
-            return True
-        parts = [command] if self.allow else _CHAINED.split(command)
-        if self.allow and _CHAINED.search(command):
-            return False
         return any(part.strip() == self.prefix or part.strip().startswith(self.prefix + " ")
-                   for part in parts)
+                   for part in [command.strip(), *_CHAINED.split(command)])
 
     def __str__(self) -> str:
         return f"{self.tool}: {self.prefix}" if self.prefix is not None else self.tool

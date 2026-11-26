@@ -2333,8 +2333,7 @@ class Runtime:
         # The user's saved yes, unless a parent Kaden set a ceiling it must not pass, or
         # the call touches what always asks (Kaden's own data, credentials).
         if (self._ceiling is None
-                and any(rule.allow and rule.matches(bare)
-                        for rule in self._config.permission_rules)
+                and PermissionRule.allows(self._config.permission_rules, bare)
                 and always_ask(call, self._config.data_dir) is None):
             auto(Decision.ALLOW_ALWAYS, "rule")
             return None
@@ -2360,25 +2359,32 @@ class Runtime:
             auto(Decision.DENY, "non-interactive frontend")
             return "Refused: this call needs permission and the frontend cannot ask."
         description = call.arguments.get(DESCRIPTION_ARG)
+        # What "always" and "never" would keep, chosen once: the card names them.
+        always = PermissionRule.for_calls(bare, have=self._config.permission_rules)
+        never = PermissionRule.for_calls(bare, allow=False)
         decision = Decision(await self._open_prompt(Prompt(
             _new_id(), PromptKind.PERMISSION,
             description if isinstance(description, str) and description else call.name,
             call, {"read_only": spec.read_only, "confined": confined,
-                               "reason": reason})))
+                   "reason": reason, "always": [str(r) for r in always],
+                   "never": [str(r) for r in never]})))
+        if decision is Decision.ALLOW_ALWAYS and not always:
+            decision = Decision.ALLOW_ONCE  # nothing to keep: as once
         if decision in (Decision.ALLOW_ALWAYS, Decision.DENY_ALWAYS):
-            await self._save_rule(PermissionRule.for_call(
-                bare, allow=decision is Decision.ALLOW_ALWAYS))
+            await self._save_rules(always if decision is Decision.ALLOW_ALWAYS else never)
         if decision in (Decision.DENY, Decision.DENY_ALWAYS):
             return "Refused: permission denied."
         if decision == Decision.ALLOW_CONVERSATION:
             self._grants[call.name] = self._grants.get(call.name, False) or not confined
         return None
 
-    async def _save_rule(self, rule: PermissionRule) -> None:
-        """Keep an "always" or "never" answer, in place of any rule for the same calls."""
-        rules = tuple(r for r in self._config.permission_rules
-                      if (r.tool, r.prefix) != (rule.tool, rule.prefix)) + (rule,)
+    async def _save_rules(self, new: Sequence[PermissionRule]) -> None:
+        """Keep "always" or "never" answers, in one change, each in place of any rule for
+        the same calls."""
         async with self._settings_lock:
+            keys = {(r.tool, r.prefix) for r in new}
+            rules = tuple(r for r in self._config.permission_rules
+                          if (r.tool, r.prefix) not in keys) + tuple(new)
             await self._update_settings(SettingsUpdate(permission_rules=rules))
 
     async def _review(self, call: ToolCall, spec: ToolSpec) -> Verdict:

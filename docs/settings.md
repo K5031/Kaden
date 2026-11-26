@@ -106,9 +106,13 @@ says why. If the check fails or the spending limit is reached, Kaden asks too.
 **Saved answers.** When Kaden asks, **Always allow** keeps your answer for every
 conversation: calls like it run without asking from then on. **Never allow**, under ▾
 beside Deny, refuses them without asking. In Continuous's view they are its own answers,
-apart from your chats'. A command is kept by its program and subcommand
-(`git status` covers `git status -s` too, but not `git status && rm …`); a command that
-runs code of any kind, such as `python fix.py`, is kept whole. Settings → Permissions
+apart from your chats'. A command is kept by its program (`ls`), or its program and
+subcommand for programs that have them (`git status` covers `git status -s` too); a
+command that runs what it is given, such as `python fix.py` or `find … -exec`, is kept
+whole. For commands joined with `&&`, `;` or `|`, each part is kept (the button names
+them: "Always allow “cp” and “ls”"), and such a chain runs without asking only when every
+part is allowed. Writing into a file with `>`, and commands with `$(…)`, a newline or a
+`#`, are never covered: they are checked each time. Settings → Permissions
 lists what you saved, and **Remove** takes one back. An "always" never covers keys,
 passwords or Kaden's own data folder: those still ask.
 

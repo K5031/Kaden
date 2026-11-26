@@ -1115,3 +1115,17 @@ The design is in [the note](notes/implemented/2026-11-26-memory-recall.md); the 
 | The notice | Hidden, Kaden's: `RECALL_HEADER`, then per note `## <title>`, `(note "<id>", changed <updated_at>)` and its text |
 | Not twice | What the assembled context still holds of those lines (`_RECALLED`): a note recalled and still in view, unchanged, is not a candidate; a recall summarized away, or a note changed since, can come again. Notes with `MemoryNote.always_shown` (the built-in profile, the files module's `MEMORY.md`) are never candidates; with no other note, nothing is assembled or asked |
 | Built-in memory | Its save pass leaves out Kaden's hidden notices (a recalled note is not news); the files module's memory tool still asks for a note to be viewed before it is edited |
+
+## Always allow for chained commands
+
+The design is in [the note](notes/implemented/2026-11-26-always-allow-for-chained-commands.md); the choices it leaves open:
+
+| Choice | Decision |
+|---|---|
+| Reading | `api._command_parts`: no allow cover for a newline, `#`, backtick, parenthesis or `<<` anywhere (`_UNREAD`); `shlex` (posix, `punctuation_chars`, `whitespace_split`, no comment characters), split on `_SEPARATORS`; `>`, `>>`, `&>`, `&>>` only into `/dev/null`, `>&` only to a stream number; any other operator, an empty part, an unclosed quote: not read |
+| A part's program | Leading `time`, `nohup`, `command`, `nice` (bare) and `timeout <n>[smhd]` skipped (`_unwrapped`); a wrapper with options, or a variable set in front: not read |
+| What is kept | `_kept`: the whole part for `_RUNS_CODE` (now also `find`, `awk`, `sed`, `make`, `ssh`, `su`, `doas`, `watch`, `dash`, `fish`, `source`, `.`, `parallel`, `gawk`) and for `git` with an option first; program and subcommand for `_SUBCOMMANDS` (git, npm, cargo, docker, …); else the program. A plain second word is no longer taken as a subcommand for other programs (`echo x` keeps `echo`) |
+| How many | At most 5 per answer (`_RULES_KEPT`); more, or a command not read: no "Always allow" on the card, and an `ALLOW_ALWAYS` that comes anyway (another frontend) counts as once |
+| Where chosen | `Runtime._gate` puts them in the question (`Prompt.details["always"]`, `["never"]`, as `str(rule)`); `_save_rules` saves them in one settings update under the settings lock, each replacing any rule with the same tool and prefix |
+| The card | `_kept_label`: “cp”, “echo” and “ls”; a tool by its name; labels past 60 characters cut with "…", the whole in the tooltip (`LABEL_CHARS`) |
+

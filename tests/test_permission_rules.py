@@ -31,7 +31,7 @@ from tests.fakes.tools import FakeTools
     ("WebFetch", {"url": "https://example.com"}, PermissionRule("WebFetch")),
 ])
 def test_an_answer_becomes_a_rule_for_calls_like_it(tool, arguments, rule):
-    assert PermissionRule.for_call(ToolCall("c", tool, arguments)) == rule
+    assert PermissionRule.for_calls(ToolCall("c", tool, arguments)) == (rule,)
 
 
 def test_a_rule_matches_what_it_says_and_nothing_chained_to_it():
@@ -113,3 +113,62 @@ def test_saved_rules_are_read_back_and_a_wrong_one_is_named(tmp_path):
     path.write_text("always_allow = [3]\n")
     with pytest.raises(SystemExit, match="always_allow"):
         read_saved(path)
+
+
+def bash(command: str) -> ToolCall:
+    return ToolCall("c", "Bash", {"command": command})
+
+
+def saved(command: str, have: tuple[PermissionRule, ...] = ()) -> list[str]:
+    return [str(r) for r in PermissionRule.for_calls(bash(command), have=have)]
+
+
+def test_always_allow_on_a_chain_keeps_each_part():
+    """As Claude Code: one answer per part of a chain, at most five, the parts already
+    allowed left out."""
+    assert saved("cp /tmp/a.png b.png && echo x >> /dev/null && ls -la b.png") == [
+        "Bash: cp", "Bash: echo", "Bash: ls"]
+    assert saved("git status | head -5", have=(PermissionRule("Bash", "head"),)) == [
+        "Bash: git status"]
+    assert saved("a; b; c; d; e; f") == []  # too many to keep: no "always"
+    # Programs that run what they are given are kept whole, as before.
+    assert saved("find . -name x -exec rm {} +") == ["Bash: find . -name x -exec rm {} +"]
+    assert saved("git -C /tmp/x push") == ["Bash: git -C /tmp/x push"]
+
+
+@pytest.mark.parametrize("command", [
+    "ls\nrm -rf x",  # a newline is a second command
+    "git status#; rm -rf x",  # a comment hides the rest from a reader, not from bash
+    "echo $(rm -rf x)", "echo `rm -rf x`", "(rm -rf x)", "cat <(rm -rf x)",
+    "echo 'unclosed",  # bash runs what comes before the error
+    "FOO=1 rm -rf x",  # what a variable does to a program is not read
+    "cat <<EOF\nx\nEOF",
+])
+def test_what_cannot_be_read_with_certainty_is_not_kept_or_covered(command):
+    assert saved(command) == []
+    everything = tuple(PermissionRule("Bash", p) for p in ("ls", "git status", "echo", "cat",
+                                                           "rm", "FOO=1 rm"))
+    assert not PermissionRule.allows(everything, bash(command))
+
+
+def test_a_chain_runs_unasked_only_when_every_part_is_allowed():
+    rules = (PermissionRule("Bash", "cp"), PermissionRule("Bash", "ls"))
+    assert PermissionRule.allows(rules, bash("cp c d && ls"))
+    assert PermissionRule.allows(rules, bash("timeout 5 ls -la"))  # a wrapper, skipped
+    assert not PermissionRule.allows(rules, bash("cp c d && rm -rf x"))
+    assert not PermissionRule.allows(rules, bash("cp c d > notes.md"))  # where it writes
+    assert PermissionRule.allows(rules, bash("cp c d 2>&1 >/dev/null"))
+    assert not PermissionRule.allows(rules, bash("nice -n 5 ls"))  # a wrapper's options
+    assert PermissionRule.allows((PermissionRule("Bash", "python fix.py --all"),),
+                                 bash("python fix.py --all"))  # kept whole, matched whole
+    assert not PermissionRule.allows((PermissionRule("Bash", "python fix.py"),),
+                                     bash("python fix.py && rm x"))
+
+
+def test_never_refuses_a_part_wherever_it_is():
+    never = PermissionRule("Bash", "rm", allow=False)
+    assert never.matches(bash("ls && rm -rf build"))
+    assert never.matches(bash("echo $(rm -rf x)"))
+    # "Never allow" on a chain keeps the whole of it: not each part forever.
+    assert [str(r) for r in PermissionRule.for_calls(bash("cp a b && ls"), allow=False)] == [
+        "Bash: cp a b && ls"]

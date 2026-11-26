@@ -2812,3 +2812,26 @@ async def test_a_question_waiting_while_you_are_away_is_a_notification(make, qap
     assert title == "Ahri needs your answer" and text
     window.notification_clicked()  # brings their view, where the question is
     await eventually(lambda: window.showing_life)
+
+
+async def test_always_allow_on_a_chain_names_each_part_it_keeps(make, qapp):
+    from kaden.api import PermissionRule
+
+    h: Harness = await make(permissions=PermissionPolicy.ASK)
+    h.tools.instant("Bash", read_only=False)
+    h.core.add(Step(calls=[call("Bash", {"command": "cp /tmp/a.png b.png && ls -la b.png"})]), Step(text="ok"),
+               Step(calls=[call("Bash", {"command": "ls\nrm -rf x"})]), Step(text="ok"))
+    await h.start()
+    window, controller, _ = await open_window(h)
+    controller.send("copy it")
+    await eventually(lambda: window.prompts.count() == 1)
+    card = window.prompts.itemAt(0).widget()
+    [always] = buttons(card, "Always allow “cp” and “ls”")
+    always.click()
+    await eventually(lambda: window.prompts.count() == 0 and not controller.model.busy)
+    rules = (await h.runtime.settings()).permission_rules
+    assert rules == (PermissionRule("Bash", "cp"), PermissionRule("Bash", "ls"))
+    controller.send("and this")  # what cannot be read with certainty: no "always"
+    await eventually(lambda: window.prompts.count() == 1)
+    labels = [b.text() for b in window.prompts.itemAt(0).widget().findChildren(QPushButton)]
+    assert labels == ["Allow once", "Allow for this conversation", "Deny"]

@@ -114,7 +114,6 @@ from kaden.api import (
     MemoryNote,
     ModelInfo,
     PermissionPolicy,
-    PermissionRule,
     Prompt,
     PromptKind,
     RuntimeAPI,
@@ -1471,6 +1470,21 @@ class Detail(QWidget):
         pass  # its text does not change
 
 
+LABEL_CHARS = 60  # a button's text, longer cut with "…" (all of it in its tooltip)
+
+
+def _cut(text: str) -> str:
+    return text if len(text) <= LABEL_CHARS else text[:LABEL_CHARS - 1].rstrip() + "…"
+
+
+def _kept_label(rules: Sequence[str]) -> str:
+    """Saved answers in words: “cp”, “echo” and “ls”; a tool by its name."""
+    names = [f"“{rule.partition(': ')[2]}”" if ": " in rule else rule for rule in rules]
+    if len(names) < 2:
+        return "".join(names)
+    return ", ".join(names[:-1]) + " and " + names[-1]
+
+
 class PermissionCard(QFrame):
     """Allow once, for the conversation (not in the life's view, whose conversation never
     ends), always, or deny; never allow is on Deny's menu, a step away from always."""
@@ -1489,16 +1503,19 @@ class PermissionCard(QFrame):
         layout.addWidget(_label(request_note(request), tone="muted"))
         if detail:
             layout.addWidget(Detail(detail))
-        # Always and never are kept for every conversation, as the rule the runtime saves.
-        rule = PermissionRule.for_call(call)
-        what = f"“{rule.prefix}”" if rule.prefix is not None else rule.tool
+        # Always and never are kept for every conversation: what the runtime chose to keep.
+        always = _kept_label(request.details.get("always") or [])
+        never = _kept_label(request.details.get("never") or [])
         answers = [(Decision.ALLOW_ONCE, "Allow once")]
         if per_conversation:
             answers.append((Decision.ALLOW_CONVERSATION, "Allow for this conversation"))
-        answers += [(Decision.ALLOW_ALWAYS, f"Always allow {what}"), (Decision.DENY, "Deny")]
+        if always:
+            answers.append((Decision.ALLOW_ALWAYS, f"Always allow {always}"))
+        answers.append((Decision.DENY, "Deny"))
         buttons = QHBoxLayout()
         for decision, label in answers:
-            button = QPushButton(label)
+            button = QPushButton(_cut(label))
+            button.setToolTip(label if button.text() != label else "")
             if decision is Decision.ALLOW_ONCE:
                 _primary(button)
             button.clicked.connect(lambda _=False, d=decision: self._answer(request.id, d))
@@ -1509,7 +1526,7 @@ class PermissionCard(QFrame):
         self.more_deny.setAccessibleName("More ways to deny")
         self.more_deny.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         menu = QMenu(self.more_deny)
-        menu.addAction(f"Never allow {what}").triggered.connect(
+        menu.addAction(_cut(f"Never allow {never}")).triggered.connect(
             lambda: self._answer(request.id, Decision.DENY_ALWAYS))
         self.more_deny.setMenu(menu)
         buttons.addWidget(self.more_deny)
