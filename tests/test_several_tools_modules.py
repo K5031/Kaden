@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Sequence
 from typing import Any
 
-from kaden.api import PermissionPolicy, StartOptions, ToolStatus
-from tests.conftest import Harness
+from kaden.api import PermissionPolicy, StartOptions, ToolFinished, ToolSpec, ToolStatus
+from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
 
@@ -59,3 +61,34 @@ async def test_every_module_is_closed(make: Any) -> None:
     await h.start()
     await h.close()
     assert first.closed and second.closed
+
+
+class Slow(FakeTools):
+    """Its list_tools waits for `gate` while one is set."""
+
+    gate: asyncio.Event | None = None
+
+    async def list_tools(self) -> Sequence[ToolSpec]:
+        if self.gate is not None:
+            await self.gate.wait()
+        return await super().list_tools()
+
+
+async def test_a_call_runs_while_the_tools_are_listed_again(make: Any) -> None:
+    """Listing the tools never leaves a half-built table for a call to find."""
+    slow, tools = Slow(), FakeTools()
+    tools.instant("probe", "seen")
+    h = await make(core=ScriptedCore([Step(calls=[call("probe", id="p")], delay=0.2),
+                                      Step(text="done")]),
+                   tools=slow, more_tools=[tools])
+    await h.start()
+    await h.runtime.send("go")
+    await eventually(lambda: any(not r.maintenance for r in h.core.requests))
+    slow.gate = asyncio.Event()
+    listing = asyncio.create_task(h.runtime.list_tools())
+    try:
+        finished = await eventually(lambda: h.rec.of(ToolFinished))
+    finally:
+        slow.gate.set()
+    await listing
+    assert finished[0].result.content == "seen"

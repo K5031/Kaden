@@ -1214,7 +1214,10 @@ class Runtime:
         await self._load_skills()
         if self._skills:
             specs[SKILL_TOOL.name] = SKILL_TOOL
-        self._memory_tools, self._tool_owner = set(), {}
+        # Built apart and put in place at once: a call, a watch or a proposal looking
+        # meanwhile finds the tables of the last listing whole.
+        memory_tools: set[str] = set()
+        owners: dict[str, Tools] = {}
         for module in (self._memory, self._core, *self._tools):
             try:
                 offered = await module.list_tools()
@@ -1229,9 +1232,10 @@ class Runtime:
                     continue
                 specs[spec.name] = spec
                 if module is self._memory:
-                    self._memory_tools.add(spec.name)
+                    memory_tools.add(spec.name)
                 elif module is not self._core:
-                    self._tool_owner[spec.name] = module
+                    owners[spec.name] = module
+        self._memory_tools, self._tool_owner = memory_tools, owners
         deferrable = [s for s in specs.values() if s.deferrable and not s.deferred]
         searchable = [s for s in specs.values() if s.deferred]  # always, however few
         if sum(len(json.dumps(_definition(s))) for s in deferrable) > DEFER_OVER_CHARS:
