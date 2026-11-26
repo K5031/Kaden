@@ -159,6 +159,13 @@ def test_a_finished_step_reads_in_the_past_tense():
         "Run the tests": "Ran the tests",
         "Copy the photos": "Copied the photos",
         "Stop the server": "Stopped the server",
+        "Debug the login": "Debugged the login",
+        "Scan the folder": "Scanned the folder",
+        "Trim the video": "Trimmed the video",
+        "Grep the logs": "Grepped the logs",
+        "Split the file": "Split the file",
+        "Format the table": "Formatted the table",
+        "Backup the photos": "Backed up the photos",
         "Look up UCL's modules": "Looked up UCL's modules",
         "remember that you study CS": "remembered that you study CS",
         "The weather in Oslo": "The weather in Oslo",  # not a known verb: as written

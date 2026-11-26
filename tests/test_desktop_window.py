@@ -120,12 +120,12 @@ async def test_permission_card_buttons_answer_the_prompt(make, qapp):
     await h.start()
     window, controller, _ = await open_window(h)
     controller.send("write")
-    await eventually(lambda: window.prompts.count() == 1)
-    card = window.prompts.itemAt(0).widget()
+    await eventually(lambda: window.conversation.prompts.count() == 1)
+    card = window.conversation.prompts.itemAt(0).widget()
     assert isinstance(card, PermissionCard)
     assert window.send_button.text() == "Stop"
     buttons(card, "Allow once")[0].click()
-    await eventually(lambda: window.prompts.count() == 0 and not controller.model.busy)
+    await eventually(lambda: window.conversation.prompts.count() == 0 and not controller.model.busy)
     assert widgets(window, ToolCard)[0].state.text().startswith("done")
 
 
@@ -140,8 +140,8 @@ async def test_an_answer_can_be_kept_for_every_conversation(make, qapp):
     await h.start()
     window, controller, _ = await open_window(h)
     controller.send("look")
-    await eventually(lambda: window.prompts.count() == 1)
-    card = window.prompts.itemAt(0).widget()
+    await eventually(lambda: window.conversation.prompts.count() == 1)
+    card = window.conversation.prompts.itemAt(0).widget()
     labels = [b.text() for b in card.findChildren(QPushButton)]
     assert labels == ["Allow once", "Allow for this conversation",
                       "Always allow “git status”", "Deny"]  # always: one click
@@ -151,7 +151,7 @@ async def test_an_answer_can_be_kept_for_every_conversation(make, qapp):
         "Never allow “git status”"]
     [always] = buttons(card, "Always allow “git status”")
     always.click()
-    await eventually(lambda: window.prompts.count() == 0 and not controller.model.busy)
+    await eventually(lambda: window.conversation.prompts.count() == 0 and not controller.model.busy)
     settings = await h.runtime.settings()
     assert settings.permission_rules == (PermissionRule("Bash", "git status"),)
 
@@ -555,8 +555,8 @@ async def test_a_command_shows_its_description_with_the_command_behind_it(make, 
     await h.start()
     window, controller, _ = await open_window(h)
     controller.send("clean")
-    await eventually(lambda: window.prompts.count() == 1)
-    card = window.prompts.itemAt(0).widget()
+    await eventually(lambda: window.conversation.prompts.count() == 1)
+    card = window.conversation.prompts.itemAt(0).widget()
     texts = [label.text() for label in card.findChildren(QLabel)]
     assert "Kaden wants to: Remove the old build" in texts
     assert "rm -rf build" in texts  # what actually runs, on its own line
@@ -817,7 +817,7 @@ async def test_the_theme_is_chosen_in_the_view_menu(make, qapp, system_theme):
 
 
 def groups(window: MainWindow) -> list[StepGroup]:
-    layout = window.items_layout
+    layout = window.conversation.items_layout
     return [w for i in range(layout.count())
             if isinstance(w := layout.itemAt(i).widget(), StepGroup)]
 
@@ -843,7 +843,7 @@ async def test_steps_fold_into_one_line_until_opened(make, qapp):
     assert all(card.isVisible() for card in cards)
     assert not cards[0].state.isVisible() and cards[1].state.text().startswith("failed")
     reply = widgets(window, AssistantBubble)[0]
-    layout = window.items_layout
+    layout = window.conversation.items_layout
     assert layout.indexOf(reply) == layout.indexOf(group) + 1  # the reply stays outside
     window.close()
 
@@ -896,7 +896,7 @@ async def test_a_burst_of_changes_is_laid_out_once(make, qapp, monkeypatch):
     for n in range(20):  # as a page of earlier messages arrives
         controller.model.notify(f"note {n}", "info")
     await asyncio.sleep(0)
-    assert len(arranged) == 1 and window.items_layout.count() >= 20
+    assert len(arranged) == 1 and window.conversation.items_layout.count() >= 20
 
 
 async def test_tool_servers_are_added_edited_and_removed(make, qapp, keychain):
@@ -1366,7 +1366,7 @@ async def test_the_window_draws_its_own_title_bar(make, qapp):
     assert edges(window.mapToGlobal(QPoint(left - 5, 300))) == Qt.Edge.LeftEdge
     assert not edges(window.mapToGlobal(QPoint(2, 300)))
     # A scroll bar along the edge keeps all but the outermost pixels for itself.
-    bar = window.scroll.verticalScrollBar()
+    bar = window.conversation.verticalScrollBar()
     assert edges(window.mapToGlobal(QPoint(right - 4, 300))) == Qt.Edge.RightEdge
     assert not edges(window.mapToGlobal(QPoint(right - 4, 300)), bar)
     assert edges(window.mapToGlobal(QPoint(right, 300)), bar) == Qt.Edge.RightEdge
@@ -1777,6 +1777,12 @@ async def test_a_new_chat_offers_its_folder_and_recent_ones(make, qapp, tmp_path
     assert menu.isVisible() and window.input.toPlainText() == "hello there"
     assert not h.core.requests and controller.model.items == []
     menu.hide()
+    refused: list[bool] = []
+    controller.send("said aloud", spoken=True, refused=lambda: refused.append(True))
+    assert refused == [True] and menu.isVisible()  # nor by voice, which listens again
+    await asyncio.sleep(0.1)
+    assert not h.core.requests and controller.model.items == []
+    menu.hide()
     window.open_duty()  # nor a duty before the chat has its folder
     assert menu.isVisible()
     menu.hide()
@@ -1832,7 +1838,7 @@ async def test_the_checklist_is_part_of_the_conversation(make, qapp):
     lists = [i for i in items if isinstance(i, ChecklistItem)]
     assert len(lists) == 1 and items[-1] is lists[0]  # under the step that came after it
     card = window.conversation._widgets[id(lists[0])]
-    assert isinstance(card, PlanCard) and window.scroll.isAncestorOf(card)
+    assert isinstance(card, PlanCard) and window.conversation.isAncestorOf(card)
     assert card.rows() == [("done", "Read the code"), ("doing", "Fix the bug")]
     controller.stop()
     await eventually(lambda: not controller.model.busy)
@@ -1969,13 +1975,13 @@ async def test_a_line_says_kaden_is_thinking_before_anything_streams(make, qapp)
     h = await make()
     await h.start()
     window, controller, _ = await open_window(h)
-    assert window.waiting_line.isHidden()
+    assert window.conversation.waiting_line.isHidden()
     controller.model.apply(StateChanged(AgentState.THINKING))
-    assert not window.waiting_line.isHidden() and window.waiting_line.text() == "Thinking…"
+    assert not window.conversation.waiting_line.isHidden() and window.conversation.waiting_line.text() == "Thinking…"
     controller.model.apply(ReasoningDelta("Looking at the files"))
-    assert window.waiting_line.isHidden()  # the reply's own Thinking… line shows now
+    assert window.conversation.waiting_line.isHidden()  # the reply's own Thinking… line shows now
     controller.model.apply(StateChanged(AgentState.IDLE))
-    assert window.waiting_line.isHidden()
+    assert window.conversation.waiting_line.isHidden()
 
 
 def test_thinking_says_so_while_it_streams(qapp):
@@ -2053,8 +2059,8 @@ async def test_the_agents_questions_are_answered_from_a_card(make, qapp):
     await h.start()
     window, controller, _ = await open_window(h)
     controller.send("set it up")
-    await eventually(lambda: window.prompts.count() == 1)
-    card = window.prompts.itemAt(0).widget()
+    await eventually(lambda: window.conversation.prompts.count() == 1)
+    card = window.conversation.prompts.itemAt(0).widget()
     assert isinstance(card, QuestionCard) and not card.send.isEnabled()
     buttons = {b.text(): b for b in card.findChildren(QPushButton)}
     buttons["SQLite"].click()
@@ -2063,7 +2069,7 @@ async def test_the_agents_questions_are_answered_from_a_card(make, qapp):
     buttons["UI"].click()  # any of them
     assert not buttons["SQLite"].isChecked() and card.send.isEnabled()
     card.send.click()
-    await eventually(lambda: window.prompts.count() == 0 and not controller.model.busy)
+    await eventually(lambda: window.conversation.prompts.count() == 0 and not controller.model.busy)
     result = (await h.results())["q"]
     assert '"Which database?"="Postgres"' in result.content
     assert '"Which parts?"="API, UI"' in result.content
@@ -2092,11 +2098,11 @@ async def test_the_agents_plan_is_approved_from_a_card(make, qapp):
     await h.runtime.set_plan_mode(True)
     window, controller, _ = await open_window(h)
     controller.send("add a column")
-    await eventually(lambda: window.prompts.count() == 1)
-    card = window.prompts.itemAt(0).widget()
+    await eventually(lambda: window.conversation.prompts.count() == 1)
+    card = window.conversation.prompts.itemAt(0).widget()
     assert isinstance(card, PlanApprovalCard) and "Add the column" in card.plan.toPlainText()
     card.levels[PermissionPolicy.ALLOW_WORKSPACE].trigger()
-    await eventually(lambda: window.prompts.count() == 0 and not controller.model.busy)
+    await eventually(lambda: window.conversation.prompts.count() == 0 and not controller.model.busy)
     assert (await h.results())["x"].status == ToolStatus.OK
     assert not h.runtime.snapshot().plan_mode
     assert (await h.runtime.settings()).permissions == PermissionPolicy.ALLOW_WORKSPACE
@@ -2112,11 +2118,11 @@ async def test_a_plan_sent_back_from_its_card_keeps_plan_mode(make, qapp):
     await h.runtime.set_plan_mode(True)
     window, controller, _ = await open_window(h)
     controller.send("add a column")
-    await eventually(lambda: window.prompts.count() == 1)
-    card = window.prompts.itemAt(0).widget()
+    await eventually(lambda: window.conversation.prompts.count() == 1)
+    card = window.conversation.prompts.itemAt(0).widget()
     assert isinstance(card, PlanApprovalCard)
     card.keep.click()
-    await eventually(lambda: window.prompts.count() == 0 and not controller.model.busy)
+    await eventually(lambda: window.conversation.prompts.count() == 0 and not controller.model.busy)
     assert (await h.results())["x"].status == ToolStatus.REFUSED
     assert h.runtime.snapshot().plan_mode
 
@@ -2458,11 +2464,11 @@ async def test_its_view_is_on_screen_at_once_while_it_wakes(make, qapp):
     asyncio.create_task(controller.run())
     window.continuous_switch.setChecked(True)  # as the app does before showing the window
     assert window.sidebar.isHidden() and not window.waking.isHidden()  # at once
-    assert window.scroll.isHidden() and window.composer.isHidden()
+    assert window.conversation.isHidden() and window.composer.isHidden()
     assert window.life_name.text() == "Kaden" and window.continuous_switch.isChecked()
     awake.set()
     await eventually(lambda: window.showing_life)
-    assert window.waking.isHidden() and not window.scroll.isHidden()
+    assert window.waking.isHidden() and not window.conversation.isHidden()
     assert not window.composer.isHidden()
     window.continuous_switch.click()  # and back, then again: going back while it wakes works
     await eventually(lambda: not window.showing_life)
@@ -2731,7 +2737,7 @@ async def test_the_lifes_settings_show_their_descriptions_whole(make, qapp):
     h: Harness = await make(modules=ModuleState(tool_settings=tuple(configurable.user_config)))
     await h.start()
     window, _, _ = await open_window(h)
-    dialog = LifeSettingsDialog(window, "Ahri", "", await h.runtime.settings(), 1.0)
+    dialog = LifeSettingsDialog(window, window.home, "Ahri", "", await h.runtime.settings(), 1.0)
     dialog.show()
     # A window manager may give it less height than wrapped text needs: Qt's minimum size
     # for a window knows nothing of wrapping.
@@ -2764,8 +2770,8 @@ async def test_in_the_lifes_view_an_answer_is_once_or_for_good(make, qapp):
     window.continuous_switch.click()
     await eventually(lambda: window.showing_life and window.controller is not window.home)
     window.controller.send("say hi to K5")
-    await eventually(lambda: window.prompts.count() == 1)
-    card = window.prompts.itemAt(0).widget()
+    await eventually(lambda: window.conversation.prompts.count() == 1)
+    card = window.conversation.prompts.itemAt(0).widget()
     labels = [b.text() for b in card.findChildren(QPushButton)]
     assert labels == ["Allow once", "Always allow BiliMessage", "Deny"]
 
@@ -2824,16 +2830,16 @@ async def test_always_allow_on_a_chain_names_each_part_it_keeps(make, qapp):
     await h.start()
     window, controller, _ = await open_window(h)
     controller.send("copy it")
-    await eventually(lambda: window.prompts.count() == 1)
-    card = window.prompts.itemAt(0).widget()
+    await eventually(lambda: window.conversation.prompts.count() == 1)
+    card = window.conversation.prompts.itemAt(0).widget()
     [always] = buttons(card, "Always allow “cp” and “ls”")
     always.click()
-    await eventually(lambda: window.prompts.count() == 0 and not controller.model.busy)
+    await eventually(lambda: window.conversation.prompts.count() == 0 and not controller.model.busy)
     rules = (await h.runtime.settings()).permission_rules
     assert rules == (PermissionRule("Bash", "cp"), PermissionRule("Bash", "ls"))
     controller.send("and this")  # what cannot be read with certainty: no "always"
-    await eventually(lambda: window.prompts.count() == 1)
-    labels = [b.text() for b in window.prompts.itemAt(0).widget().findChildren(QPushButton)]
+    await eventually(lambda: window.conversation.prompts.count() == 1)
+    labels = [b.text() for b in window.conversation.prompts.itemAt(0).widget().findChildren(QPushButton)]
     assert labels == ["Allow once", "Allow for this conversation", "Deny"]
 
 
@@ -2865,3 +2871,126 @@ async def test_the_lifes_saved_answers_are_in_its_settings(make, qapp):
     await eventually(lambda: not dialog.isVisible())
     assert (await them.runtime.settings()).permission_rules == (PermissionRule("BiliMessage"),)
     assert life.restarted == 0  # at once
+
+
+def test_a_reply_takes_the_colours_of_a_new_theme(qapp, system_theme):
+    from kaden.frontends.desktop import syntax
+
+    theme.set_theme(qapp, "light")
+    bubble = AssistantBubble(AssistantItem(
+        text="Call `area`.\n\n```python\ndef area(r):\n    pass\n```", final=True))
+    assert colours_of(bubble)["def"] == syntax.colors(dark=False)["keyword"].lower()
+    theme.set_theme(qapp, "dark")
+    qapp.processEvents()
+    assert colours_of(bubble)["def"] == syntax.colors(dark=True)["keyword"].lower()
+    inline = next(f for f in _fragments(bubble) if f.text() == "area")
+    assert inline.charFormat().background().color().name() == theme.current().select.lower()
+
+
+def _fragments(bubble: AssistantBubble) -> list[Any]:
+    found = []
+    block = bubble.body.document().begin()
+    while block.isValid():
+        fragments = block.begin()
+        while not fragments.atEnd():
+            found.append(fragments.fragment())
+            fragments += 1
+        block = block.next()
+    return found
+
+
+def test_a_spinner_turns_only_while_it_shows(qapp):
+    from kaden.frontends.desktop.window import Spinner
+
+    spinner = Spinner()
+    assert not spinner._timer.isActive()
+    spinner.show()
+    assert spinner._timer.isActive()
+    spinner.hide()
+    assert not spinner._timer.isActive()
+
+
+async def test_pictures_pasted_at_once_are_each_kept(make, qapp):
+    from PySide6.QtGui import QImage
+
+    h: Harness = await make()
+    await h.start()
+    window, _, _ = await open_window(h)
+    image = QImage(8, 8, QImage.Format.Format_RGB32)
+    image.fill(QColor("red"))
+    for _ in range(4):
+        window._paste_image(image)
+    await eventually(lambda: len(window.attachments.paths()) == 4)
+    assert len(set(window.attachments.paths())) == 4
+
+
+def test_a_streaming_reply_renders_each_finished_part_once(qapp, monkeypatch):
+    rendered: list[str] = []
+    original = window_module.MarkdownView.setMarkdown
+
+    def counting(self: Any, markdown: str) -> None:
+        rendered.append(markdown)
+        original(self, markdown)
+
+    monkeypatch.setattr(window_module.MarkdownView, "setMarkdown", counting)
+    item = AssistantItem(text="")
+    bubble = AssistantBubble(item)
+    text = ""
+    for part in ("First paragraph.\n\n", "```python\nx = 1\n\ny = 2\n```\n\n",
+                 "Third para", "graph.\n\nFourth"):
+        text += part
+        item.text = text
+        bubble._render()
+    assert sum("First paragraph." in markdown for markdown in rendered) == 1
+    assert sum("y = 2" in markdown for markdown in rendered) == 1  # a fence is one part
+    assert "Fourth" in bubble.body.toPlainText()
+    item.final = True
+    bubble._render()  # once it is whole: all of it, in one view
+    assert bubble.parts == [] and "First paragraph." in bubble.body.toPlainText()
+    assert "Fourth" in bubble.body.toPlainText()
+
+
+async def test_the_window_paints_its_icons_only_when_they_change(make, qapp, monkeypatch):
+    h: Harness = await make()
+    await h.start()
+    window, _, _ = await open_window(h)
+    painted: list[str] = []
+    original = theme.icon
+
+    def counting(name: str, *args: Any, **kwargs: Any) -> Any:
+        painted.append(name)
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(theme, "icon", counting)
+    window._refresh_status()
+    window._show_voice()
+    assert painted == []  # nothing changed since they were painted
+
+
+async def test_in_the_lifes_view_a_change_updates_only_what_it_does(make, qapp, monkeypatch):
+    from kaden.frontends.desktop.viewmodel import PromptsChanged
+
+    h: Harness = await make()
+    await h.start()
+    window, _, _ = await open_window(h)
+    window._life_on = True
+    refreshed: list[bool] = []
+    monkeypatch.setattr(window, "_refresh_status", lambda: refreshed.append(True))
+    window._pane_changed(PromptsChanged())
+    assert refreshed == []
+
+
+def test_a_steps_details_show_each_argument_with_its_real_lines(qapp):
+    import json
+
+    from kaden.frontends.desktop.viewmodel import ToolItem
+
+    page = "<html>\n  <body>Hi</body>\n</html>"
+    item = ToolItem("c", "Write", json.dumps({"file_path": "/tmp/a.html", "content": page}))
+    card = ToolCard(item, lambda _call_id: None)
+    shown = card.details.toPlainText()
+    assert "\\n" not in shown
+    assert shown.startswith(f"file_path: /tmp/a.html\ncontent: {page}")
+    item.arguments = '{"file_path": "/tmp/a.ht'  # still streaming: as it comes
+    card.refresh()
+    assert card.details.toPlainText() == '{"file_path": "/tmp/a.ht'

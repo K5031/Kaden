@@ -32,7 +32,13 @@ async def git(folder: Path | str, *args: str) -> str:
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     except FileNotFoundError as e:
         raise GitError("git is not installed") from e
-    out, err = await process.communicate()
+    try:
+        out, err = await process.communicate()
+    except asyncio.CancelledError:
+        if process.returncode is None:
+            process.kill()
+        await asyncio.shield(process.wait())
+        raise
     if process.returncode:
         raise GitError(err.decode(errors="replace").strip()
                        or f"git {args[0]} failed")

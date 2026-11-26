@@ -124,6 +124,12 @@ def make(*words: str) -> tuple[Voice, ScriptedEngine, Speaker, list[str], list[S
 QUIET, TALK = np.zeros(8, dtype=np.float32), np.ones(8, dtype=np.float32)
 
 
+def sha(data: bytes) -> str:
+    import hashlib
+
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
 async def test_what_is_said_is_sent_and_the_reply_is_spoken_then_it_listens_again():
     voice, engine, speaker, sent, states = make("what time is it")
     assert voice.state is State.OFF
@@ -399,9 +405,10 @@ async def test_the_speech_models_are_downloaded_whole_or_not_at_all(tmp_path):
         info.size = len(data)
         archive.addfile(info, io.BytesIO(data))
     served = {"/vad.onnx": b"vad", "/listener.tar.bz2": packed.getvalue()}
-    models = [Model("vad.onnx", "https://models.example/vad.onnx", 3, archive=False),
+    models = [Model("vad.onnx", "https://models.example/vad.onnx", 3, sha(b"vad"),
+                    archive=False),
               Model("listener", "https://models.example/listener.tar.bz2",
-                    len(served["/listener.tar.bz2"]))]
+                    len(served["/listener.tar.bz2"]), sha(served["/listener.tar.bz2"]))]
     folder = tmp_path / "voice"
     assert missing(folder, models) == models and megabytes(models) == 0
 
@@ -418,11 +425,12 @@ async def test_the_speech_models_are_downloaded_whole_or_not_at_all(tmp_path):
     assert seen[-1] == 1.0 and seen == sorted(seen)
     assert sorted(p.name for p in folder.iterdir()) == ["listener", "vad.onnx"]  # no leftovers
 
-    deep = [Model("weights/one.bin", "https://models.example/vad.onnx", 3, archive=False)]
+    deep = [Model("weights/one.bin", "https://models.example/vad.onnx", 3, sha(b"vad"),
+                  archive=False)]
     await fetch(folder, deep, seen.append, transport=httpx2.MockTransport(serve))
     assert (folder / "weights" / "one.bin").read_bytes() == b"vad"
 
-    gone = [Model("other", "https://models.example/other.tar.bz2", 10)]
+    gone = [Model("other", "https://models.example/other.tar.bz2", 10, sha(b""))]
     with pytest.raises(httpx2.HTTPError):
         await fetch(folder, gone, seen.append, transport=httpx2.MockTransport(serve))
     assert missing(folder, gone) == gone
@@ -498,7 +506,8 @@ async def test_the_voice_button_starts_a_spoken_conversation(
     folder = tmp_path / "voice"
     voice = VoiceMode(controller, folder, ask, engine=lambda _folder: engine,
                       microphone=microphone, speaker=lambda: speaker, transport=served,
-                      models=(Model("vad.onnx", "https://models.example/vad.onnx", 3, False),))
+                      models=(Model("vad.onnx", "https://models.example/vad.onnx", 3, sha(b"vad"),
+                                    False),))
     window = MainWindow(h.runtime, controller, voice=voice)
     task = asyncio.create_task(controller.run())
     await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
@@ -954,6 +963,126 @@ async def test_models_not_yet_downloaded_are_left_for_the_first_click(tmp_path):
 
     mode = VoiceMode(Controller(), tmp_path, ask, engine=lambda folder: made.append(folder),
                      microphone=FakeMicrophone, speaker=Speaker, natural=False,
-                     models=(Model("vad.onnx", "https://models.example/vad.onnx", 3, False),))
+                     models=(Model("vad.onnx", "https://models.example/vad.onnx", 3, sha(b"vad"),
+                                    False),))
     await mode.preload()
     assert made == [] and asked == [] and not mode.on
+
+
+async def test_a_download_that_does_not_match_its_checksum_is_not_kept(tmp_path):
+    import hashlib
+
+    import httpx2
+
+    from kaden.frontends.desktop.voice.download import Model, fetch, missing
+
+    def serve(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=b"tampered")
+
+    folder = tmp_path / "voice"
+    bad = [Model("vad.onnx", "https://models.example/vad.onnx", 8, sha(b"original"),
+                 archive=False)]
+    with pytest.raises(OSError, match="checksum"):
+        await fetch(folder, bad, lambda _done: None, transport=httpx2.MockTransport(serve))
+    assert missing(folder, bad) == bad and list(folder.iterdir()) == []
+    # Small files on Hugging Face are checked by their git blob hash.
+    blob = "git-sha1:" + hashlib.sha1(b"blob 8\x00tampered").hexdigest()
+    good = [Model("config.json", "https://models.example/config.json", 8, blob,
+                  archive=False)]
+    await fetch(folder, good, lambda _done: None, transport=httpx2.MockTransport(serve))
+    assert missing(folder, good) == []
+
+
+def test_every_speech_model_has_a_checksum():
+    from kaden.frontends.desktop.voice.download import models
+
+    for model in (*models(natural=True), *models(natural=False)):
+        kind, _, value = model.digest.partition(":")
+        assert kind in ("sha256", "git-sha1") and len(value) in (64, 40), model.name
+
+
+def _controller(refuse: str) -> object:
+    """A controller whose send is refused: at once ("now"), or once tried ("later")."""
+    from types import SimpleNamespace
+
+    notices: list[str] = []
+
+    def send(text: str, files=(), *, spoken: bool = False, refused=None) -> None:
+        notices.append(text)
+        if refused is not None:
+            if refuse == "now":
+                refused()
+            else:
+                asyncio.get_running_loop().call_soon(refused)
+
+    return SimpleNamespace(listeners=[], send=send, sent=notices,
+                           model=SimpleNamespace(busy=False, notify=notices.append))
+
+
+@pytest.mark.parametrize("refuse", ["now", "later"])
+async def test_a_message_that_is_not_taken_leaves_voice_listening(tmp_path, refuse):
+    from kaden.frontends.desktop.voice.mode import VoiceMode
+
+    controller = _controller(refuse)
+    microphones: list[FakeMicrophone] = []
+
+    def microphone(heard) -> FakeMicrophone:
+        microphones.append(FakeMicrophone(heard))
+        return microphones[-1]
+
+    mode = VoiceMode(controller, tmp_path, yes, engine=lambda _folder: ScriptedEngine("hi"),
+                     microphone=microphone, speaker=Speaker, models=(), natural=False)
+    mode.toggle_microphone()
+    await eventually(lambda: mode._voice is not None and mode._voice.state is State.LISTENING)
+    microphones[0].heard(TALK)
+    await eventually(lambda: controller.sent == ["hi"])
+    await eventually(lambda: mode._voice.state is State.LISTENING)
+    mode.stop()
+
+
+async def test_no_microphone_while_voice_reads_aloud_is_said_and_leaves_it_off(tmp_path):
+    from types import SimpleNamespace
+
+    from kaden.frontends.desktop.voice.audio import NoMicrophone
+    from kaden.frontends.desktop.voice.mode import VoiceMode
+
+    notices: list[str] = []
+    controller = SimpleNamespace(listeners=[], model=SimpleNamespace(
+        busy=False, notify=notices.append))
+
+    class Missing(FakeMicrophone):
+        def start(self) -> None:
+            raise NoMicrophone("No microphone was found.")
+
+    mode = VoiceMode(controller, tmp_path, yes, engine=lambda _folder: ScriptedEngine(),
+                     microphone=Missing, speaker=Speaker, models=(), natural=False)
+    mode.toggle_speaker()
+    await eventually(lambda: mode.spoken)
+    mode.toggle_microphone()  # nothing escapes the button's slot
+    assert not mode.listening and mode.spoken
+    assert notices == ["Voice could not listen: No microphone was found."]
+    mode.stop()
+
+
+async def test_a_second_preview_stops_the_first(tmp_path):
+    from types import SimpleNamespace
+
+    from kaden.frontends.desktop.voice.mode import VoiceMode
+
+    controller = SimpleNamespace(listeners=[], model=SimpleNamespace(busy=False))
+    speakers: list[Speaker] = []
+
+    def speaker() -> Speaker:
+        speakers.append(Speaker())
+        speakers[-1].hold = asyncio.Event()
+        return speakers[-1]
+
+    mode = VoiceMode(controller, tmp_path, yes, engine=lambda _folder: ScriptedEngine(),
+                     microphone=FakeMicrophone, speaker=speaker, models=(), natural=False)
+    first = asyncio.create_task(mode.preview())
+    await eventually(lambda: speakers and speakers[0].played)
+    second = asyncio.create_task(mode.preview())
+    await eventually(lambda: len(speakers) == 2 and speakers[1].played)
+    assert speakers[0].stopped and speakers[0].closed  # never two at once
+    speakers[1].stop()
+    await asyncio.gather(first, second)

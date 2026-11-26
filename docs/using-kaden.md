@@ -45,7 +45,10 @@ message box has a button for each; use either alone or both:
   sentences, without emoji, kaomoji or symbols, until you turn the speaker off.
 - **Speech runs on your computer.** What you say is not sent to a speech service; only
   the text goes to the model, as when you type. The first time, Kaden asks to download
-  the speech models (about 830 MB) into its data folder.
+  the speech models (about 830 MB) into its data folder. Each is checked against its
+  known checksum; one that does not match is not kept, and you can try again.
+- **In a new chat, choose its folder first**, also when you talk: until then, what you
+  say is not sent and the folder menu opens.
 - **Pick its voice** in **Settings → General → Voice**: Heart (the default), Bella,
   Nicole, Michael or Fenrir. **Play** lets you hear one first.
 - **The first click waits for voice to load**: a few seconds, about 13 with the natural

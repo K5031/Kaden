@@ -54,6 +54,9 @@ A refusal (asking before `start`, a duty without an instruction, an unknown
 conversation) is error `-32000` with the runtime's message and `data.type`, such as
 `RuntimeStateError`. A `RuntimeStateError` also has `data.reason`, a word to act on:
 `not_started`, `busy`, `budget`, `not_pending`, `conversation_open` or `unavailable`. Missing parameters are `-32602`, unknown methods `-32601`.
+A message longer than 16 MiB is `-32600` (with no `id`) and is dropped; the channel
+goes on. Any other failure inside a command is `-32000`, `data.type` naming the
+exception.
 
 **Events** come as notifications: `{"method": "event", "params": {"seq": 12, "event":
 {...}}}`, every event the runtime emits, in order. Values are JSON objects with their kind

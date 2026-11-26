@@ -23,22 +23,19 @@ import functools
 import json
 import logging
 import math
-import os
 import shutil
 import sys
-import tempfile
-import tomllib
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-import tomli_w
-
 from kaden.api import (
     DESCRIPTION_ARG,
     AgentState,
     Budget,
+    Duty,
+    DutyKind,
     EventEnvelope,
     Failure,
     Message,
@@ -50,6 +47,7 @@ from kaden.api import (
     RuntimeSnapshot,
     RuntimeStateError,
     SettingsUpdate,
+    StartOptions,
     StateChanged,
     Text,
     TextDelta,
@@ -58,22 +56,21 @@ from kaden.api import (
     ToolContext,
     ToolOutput,
     ToolProgress,
-    ToolResult,
     Tools,
     ToolSpec,
-    ToolStatus,
     UsageUpdated,
 )
-from kaden.frontends import worktrees
+from kaden.frontends import child, worktrees
+from kaden.frontends.child import STOP_GRACE_S
 from kaden.frontends.remote import Channel, RemoteRuntime
 from kaden.frontends.worktrees import GitError, Worktree
 
 logger = logging.getLogger(__name__)
 
 CHECK_IN_S = (5.0, 120.0)  # a child's duty intervals: it continues soon after a turn ends
-STOP_GRACE_S = 10.0  # after stdin closes, before the child is killed
 RECORD = "session.json"
 LIMIT_FILE = "limit.json"  # in <data dir>/sessions: the user's limit per sub-session
+ISSUED_FILE = "issued.json"  # in <data dir>/sessions: the last id given, never given again
 _SESSION = {"type": "string", "description": "The subagent's id."}
 _ACTIVE = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION,
            AgentState.FINISHING)
@@ -127,31 +124,6 @@ STATE_LABELS = {"starting": "Starting", "working": "Working",
 NOTE_CHARS = 400  # of a child's last reply in a notice to its parent
 
 
-def working_text(sessions: Sequence[SubSession]) -> str | None:
-    """For a status line: how many of these sub-sessions are working, None for none."""
-    count = sum(s.running for s in sessions)
-    return f"{count} sub-session{'s' if count != 1 else ''} working" if count else None
-
-
-def message_lines(messages: Sequence[Message]) -> list[tuple[str, str]]:
-    """(who, text) for each part of a conversation, for a plain text view."""
-    shown = []
-    for message in messages:
-        for block in message.blocks:
-            match block:
-                case Text(text=text) if text.strip() and not message.hidden:
-                    who = {Role.USER: "You", Role.ASSISTANT: "Agent"}.get(message.role,
-                                                                        message.role)
-                    if message.role is Role.USER and not message.from_user:
-                        who = "Kaden"
-                    shown.append((who, text))
-                case ToolCall(name=name, arguments=args):
-                    shown.append(("Step", args.get(DESCRIPTION_ARG) or name))
-                case ToolResult(status=ToolStatus.REFUSED, content=content):
-                    shown.append(("Step", f"refused: {content}"))
-    return shown
-
-
 @dataclass
 class SubSession:
     """One child as the frontend lists it. `state`: starting, working, waiting (for an
@@ -179,6 +151,7 @@ class SubSession:
     # Its manager's RuntimeAPI for it while its process runs: how it is now is read there.
     live: RemoteRuntime | None = field(default=None, compare=False, repr=False)
     _changed: asyncio.Event | None = field(default=None, compare=False, repr=False)
+    _spawning: asyncio.Lock | None = field(default=None, compare=False, repr=False)
 
     @property
     def running(self) -> bool:
@@ -219,6 +192,20 @@ class SubSession:
         return self._changed
 
     @property
+    def spawning(self) -> asyncio.Lock:
+        """Held while its process is started again and attached: one process at a time."""
+        if self._spawning is None:
+            self._spawning = asyncio.Lock()
+        return self._spawning
+
+    @property
+    def last_reply(self) -> str:
+        """Its last reply this run, cut to NOTE_CHARS; "" for none."""
+        reply = next((b.text for m in reversed(self.messages) if m.role == Role.ASSISTANT
+                      for b in m.blocks if isinstance(b, Text) and b.text.strip()), "")
+        return reply[:NOTE_CHARS] + "…" if len(reply) > NOTE_CHARS else reply
+
+    @property
     def summary(self) -> str:
         """Its state for a list row: "Working · Searching the web · $0.04"."""
         parts = ["Needs your approval" if self.approvals else STATE_LABELS[self.state]]
@@ -229,10 +216,6 @@ class SubSession:
         parts.append(f"${self.spent:.2f}" + (f" of ${self.budget_usd:g}"
                                              if self.budget_usd is not None else ""))
         return " · ".join(parts)
-
-    def lines(self) -> list[tuple[str, str]]:
-        """(who, text) for each part of its conversation this run, for a plain view."""
-        return message_lines(self.messages)
 
     def record(self) -> dict[str, Any]:
         """What session.json keeps."""
@@ -252,7 +235,9 @@ class SubSessions(Tools):
         self.sessions = self._load()
         self._viewers: dict[str, int] = {}
         self._folder: Path | None = None
-        self._next = max((int(s.id) for s in self.sessions if s.id.isdigit()), default=0) + 1
+        self._next = max((int(s.id) for s in self.sessions if s.id.isdigit()),
+                         default=0) + 1
+        self._next = max(self._next, self._read_issued() + 1)
         self.limit_usd = self._read_limit()
         self._closing: set[asyncio.Task[None]] = set()
         self._ending: dict[str, asyncio.Task[None]] = {}  # a child's _ended, while it runs
@@ -279,9 +264,8 @@ class SubSessions(Tools):
         release() with it when the view closes."""
         if session.child_conversation_id is None:
             raise RuntimeStateError("this sub-session has not started", Refusal.NOT_STARTED)
-        reopened = session.live is None
-        live = await self._running(session)
-        if reopened:
+        live, started = await self._running(session)
+        if started and not session.running:  # nothing else set it working meanwhile
             self._set(session, state="idle", failure=None)
         self._viewers[session.id] = self._viewers.get(session.id, 0) + 1
         remote = RemoteRuntime(live.channel)
@@ -305,7 +289,7 @@ class SubSessions(Tools):
 
     async def resume(self, session: SubSession) -> None:
         """Start it again on its conversation and let it carry on with its goal."""
-        live = await self._running(session)
+        live, _ = await self._running(session)
         self._set(session, state="working", failure=None)
         await live.activate()
 
@@ -375,10 +359,16 @@ class SubSessions(Tools):
     @staticmethod
     def _write_limit(folder: Path, usd: float | None) -> None:
         settings_file = folder / "settings.toml"
-        settings = tomllib.loads(settings_file.read_text()) if settings_file.exists() else {}
+        settings = child.read_settings(settings_file)
         budget = {k: v for k, v in settings.get("budget", {}).items() if k != "max_cost_usd"}
         settings["budget"] = budget if usd is None else {**budget, "max_cost_usd": usd}
-        _write_settings(settings_file, settings)
+        child.write_settings(settings_file, settings)
+
+    def _read_issued(self) -> int:
+        try:
+            return int(json.loads((self.data_dir / "sessions" / ISSUED_FILE).read_text()))
+        except (OSError, ValueError, TypeError):
+            return 0
 
     async def use_folder(self, folder: Path | None) -> None:
         self._folder = folder
@@ -404,7 +394,8 @@ class SubSessions(Tools):
             session = await self._new(args["prompt"], budget, ctx.conversation_id,
                                       args.get("description"), worktree)
         else:
-            session = next((s for s in self.sessions if s.id == args["to"]), None)
+            session = next((s for s in self.of(ctx.conversation_id, include_archived=True)
+                            if s.id == args["to"]), None)
             if session is None:
                 return ToolOutput(f"There is no subagent {args['to']!r}.", is_error=True)
             if session.child_conversation_id is None:
@@ -413,7 +404,7 @@ class SubSessions(Tools):
             if call.name == START.name:
                 await self._launch(session)
             else:
-                live = await self._running(session)
+                live, _ = await self._running(session)
                 self._set(session, state="working", failure=None)
                 await live.send(args["message"])
             return await self._wait(session, ctx)
@@ -439,7 +430,11 @@ class SubSessions(Tools):
         session = SubSession(session_id, task, conversation_id, folder, has_goal=True,
                              budget_usd=budget, title=(title or "").strip() or None,
                              worktree=worktree)
-        await asyncio.to_thread(folder.mkdir, parents=True)
+
+        def make() -> None:
+            folder.mkdir(parents=True)
+            (folder.parent / ISSUED_FILE).write_text(session_id)
+        await asyncio.to_thread(make)
         self.sessions.append(session)
         self._set(session)
         return session
@@ -448,13 +443,10 @@ class SubSessions(Tools):
         self._set(session, state="starting")
         try:
             live = await self._spawn(session, resume=False)
-            info = await live.channel.request("start")
-            session.child_conversation_id = info["id"]
-            await live.channel.request("set_duty", duty={
-                "instruction": session.task, "kind": "goal",
-                "min_interval_s": self.check_in_s[0], "max_interval_s": self.check_in_s[1]})
+            session.child_conversation_id = (await live.start(StartOptions())).id
+            await live.set_duty(Duty(session.task, DutyKind.GOAL, *self.check_in_s))
             await live.attach()
-        except (OSError, RuntimeError, ValueError) as e:
+        except (OSError, RuntimeError, RuntimeStateError, ValueError) as e:
             channel = session.live.channel if session.live is not None else None
             self._set(session, state="failed", failure=self._why(e, channel))
             self._close(session)
@@ -469,45 +461,39 @@ class SubSessions(Tools):
     def _prepare(self, session: SubSession) -> None:
         """The child's data folder: the parent's configuration, its limit and folder."""
         folder, budget = session.data_dir, session.budget_usd
-        folder.mkdir(parents=True, exist_ok=True)
-        config = self.data_dir / "config.toml"
-        if config.exists():
-            shutil.copyfile(config, folder / "config.toml")
-        settings_file = self.data_dir / "settings.toml"
-        settings = tomllib.loads(settings_file.read_text()) if settings_file.exists() else {}
+        settings = child.settings_of(self.data_dir, folder)
         # Only its own limit, if it has one: not the parent's.
         settings["budget"] = {} if budget is None else {"max_cost_usd": budget}
         if (work_folder := self._work_folder(session)) is not None:
             settings["work_folder"] = str(work_folder)
-        _write_settings(folder / "settings.toml", settings)
+        child.write_settings(folder / "settings.toml", settings)
 
-    async def _running(self, session: SubSession) -> RemoteRuntime:
-        """Its runtime, starting it again on its conversation when it is not running."""
-        live = session.live or await self._spawn(session, resume=True)
-        if not live.attached:
-            await live.attach()
-        return live
+    async def _running(self, session: SubSession) -> tuple[RemoteRuntime, bool]:
+        """Its runtime, and whether this call started it again on its conversation (it
+        was not running)."""
+        async with session.spawning:
+            started = session.live is None
+            live = session.live or await self._spawn(session, resume=True)
+            if not live.attached:
+                await live.attach()
+            return live, started
 
     async def _spawn(self, session: SubSession, *, resume: bool) -> RemoteRuntime:
         """Start its process: first its data folder, or its worktree again when its
         unchanged one was removed. Under the worktree lock, so no tidying removes the
         worktree before the process holds it (session.live)."""
-        command = [*self.command, "--headless", "--data-dir", str(session.data_dir)]
-        if resume and session.child_conversation_id is not None:
-            command += ["--conversation", session.child_conversation_id]
         async with self._git:
             if (worktree := session.worktree) is not None and not await asyncio.to_thread(
                     Path(worktree.path).exists):
                 await worktrees.add(worktree)
             if not resume:
                 await asyncio.to_thread(self._prepare, session)
-            process = await asyncio.create_subprocess_exec(
-                *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=self._work_folder(session) or session.data_dir, limit=16 * 1024 * 1024)
-            session.live = RemoteRuntime(Channel(process),
-                                         functools.partial(self._event, session))
-        return session.live
+            live = session.live = await child.spawn(
+                self.command, session.data_dir,
+                cwd=self._work_folder(session) or session.data_dir,
+                conversation_id=session.child_conversation_id if resume else None,
+                on_event=functools.partial(self._event, session))
+        return live
 
     async def _wait(self, session: SubSession, ctx: ToolContext) -> ToolOutput:
         """Until it reports, asks, fails or stops; its current step is the progress line."""
@@ -544,6 +530,10 @@ class SubSessions(Tools):
                         f"SendMessage(to=\"{session.id}\", message=...).")
             case "stopped":
                 return f"Sub-session {session.id} was stopped."
+            case "idle":
+                reply = session.last_reply
+                return (f"Sub-session {session.id} ended its turn"
+                        + (f". Its last reply: {reply}" if reply else " without a reply."))
         return f"Sub-session {session.id} failed: {session.failure}"
 
     def _event(self, session: SubSession, envelope: EventEnvelope | None) -> None:
@@ -562,7 +552,8 @@ class SubSessions(Tools):
                             session.report = block.arguments.get("report")
                         session.step = block.arguments.get(DESCRIPTION_ARG) or block.name
                     elif isinstance(block, Text) and message.role == Role.ASSISTANT:
-                        session.step = block.text.strip().splitlines()[0][:120] or None
+                        lines = block.text.strip().splitlines()
+                        session.step = lines[0][:120] if lines else None
             case UsageUpdated(snapshot=usage):
                 session.spent = usage.usage.cost_usd or 0.0
             case Failure(message=message):
@@ -595,10 +586,7 @@ class SubSessions(Tools):
     def _note(self, session: SubSession) -> None:
         """A notice for the parent: the child ended a turn while no call of the parent's
         waited for it (the user talked to it, or it carried on with its goal)."""
-        reply = next((b.text for m in reversed(session.messages) if m.role == Role.ASSISTANT
-                      for b in m.blocks if isinstance(b, Text) and b.text.strip()), "")
-        if len(reply) > NOTE_CHARS:
-            reply = reply[:NOTE_CHARS] + "…"
+        reply = session.last_reply
         note = (f"Sub-session {session.id} ({session.name[:80]}) ended a "
                 f"turn: {STATE_LABELS[session.state].lower()}.")
         if session.state == "waiting":
@@ -697,12 +685,3 @@ class SubSessions(Tools):
     def _notify(self) -> None:
         for listener in list(self.listeners):
             listener()
-
-
-def _write_settings(path: Path, settings: dict[str, Any]) -> None:
-    """Whole: never seen half written. Its own temporary file, as the child may be saving
-    its settings at the same time."""
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
-    with os.fdopen(fd, "w", encoding="utf-8") as file:
-        file.write(tomli_w.dumps(settings))
-    os.replace(tmp, path)

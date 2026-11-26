@@ -14,29 +14,30 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import shutil
 import sys
-import tomllib
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-import tomli_w
-
 from kaden.api import (
     PERMISSION_CEILING_ENV,
+    Duty,
     DutyKind,
     EventEnvelope,
     MessageCommitted,
     Prompt,
     PromptOpened,
+    Refusal,
     Role,
     RuntimeSnapshot,
+    RuntimeStateError,
     SettingsUpdate,
+    StartOptions,
     Text,
 )
-from kaden.frontends.remote import Channel, RemoteRuntime
+from kaden.frontends import child
+from kaden.frontends.remote import RemoteRuntime
 from kaden.runtime.config import TOOL_FACTS
 
 FOLDER = "life"
@@ -56,7 +57,6 @@ PROMPT = ("You have a life of your own on this computer, and tools to live it: i
 # chose to rest until a later time (a due time in its plan), held to the longest.
 PACE_S = (60.0, 86_400.0)
 DAILY_USD = 1.0  # what its own time may cost a day, unless the user says otherwise
-STOP_GRACE_S = 10.0
 # Its settings that the app keeps when it writes the rest from the chats'.
 OWN_SETTINGS = ("tool_settings", "always_allow", "never_allow")
 
@@ -78,6 +78,7 @@ class Life:
         self._asked = False  # the turn under way was started by the user
         self._live: RemoteRuntime | None = None
         self._starting: asyncio.Task[None] | None = None
+        self._closing: set[asyncio.Task[int]] = set()  # processes that ended by themselves
         self._own_model: str | None = None  # the user's cheaper model, for its own time
         record = self._read()
         self.name: str = record.get("name", NAME)
@@ -138,29 +139,37 @@ class Life:
         while it starts, it waits for that start; once it runs, it does nothing."""
         if self._starting is None or (self._starting.done() and self._live is None):
             self._starting = asyncio.create_task(self._start())
-        await asyncio.shield(self._starting)
+        starting = self._starting
+        try:
+            await asyncio.shield(starting)
+        except asyncio.CancelledError:
+            if not starting.cancelled():  # this caller was cancelled, not the start
+                raise
+            raise RuntimeStateError(f"{self.name} was closed while it started",
+                                    Refusal.UNAVAILABLE) from None
 
     async def _start(self) -> None:
         await asyncio.to_thread(self._prepare)
-        command = [*self.command, "--headless", "--data-dir", str(self.folder)]
-        if self.conversation_id is not None:
-            command += ["--conversation", self.conversation_id]
         # Without the ceiling the app's runtime sets for what it starts: that is for a
         # Kaden an agent starts, whose saved answers an agent could have written. The life
         # is the user's, and so are its answers; its permission level follows theirs.
         env = {k: v for k, v in os.environ.items() if k != PERMISSION_CEILING_ENV}
-        process = await asyncio.create_subprocess_exec(
-            *command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, cwd=self.folder / HOME, env=env,
-            limit=16 * 1024 * 1024)
-        live = self._live = RemoteRuntime(Channel(process), self._event)
-        if self.conversation_id is None:
-            info = await live.channel.request("start")
-            self.conversation_id = info["id"]
-            await asyncio.to_thread(self._write)
-        # Its life as the app has it now (pace, model, who it is): a new one starts it.
-        await live.channel.request("set_duty", duty=self._life())
-        await live.attach()
+        live = self._live = await child.spawn(
+            self.command, self.folder, cwd=self.folder / HOME,
+            conversation_id=self.conversation_id, env=env, on_event=self._event)
+        try:
+            if self.conversation_id is None:
+                self.conversation_id = (await live.start(StartOptions())).id
+                await asyncio.to_thread(self._write)
+            # Its life as the app has it now (pace, model, who it is): a new one starts it.
+            await live.set_duty(self._life())
+            await live.attach()
+        except BaseException:  # failed or closed: its process goes, and it does not run
+            if self._live is live:
+                self._live = None
+            live.detach()
+            await asyncio.shield(live.channel.close(child.STOP_GRACE_S))
+            raise
         self._changed()
 
     async def set_identity(self, name: str, about: str) -> None:
@@ -169,7 +178,7 @@ class Life:
         self.name, self.about = name.strip() or NAME, about.strip()
         await asyncio.to_thread(self._write)
         if self._live is not None:
-            await self._live.channel.request("set_duty", duty=self._life())
+            await self._live.set_duty(self._life())
 
     async def set_daily_usd(self, usd: float | None) -> None:
         """What its own time may cost a day (None: no limit): kept, and at once if it
@@ -188,19 +197,23 @@ class Life:
         await self.start()
 
     async def aclose(self) -> None:
-        if self._starting is not None and not self._starting.done():
-            self._starting.cancel()
+        if (starting := self._starting) is not None and not starting.done():
+            starting.cancel()  # it closes its own process
+            await asyncio.gather(starting, return_exceptions=True)
         live, self._live = self._live, None
         if live is not None:
             live.detach()
-            await live.channel.close(STOP_GRACE_S)
+            await live.channel.close(child.STOP_GRACE_S)
+        if self._closing:
+            await asyncio.wait(self._closing)
 
-    def _life(self) -> dict[str, Any]:
-        return {"instruction": self.who, "kind": DutyKind.LIFE.value,
-                "min_interval_s": self.pace_s[0], "max_interval_s": self.pace_s[1],
-                "model": self._own_model}
+    def _life(self) -> Duty:
+        return Duty(self.who, DutyKind.LIFE, self.pace_s[0], self.pace_s[1],
+                    model=self._own_model)
 
     def _event(self, envelope: EventEnvelope | None) -> None:
+        if envelope is None:  # its process ended by itself
+            self._ended()
         if envelope is not None and isinstance(envelope.event, PromptOpened):
             self._questions.append(envelope.event.prompt)
         if envelope is not None and isinstance(envelope.event, MessageCommitted):
@@ -212,6 +225,15 @@ class Life:
                 (self.replies if self._asked else self._messages).append(text)
         self._changed()
 
+    def _ended(self) -> None:
+        live, self._live = self._live, None
+        if live is None:
+            return
+        live.detach()
+        task = asyncio.create_task(live.channel.close(child.STOP_GRACE_S))
+        self._closing.add(task)
+        task.add_done_callback(self._closing.discard)
+
     def _changed(self) -> None:
         for listener in list(self.listeners):
             listener()
@@ -221,13 +243,10 @@ class Life:
     def _prepare(self) -> None:
         """Its data folder: the app's configuration, its daily amount, its own home."""
         (self.folder / HOME).mkdir(parents=True, exist_ok=True)
-        config = self.parent_dir / "config.toml"
-        if config.exists():
-            shutil.copyfile(config, self.folder / "config.toml")
-        settings = _toml(self.parent_dir / "settings.toml")
+        settings = child.settings_of(self.parent_dir, self.folder)
         # What the user said in its own view is its own (saved in its folder), not the
         # chats': its tool settings, and what it may always or never do.
-        mine = _toml(self.folder / "settings.toml")
+        mine = child.read_settings(self.folder / "settings.toml")
         for key in OWN_SETTINGS:
             settings.pop(key, None)
             if key in mine:
@@ -238,7 +257,7 @@ class Life:
                               else {"max_cost_usd_per_day": self.daily_usd})
         settings["work_folder"] = str(self.folder / HOME)
         settings["system_prompt"] = PROMPT
-        (self.folder / "settings.toml").write_text(tomli_w.dumps(settings))
+        child.write_settings(self.folder / "settings.toml", settings)
 
     def _read(self) -> dict[str, Any]:
         path = self.folder / RECORD
@@ -249,7 +268,3 @@ class Life:
         (self.folder / RECORD).write_text(json.dumps(
             {"conversation_id": self.conversation_id, "name": self.name,
              "about": self.about, "daily_usd": self.daily_usd}))
-
-
-def _toml(path: Path) -> dict[str, Any]:
-    return tomllib.loads(path.read_text()) if path.exists() else {}

@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import sys
+from collections.abc import AsyncIterator
 from typing import IO, Any
 
 from kaden.api import (
@@ -46,10 +47,15 @@ _LINE_LIMIT = 16 * 1024 * 1024
 REQUESTS: frozenset[str] = COMMANDS - {"restart"}
 
 
-async def _call(runtime: RuntimeAPI, method: str, params: dict[str, Any]) -> Any:
+def _args(method: str, params: dict[str, Any]) -> dict[str, Any]:
+    """The command's arguments; TypeError or AttributeError when the params do not fit."""
     if method == "start" and "options" not in params:
         params = {"options": params}  # start's options may come as the request's params
-    result = getattr(runtime, method)(**command_args(method, params))
+    return command_args(method, params)
+
+
+async def _call(runtime: RuntimeAPI, method: str, args: dict[str, Any]) -> Any:
+    result = getattr(runtime, method)(**args)
     return await result if inspect.isawaitable(result) else result
 
 
@@ -125,7 +131,7 @@ class HeadlessFrontend(Frontend):
                                          "event": to_json(envelope.event)}})
 
     async def _serve(self, runtime: RuntimeAPI, reader: asyncio.StreamReader) -> None:
-        while line := await reader.readline():
+        async for line in self._lines(reader):
             if not line.strip():
                 continue
             task = asyncio.create_task(self._handle(runtime, line))
@@ -133,6 +139,29 @@ class HeadlessFrontend(Frontend):
             task.add_done_callback(self._tasks.discard)
         if self._tasks:  # answer what was asked before stdin closed
             await asyncio.wait(self._tasks)
+
+    async def _lines(self, reader: asyncio.StreamReader) -> AsyncIterator[bytes]:
+        """Each line until stdin closes; a line over the limit is answered with an error
+        and dropped to its end."""
+        dropping = False
+        while True:
+            try:
+                line = await reader.readuntil(b"\n")
+            except asyncio.IncompleteReadError as e:  # stdin closed
+                if e.partial and not dropping:
+                    yield e.partial
+                return
+            except asyncio.LimitOverrunError as e:
+                await reader.readexactly(e.consumed)
+                if not dropping:
+                    dropping = True
+                    await self._error(None, INVALID_REQUEST,
+                                      f"a message longer than {_LINE_LIMIT} bytes")
+                continue
+            if dropping:  # the end of the line dropped
+                dropping = False
+            else:
+                yield line
 
     async def _handle(self, runtime: RuntimeAPI, line: bytes) -> None:
         try:
@@ -152,10 +181,12 @@ class HeadlessFrontend(Frontend):
             await self._error(request_id, INVALID_PARAMS, "params must be an object")
             return
         try:
-            result = await _call(runtime, method, dict(params))
+            args = _args(method, dict(params))
         except (TypeError, AttributeError) as e:
             await self._error(request_id, INVALID_PARAMS, str(e))
             return
+        try:
+            result = await _call(runtime, method, args)
         except RuntimeStateError as e:
             await self._error(request_id, REFUSED, str(e), "RuntimeStateError", e.reason)
             return
