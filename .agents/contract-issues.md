@@ -907,7 +907,7 @@ was used.
 
 ## 16. Found in the code review of 2026-11-26
 
-### P7 (S) The launcher knows the built-in Tools' work-folder option by name
+### P8 (S) The launcher knows the built-in Tools' work-folder option by name
 - **Status:** Open.
 - **Where:** `src/kaden/__main__.py` `load_config` (`running["tools"] == "shell-files"`,
   `"root"`); `ModuleState.work_folder`; `Settings.work_folder`.
