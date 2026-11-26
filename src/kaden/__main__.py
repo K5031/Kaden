@@ -160,7 +160,7 @@ def load_runtime(path: Path, data: dict[str, Any]) -> dict[str, Any]:
     for key, value in budget.items():
         if (wrong := bad_limit(key, value)) is not None:
             raise SystemExit(f"{path}: [runtime.budget] {wrong}")
-    if budget:
+    if "budget" in section:  # an empty table is no limits, over what it overrides
         settings["budget"] = Budget(**budget)
     return settings
 
