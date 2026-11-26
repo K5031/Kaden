@@ -15,6 +15,7 @@ from kaden.api import (
     Failure,
     FailureKind,
     PermissionPolicy,
+    SettingsUpdate,
     ToolFinished,
     ToolStatus,
     TransientCoreError,
@@ -247,3 +248,31 @@ async def test_usage_is_written_off_the_loop_with_the_latest_totals(tmp_path):
     await tracker.flush()
     saved = json.loads((tmp_path / "usage.json").read_text())
     assert saved["input_tokens"] == 500 and saved["cost_usd"] == pytest.approx(0.5)
+
+
+async def test_removing_the_duration_limit_lets_running_calls_go_on(make: Any) -> None:
+    tools = FakeTools()
+    tools.hanging("bg")
+    core = ScriptedCore([Step(calls=[call("bg", id="bg")]), Step(text="started")])
+    h: Harness = await make(core=core, tools=tools, initial_wait_s=0.05,
+                            budget=Budget(max_duration_s=0.4))
+    await h.start()
+    await h.turn("go")
+    await h.runtime.update_settings(SettingsUpdate(budget=Budget()))
+    await asyncio.sleep(0.6)
+    assert tools.cancelled == []
+    assert [op.call.id for op in h.runtime.snapshot().operations] == ["bg"]
+
+
+async def test_a_stream_the_duration_limit_cannot_end_is_reported(make: Any) -> None:
+    held = asyncio.Event()
+    core = ScriptedCore([Step(text="partial", hang=True, ignore_cancel=held)])
+    h: Harness = await make(core=core, budget=Budget(max_duration_s=0.2))
+    await h.start()
+    await h.runtime.send("go")
+    try:
+        await h.rec.wait_state(AgentState.FAILED, timeout=3)
+    finally:
+        held.set()
+    kinds = [f.kind for f in h.rec.of(Failure)]
+    assert FailureKind.INTERNAL in kinds and kinds[-1] == FailureKind.BUDGET

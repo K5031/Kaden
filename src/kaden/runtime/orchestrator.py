@@ -1689,10 +1689,12 @@ class Runtime:
 
     async def _duration_watchdog(self) -> None:
         """While operations run, cancel them all as Stop does once the duration budget is
-        exhausted. Inference has its own deadline (_race_stop_or_deadline)."""
+        exhausted. Inference has its own deadline (_attempt)."""
         while self._ops:
             remaining = self._budget.seconds_until_duration_exhausted()
-            if remaining:
+            if remaining is None:  # the limit was removed
+                return
+            if remaining > 0:
                 await asyncio.sleep(remaining)
                 continue
             self._log.decision("duration_exhausted", operations=list(self._ops))
@@ -1752,25 +1754,31 @@ class Runtime:
             self._failure(kind, f"Memory maintenance failed: {exc}")
         return False
 
-    async def _race_stop(self, task: asyncio.Future[Any]) -> bool:
-        """Wait for task or Stop. On Stop, cancel it and allow the grace period.
-        Returns True if Stop interrupted the task."""
+    async def _race_stop(self, task: asyncio.Future[Any], *, timeout: float | None = None,
+                         what: str = "A module call") -> bool:
+        """Wait for task, Stop or `timeout`. On Stop, end the task (_end_task). Returns
+        True if Stop interrupted the task; after a timeout it may still run."""
         stopper = asyncio.ensure_future(self._stop_event.wait())
         try:
-            await asyncio.wait({task, stopper}, return_when=asyncio.FIRST_COMPLETED)
+            await asyncio.wait({task, stopper}, return_when=asyncio.FIRST_COMPLETED,
+                               timeout=timeout)
         except asyncio.CancelledError:
             task.cancel()
             raise
         finally:
             stopper.cancel()
-        if task.done():
+        if task.done() or not self._stop_event.is_set():
             return False
+        await self._end_task(task, what)
+        return True
+
+    async def _end_task(self, task: asyncio.Future[Any], what: str) -> None:
+        """Cancel it and allow the grace period; one that outlasts it is abandoned, said."""
         task.cancel()
         await asyncio.wait({task}, timeout=self._config.cancel_grace_s)
         if not task.done():
             self._failure(FailureKind.INTERNAL,
-                          "A module call did not confirm cancellation; it was abandoned.")
-        return True
+                          f"{what} did not confirm cancellation; it was abandoned.")
 
     # ── Inference ────────────────────────────────────────────────────────
 
@@ -1866,25 +1874,27 @@ class Runtime:
         task = asyncio.ensure_future(self._consume(request, stream, info, foreground))
         try:
             if foreground:
-                stopped = await self._race_stop_or_deadline(task)
+                stopped = await self._race_stop(
+                    task, timeout=self._budget.seconds_until_duration_exhausted(),
+                    what="Inference")
             else:
                 await asyncio.wait({task})
                 stopped = False
+            # Not stopped and not done: the duration budget ran out while streaming.
+            timed_out = not stopped and not task.done()
+            if timed_out:
+                await self._end_task(task, "Inference")
         except asyncio.CancelledError:
             task.cancel()
             self._charge(stream.estimate(), info)
             raise
         finally:
             self._budget.end_activity()
-        if stopped:
+        if stopped or timed_out:
             self._charge(stream.estimate(), info)
             await self._commit_partial(stream)
-            raise _Stopped
-        if not task.done():  # duration budget ran out while streaming
-            task.cancel()
-            await asyncio.wait({task}, timeout=self._config.cancel_grace_s)
-            self._charge(stream.estimate(), info)
-            await self._commit_partial(stream)
+            if stopped:
+                raise _Stopped
             raise _BudgetHit(self._budget.exhausted() or "max_duration_s exhausted")
         exc = None if task.cancelled() else task.exception()
         if stream.completed is not None and exc is None:
@@ -1897,21 +1907,6 @@ class Runtime:
         if exc is None:
             raise CoreError("inference was cancelled")
         raise exc
-
-    async def _race_stop_or_deadline(self, task: asyncio.Future[Any]) -> bool:
-        stopper = asyncio.ensure_future(self._stop_event.wait())
-        try:
-            await asyncio.wait({task, stopper}, return_when=asyncio.FIRST_COMPLETED,
-                               timeout=self._budget.seconds_until_duration_exhausted())
-        finally:
-            stopper.cancel()
-        if task.done() or not self._stop_event.is_set():
-            return False
-        task.cancel()
-        await asyncio.wait({task}, timeout=self._config.cancel_grace_s)
-        if not task.done():
-            self._failure(FailureKind.INTERNAL, "Inference did not confirm cancellation.")
-        return True
 
     async def _consume(self, request: InferenceRequest, st: _Stream, info: ModelInfo,
                        foreground: bool) -> None:
