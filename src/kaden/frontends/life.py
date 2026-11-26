@@ -27,6 +27,8 @@ from kaden.api import (
     DutyKind,
     EventEnvelope,
     MessageCommitted,
+    Prompt,
+    PromptOpened,
     Role,
     RuntimeSnapshot,
     SettingsUpdate,
@@ -70,6 +72,7 @@ class Life:
         self.listeners: list[Callable[[], None]] = []
         self.replies: list[str] = []  # what it said answering the user, this session
         self._messages: list[str] = []  # what it said by itself, not yet taken
+        self._questions: list[Prompt] = []  # what it waits on the user for, not yet taken
         self._asked = False  # the turn under way was started by the user
         self._live: RemoteRuntime | None = None
         self._starting: asyncio.Task[None] | None = None
@@ -116,6 +119,12 @@ class Life:
             except FileNotFoundError:
                 return ""
         return await asyncio.to_thread(read)
+
+    def take_questions(self) -> list[Prompt]:
+        """What it began to wait on the user for (a permission, a question) since this was
+        last called."""
+        questions, self._questions = self._questions, []
+        return questions
 
     def take_messages(self) -> list[str]:
         """What it said to the user by itself since this was last called."""
@@ -185,6 +194,8 @@ class Life:
                 "model": self._own_model}
 
     def _event(self, envelope: EventEnvelope | None) -> None:
+        if envelope is not None and isinstance(envelope.event, PromptOpened):
+            self._questions.append(envelope.event.prompt)
         if envelope is not None and isinstance(envelope.event, MessageCommitted):
             message = envelope.event.message
             text = "".join(b.text for b in message.blocks if isinstance(b, Text)).strip()

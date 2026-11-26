@@ -2272,6 +2272,7 @@ class FakeLife:
     def __init__(self, runtime: Any, *, has_lived: bool = True) -> None:
         self.runtime, self.listeners, self.started = runtime, [], 0
         self.said: list[str] = []
+        self.asked: list[Any] = []
         self.has_lived, self.name, self.about = has_lived, "Kaden", ""
 
     async def set_identity(self, name: str, about: str) -> None:
@@ -2302,6 +2303,10 @@ class FakeLife:
     def take_messages(self) -> list[str]:
         said, self.said = self.said, []
         return said
+
+    def take_questions(self) -> list[Any]:
+        asked, self.asked = self.asked, []
+        return asked
 
 
 async def test_the_life_takes_over_the_window_and_gives_it_back(make, qapp):
@@ -2763,3 +2768,47 @@ async def test_in_the_lifes_view_an_answer_is_once_or_for_good(make, qapp):
     card = window.prompts.itemAt(0).widget()
     labels = [b.text() for b in card.findChildren(QPushButton)]
     assert labels == ["Allow once", "Always allow BiliMessage", "Deny"]
+
+
+class FakeTray:
+    def __init__(self) -> None:
+        self.shown: list[tuple[str, str]] = []
+
+    def showMessage(self, title: str, text: str, *args: Any) -> None:
+        self.shown.append((title, text))
+
+    def hide(self) -> None:
+        pass
+
+
+async def test_a_question_waiting_while_you_are_away_is_a_notification(make, qapp):
+    """The window not in front: Kaden's question, or the life's, comes as a desktop
+    notification, and clicking it shows the question."""
+    from kaden.api import Prompt, ToolCall
+
+    h: Harness = await make(permissions=PermissionPolicy.ASK)
+    h.tools.instant("Bash", read_only=False)
+    h.core.add(Step(calls=[call("Bash", {"command": "git push"})]), Step(text="ok"))
+    await h.start()
+    them: Harness = await make()
+    await them.start()
+    life = FakeLife(them.runtime)
+    life.name = "Ahri"
+    controller = Controller(h.runtime, ConversationModel())
+    window = MainWindow(h.runtime, controller, life=life)
+    tray = window.tray = FakeTray()  # type: ignore[assignment]
+    asyncio.create_task(controller.run())
+    await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
+    assert not window.isActiveWindow()  # not on screen: away
+    controller.send("push it")
+    await eventually(lambda: tray.shown)
+    assert tray.shown == [("Kaden needs your answer", "Run a command: git push")]
+    life.asked.append(Prompt("p1", "permission", "May I?", call=ToolCall(
+        "c1", "BiliMessage", {"to": "900", "text": "hi"})))
+    for listener in life.listeners:
+        listener()
+    await eventually(lambda: len(tray.shown) == 2)
+    title, text = tray.shown[1]
+    assert title == "Ahri needs your answer" and text
+    window.notification_clicked()  # brings their view, where the question is
+    await eventually(lambda: window.showing_life)

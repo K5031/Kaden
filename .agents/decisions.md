@@ -1094,3 +1094,11 @@ The design is in [the note](notes/implemented/2026-11-25-tool-settings.md); the 
 | The life | `Life._prepare` drops the chats' `[tool_settings]`, `always_allow` and `never_allow` and keeps the life's own (`life.OWN_SETTINGS`): answers given in its view are its own; `Life.restart` is `aclose` then `start`; the window shows it waking meanwhile and its view again after |
 | Bilibili | `bilibili_wake`: `follows` (default), `anyone`, `nobody`. Followings read 50 a page, at most 40 pages, kept 600 s (`FOLLOWS_S`); a conversation with something new from an account not followed is counted by its `unread_count` in `get_sessions` and not fetched; the firing ends with "N more conversation(s) waiting, from accounts you don't follow (BiliMessages reads them)." |
 
+## Notifications
+
+| Choice | Decision |
+|---|---|
+| When | A prompt other than a proposal opens in the window's own conversation (`MainWindow._notify_new_prompts`, on its model's `Reset` and `PromptsChanged`) or the life's (`Life.take_questions`, from its `PromptOpened` events), while the window is not the active one or is minimized |
+| How | The tray icon's message (`QSystemTrayIcon.showMessage`, a freedesktop notification on Linux), 10 s: "<who> needs your answer", with the prompt in one line (`common.prompt_summary`: the card's headline, and its one argument, such as a command). None without a tray; sub-sessions' prompts are not notified |
+| A click | Brings the window forward (`bring_forward`); for the life's, switches to its view |
+

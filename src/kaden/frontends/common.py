@@ -285,6 +285,18 @@ def tool_sentence(name: str, arguments: Mapping[str, Any] | None) -> str:
     return f"Use {name}"
 
 
+def prompt_summary(prompt: Prompt) -> str:
+    """What a waiting prompt asks, in one line, for a notification: a call as its card
+    names it, with its one argument where it has one (a command)."""
+    if prompt.call is None:
+        return (prompt.text.strip().splitlines() or [""])[0][:120]
+    headline, detail = call_parts(prompt.call.arguments)
+    headline = headline or tool_sentence(prompt.call.name, prompt.call.arguments)
+    if detail and "\n" not in detail:
+        return f"{headline}: {detail[:80]}"
+    return headline
+
+
 def call_parts(arguments: Any) -> tuple[str | None, str]:
     """A tool call for display: the plain-language description the model gave it
     (api.DESCRIPTION_ARG), if any, and the rest of its arguments: a single text argument as

@@ -338,6 +338,10 @@ your name's menu or the tray icon's), or Ctrl+Q, quits: tools still running are
 cancelled, and your conversations are saved and can be continued later. On a desktop
 without a system tray, closing the window quits.
 
+When Kaden, or Continuous, waits on your answer (a permission, a question) while the
+window is not in front, a desktop notification says so ("Ahri needs your answer: …");
+clicking it opens the window where the question is.
+
 ## Backups
 
 While the desktop app runs, it backs up your chats and Continuous once a day, into

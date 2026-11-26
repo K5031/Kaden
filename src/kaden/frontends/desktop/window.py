@@ -150,6 +150,7 @@ from kaden.frontends.common import (
     needs_restart,
     parse_plan_text,
     plan_text,
+    prompt_summary,
     proposal_parts,
     raises_limit,
     request_note,
@@ -2253,6 +2254,10 @@ class MainWindow(QMainWindow):
         self.journal_dialog: JournalDialog | None = None
         # With a system tray, closing the window hides it and Kaden runs on; quit() quits.
         self.tray = Tray(self, self.bring_forward, self.quit) if tray else None
+        if self.tray is not None:
+            self.tray.messageClicked.connect(self.notification_clicked)
+        self._prompts_seen: set[str] = set()  # the window's own conversation's
+        self._notified_life = False  # the last notification was the life's
         self.told_of_tray = False  # the first close in a run says Kaden runs on
         self._quitting = False
         self._life_on = False  # its view is up, or coming up while it starts
@@ -2863,6 +2868,8 @@ class MainWindow(QMainWindow):
         """A change in the window's own conversation. What is the window's (the list of
         conversations, memory, whether another chat can start) follows it always; the
         conversation area only while it shows this conversation."""
+        if isinstance(change, (Reset, PromptsChanged)):
+            self._notify_new_prompts()
         match change:
             case Reset():
                 _spawn(self.fill_sidebar())
@@ -3334,10 +3341,38 @@ class MainWindow(QMainWindow):
             dialog.show_text(await life.read_journal())
         _spawn(fill())
 
+    def _notify_new_prompts(self) -> None:
+        prompts = self.home.model.prompts
+        new = [p for key, p in prompts.items() if key not in self._prompts_seen]
+        self._prompts_seen = set(prompts)
+        for prompt in new:
+            if prompt.kind != PromptKind.PROPOSAL:
+                self._notify("Kaden", prompt, life=False)
+
+    def _notify(self, who: str, prompt: Prompt, *, life: bool) -> None:
+        """A desktop notification that `who` waits on the user, when the window is not in
+        front: otherwise nothing would tell them, and the work waits."""
+        if self.tray is None or (self.isActiveWindow() and not self.isMinimized()):
+            return
+        self._notified_life = life
+        self.tray.showMessage(f"{who} needs your answer", prompt_summary(prompt),
+                              QIcon(str(app_menu.ICON)), 10_000)
+
+    def notification_clicked(self) -> None:
+        """The window in front, on the conversation the question is in."""
+        self.bring_forward()
+        if self._notified_life and not self.showing_life:
+            self.continuous_switch.setChecked(True)
+
     def _life_said(self) -> None:
         """What the life said by itself: in its own view it is in the conversation;
-        elsewhere a notice in the chat on screen."""
-        if self.life is None or self.showing_life:
+        elsewhere a notice in the chat on screen. What it asks the user is a notification
+        when the window is not in front."""
+        if self.life is None:
+            return
+        for prompt in self.life.take_questions():
+            self._notify(self.life.name, prompt, life=True)
+        if self.showing_life:
             return
         for text in self.life.take_messages():
             self.model.notify(f"{self.life.name}: {text}")

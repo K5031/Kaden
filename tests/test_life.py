@@ -211,3 +211,16 @@ async def test_what_the_user_always_allows_it_is_its_own_and_lasts(tmp_path, chi
         assert rules == (PermissionRule("BiliMessage"),)
     finally:
         await life.aclose()
+
+
+def test_what_it_asks_the_user_reaches_the_app(tmp_path):
+    """A question of its own (a permission, say) is heard, so the app can tell the user
+    it waits on them."""
+    from kaden.api import EventEnvelope, Prompt, PromptOpened
+
+    life = Life(tmp_path)
+    heard: list[Prompt] = []
+    life.listeners.append(lambda: heard.extend(life.take_questions()))
+    prompt = Prompt("p1", "permission", "May I send a message?")
+    life._event(EventEnvelope(1, PromptOpened(prompt)))
+    assert heard == [prompt]
