@@ -95,7 +95,7 @@ that would message anyone, with nothing set up for it.
 - **`BiliMessages`** gives the messages people sent the account since it last looked, with
   who sent them; **`BiliWatchMessages`** is a watch the module keeps whenever the life is
   logged in ([standing watches](../implemented/2026-11-25-standing-watches.md)), so a
-  message wakes it within a minute; by default only from accounts it follows, a setting of
+  message wakes it within 20 seconds; by default only from accounts it follows, a setting of
   the user's ([tool settings](../implemented/2026-11-25-tool-settings.md)).
 - A message counts as the life's own time, within its daily amount: anyone can write to an
   account, and a stranger's messages must not spend beyond it. The user's message on a

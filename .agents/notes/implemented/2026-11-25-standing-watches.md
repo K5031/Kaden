@@ -124,7 +124,7 @@ behaviour.
 - After a restart a conversation's watches run again and its conversation shows nothing
   of it; a firing lost to a crash before it reached the conversation is given again
   (`ToolOutput.confirm`).
-- A Bilibili message wakes the life within a minute (`MESSAGE_CHECK_S`); like a channel it
+- A Bilibili message wakes the life within 20 seconds (`MESSAGE_CHECK_S`); like a channel it
   follows, on a day its own time is spent it waits for the next.
 - More runtime: a task per watch, `watches.json`, back-off, and five additions to the
   contract. A conversation's watches run only while it is open; the life always is.

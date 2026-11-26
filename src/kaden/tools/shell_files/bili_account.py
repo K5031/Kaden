@@ -37,8 +37,12 @@ BATCH_S = 300.0  # after the first new video, how long to wait for more of the s
 FIRST_LOOK = 10  # videos shown the first time the feed is read
 FEED_PAGES = 3  # read while a whole page is new, at most
 DELIVERED_KEPT = 1000  # posts remembered as delivered, the newest
-FEED_FILE = "bilibili-feed.json"  # in the data folder: the posts delivered
-MESSAGE_CHECK_S = 60.0  # while waiting for the user's messages: how often they are read
+FEED_FILE = "bilibili-feed.json"  # in the data folder: the posts delivered, and when
+# A video is new when it was not delivered and was posted after the last look, less this
+# much: Bilibili may list a video a while after its time. A new follow's past uploads are
+# older than that, and are not news.
+LATE_S = 3600.0
+MESSAGE_CHECK_S = 20.0  # while watching the inbox: how often it is read
 MESSAGES_FILE = "bilibili-messages.json"  # in the data folder: the last delivered, by sender
 FIRST_MESSAGES = 10  # messages shown the first time
 FOLLOWS_S = 600.0  # whom it follows, read again after this
@@ -374,26 +378,29 @@ class Account:
 
     async def watch_feed(self) -> ToolOutput:
         """Until a followed channel posts, then the burst's wait; what it gives is marked
-        delivered only once confirmed (ToolOutput.confirm), so a crash gives it again."""
-        known = await asyncio.to_thread(self._read_delivered)
+        delivered only once confirmed (ToolOutput.confirm), so a crash gives it again. The
+        first time, what the feed holds is noted, not given: it is not news."""
         try:
-            while not await self._new_since(known):
+            if (record := await asyncio.to_thread(self._read_feed)) is None:
+                looked, there = time.time(), await self._videos()
+                await asyncio.to_thread(self._remember, there, looked)
+                record = ([v["id"] for v in there], looked)
+            known, since = record
+            while not await self._new_since(known, since):
                 await asyncio.sleep(self._feed_check_s)
             await asyncio.sleep(self._batch_s)  # the rest of the burst
-            videos = await self._videos()
+            looked, videos = time.time(), await self._videos()
         except LoginGone as e:
             return ToolOutput(str(e), is_error=True, retry=False)
-        shown = [v for v in videos if known is None or v["id"] not in known]
-        if known is None:
-            shown = shown[:FIRST_LOOK]
-        return ToolOutput(_listed("New videos", shown),
-                          confirm=lambda: self._remember([v["id"] for v in videos]))
+        # Against what was delivered when it began: a look meanwhile does not empty it.
+        return ToolOutput(_listed("New videos", _fresh(videos, known, since)),
+                          confirm=lambda: self._remember(videos, looked))
 
-    async def _new_since(self, known: list[str] | None) -> bool:
-        """Something posted that was not delivered when the wait began; a failure to read
-        the feed is tried again at the next check, unless the login is gone."""
+    async def _new_since(self, known: list[str], since: float) -> bool:
+        """Something new since the wait began; a failure to read the feed is tried again
+        at the next check, unless the login is gone."""
         try:
-            return any(known is None or v["id"] not in known for v in await self._videos())
+            return bool(_fresh(await self._videos(), known, since))
         except LoginGone:
             raise
         except (BiliError, httpx2.HTTPError, ValueError) as e:
@@ -401,31 +408,31 @@ class Account:
             return False
 
     async def _look(self) -> str:
-        """What was not delivered yet, which then is; the first time, the latest few."""
-        videos = await self._videos()
-        known = await asyncio.to_thread(self._read_delivered)
-        if known is None:
+        """What is new, which then is delivered; the first time, the latest few."""
+        looked, videos = time.time(), await self._videos()
+        record = await asyncio.to_thread(self._read_feed)
+        if record is None:
             shown = videos[:FIRST_LOOK]
             heading = "The latest videos from the channels you follow"
         else:
-            shown, heading = [v for v in videos if v["id"] not in known], "New videos"
-        await self._deliver(videos)
+            shown, heading = _fresh(videos, *record), "New videos"
+        await asyncio.to_thread(self._remember, videos, looked)
         return _listed(heading, shown)
 
-    async def _deliver(self, videos: list[dict[str, Any]]) -> None:
-        if videos:
-            await asyncio.to_thread(self._remember, [v["id"] for v in videos])
-
-    def _remember(self, ids: list[str]) -> None:
-        """These posts as delivered, with those before, the newest kept. Blocks."""
-        known = self._read_delivered() or []
+    def _remember(self, videos: list[dict[str, Any]], looked: float) -> None:
+        """These posts as delivered, with those before, the newest kept, and when they were
+        looked at. Blocks."""
+        known, since = self._read_feed() or ([], 0.0)
+        ids = [v["id"] for v in videos]
         merged = ids + [i for i in known if i not in set(ids)]
-        self._write_delivered(merged[:DELIVERED_KEPT])
+        self._data_dir.mkdir(parents=True, exist_ok=True)
+        (self._data_dir / FEED_FILE).write_text(json.dumps(
+            {"delivered": merged[:DELIVERED_KEPT], "since": max(since, looked)}))
 
     async def _videos(self) -> list[dict[str, Any]]:
         """The feed's videos, newest first: its first page, and the next while a whole page
         is new."""
-        known = set(await asyncio.to_thread(self._read_delivered) or ())
+        known = set((await asyncio.to_thread(self._read_feed) or ([], 0.0))[0])
         videos: list[dict[str, Any]] = []
         offset = ""
         for _ in range(FEED_PAGES):
@@ -440,16 +447,13 @@ class Account:
                 break
         return videos
 
-    def _read_delivered(self) -> list[str] | None:
+    def _read_feed(self) -> tuple[list[str], float] | None:
+        """The posts delivered and when the feed was last looked at; None before a look."""
         try:
-            delivered = json.loads((self._data_dir / FEED_FILE).read_text())["delivered"]
+            data = json.loads((self._data_dir / FEED_FILE).read_text())
+            return [str(i) for i in data["delivered"]], float(data["since"])
         except (OSError, ValueError, KeyError, TypeError):
             return None
-        return [str(i) for i in delivered] if isinstance(delivered, list) else None
-
-    def _write_delivered(self, ids: list[str]) -> None:
-        self._data_dir.mkdir(parents=True, exist_ok=True)
-        (self._data_dir / FEED_FILE).write_text(json.dumps({"delivered": ids}))
 
     # ── Private messages ──────────────────────────────────────────────────
 
@@ -657,7 +661,15 @@ def _video(item: dict[str, Any]) -> dict[str, Any] | None:
     return {"id": str(item.get("id_str") or archive.get("bvid", "")),
             "title": archive.get("title", ""), "length": archive.get("duration_text", ""),
             "author": author.get("name", ""), "mid": author.get("mid", ""),
+            "at": float(author.get("pub_ts") or 0),
             "bvid": archive.get("bvid", ""), "desc": (archive.get("desc") or "").strip()[:200]}
+
+
+def _fresh(videos: list[dict[str, Any]], known: list[str], since: float
+           ) -> list[dict[str, Any]]:
+    """Those not delivered and posted since the last look (LATE_S)."""
+    seen = set(known)
+    return [v for v in videos if v["id"] not in seen and v["at"] >= since - LATE_S]
 
 
 def _listed(heading: str, videos: list[dict[str, Any]]) -> str:

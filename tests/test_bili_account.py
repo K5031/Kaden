@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +55,7 @@ class Bilibili:
               at: int | None = None) -> None:
         self.feed.insert(0, {"id_str": str(1000 + n), "modules": {
             "module_author": {"name": author, "mid": mid,
-                              "pub_ts": 1_700_000_000 + n if at is None else at},
+                              "pub_ts": int(time.time()) + n if at is None else at},
             "module_dynamic": {"major": {"archive": {
                 "bvid": f"BV1video{n:04d}", "title": f"Lyrebirds {n}",
                 "duration_text": "05:12", "desc": "They copy chainsaws."}}}}})
@@ -410,12 +411,13 @@ async def test_videos_are_told_apart_by_their_post_not_their_time(tmp_path):
     """Two posted in the same second, one listed late with an earlier time: each is
     delivered once; a deleted one does not bring old ones back."""
     store, site = Store(), Bilibili()
-    site.video(0, at=100)
+    now = int(time.time())
+    site.video(0, at=now - 100)
     acct = await logged_in(tmp_path / "life", store, site)
     await acct.run("BiliFeed", {})
-    site.video(1, at=200)
-    site.video(2, at=200)  # the same second
-    site.video(3, at=50)  # listed late, with an older time
+    site.video(1, at=now + 5)
+    site.video(2, at=now + 5)  # the same second
+    site.video(3, at=now - 1800)  # listed late, with an older time
     later = (await acct.run("BiliFeed", {})).content
     assert all(f"Lyrebirds {n}" in later for n in (1, 2, 3))
     site.feed.pop(0)  # the newest is deleted
@@ -644,4 +646,39 @@ async def test_a_first_watch_wakes_it_only_for_what_comes_after(tmp_path):
     fired = await asyncio.wait_for(watching, 2)
     assert "you there?" in fired.content
     assert "hey Ahri" not in fired.content and "thanks for the follow" not in fired.content
+    await acct.aclose()
+
+
+async def test_a_first_watch_of_the_feed_wakes_it_only_for_what_comes_after(tmp_path):
+    """What the feed holds when it first watches is not news."""
+    store, site = Store(), Bilibili()
+    for n in range(15):
+        site.video(n, at=int(time.time()) - 86_400 * (15 - n))  # the last two weeks
+    acct = await logged_in(tmp_path / "life", store, site, feed_check_s=0.02, batch_s=0.05)
+    watching = asyncio.create_task(acct.run("BiliWatchFeed", {}))
+    await asyncio.sleep(0.1)
+    assert not watching.done()
+    site.video(15)
+    fired = await asyncio.wait_for(watching, 2)
+    assert "Lyrebirds 15" in fired.content and "Lyrebirds 14" not in fired.content
+    await acct.aclose()
+
+
+async def test_a_new_follows_old_videos_are_not_new(tmp_path):
+    """Following a channel brings its past uploads into the feed: not posted since the
+    last look, so not news. One posted while Kaden was closed still is."""
+    store, site = Store(), Bilibili()
+    site.video(0)
+    acct = await logged_in(tmp_path / "life", store, site, feed_check_s=0.02, batch_s=0.05)
+    await acct.run("BiliFeed", {})
+    site.video(1, author="A new follow", mid=88, at=int(time.time()) - 5 * 86_400)
+    assert "Nothing new" in (await acct.run("BiliFeed", {})).content
+    watching = asyncio.create_task(acct.run("BiliWatchFeed", {}))
+    site.video(2, author="A new follow", mid=88, at=int(time.time()) - 6 * 86_400)
+    await asyncio.sleep(0.1)
+    assert not watching.done()
+    site.video(3, author="A new follow", mid=88)  # posted now
+    fired = await asyncio.wait_for(watching, 2)
+    assert "Lyrebirds 3" in fired.content
+    assert "Lyrebirds 1" not in fired.content and "Lyrebirds 2" not in fired.content
     await acct.aclose()

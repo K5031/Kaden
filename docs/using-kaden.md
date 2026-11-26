@@ -265,11 +265,12 @@ It can also have an account of its own, for example Continuous:
 3. Logged in, it can follow and unfollow channels, list what it follows, and read the new
    videos from them, or watch them: from then on, whenever they post, it is told (a burst
    together, a few minutes after the first), also after Kaden restarts, until it stops
-   watching.
+   watching. A channel it just followed brings no old uploads with it: only what is
+   posted from then on is new.
 
 Logged in, it can also send private messages, to an account by its UID or a link to its
 space page, and read the messages people send it. Its inbox is watched for it: within
-about a minute of someone writing, it gets the message. Whose messages wake it is a
+20 seconds of someone writing, it gets the message. Whose messages wake it is a
 setting, **Woken by Bilibili messages** (Settings → Tools, or for Continuous the gear in
 their view): from accounts it follows (the default), from anyone, or from no one. The rest
 wait unread until it reads its messages, and it is told how many are waiting. What was
