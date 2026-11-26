@@ -39,11 +39,18 @@ Journal for `home/journal.md`; its name and who it is are in its settings (the g
 
 - **A duty of the kind `DutyKind.LIFE`** on its one conversation, set on every start: who
   it is, its pace and its model as the app has them now. A life has neither
-  `ask_for_help` nor `finish_goal`, and is woken again when it is resumed.
-- **Awake by default.** With nothing due it goes on a minute after a turn; a due time it
-  gives a step of its plan is its rest, up to a day ahead. The user writing, or its own
-  background work finishing, wakes it at once. Its prompt states this as how its time
-  works.
+  `ask_for_help` nor `finish_goal`, has `Rest`, and is woken again when it is resumed.
+- **Awake by default.** With nothing due it goes on a minute after a turn. It rests by
+  calling `Rest` (until a time, for some minutes, or until something wakes it) or by
+  giving a step of its plan a due time; either way at most a day ahead. The user writing,
+  something it watches happening, or its own background work finishing, wakes it at once
+  and ends the rest. Its prompt states both ways of resting as abilities, not a rule.
+  Woken by time, it is told how long it rested and the time ("1 minute passed; it is
+  22:15.").
+- **A question it puts to the user does not hold it.** A permission, question or plan
+  prompt left unanswered for 3 minutes closes by itself, refused or unanswered, with a
+  note that the user may be away; the user may be talking to it on Bilibili, where no
+  card can be answered.
 - **Who it is** is the user's: a name and, if they like, who they are; left empty, it is
   theirs to find out. The user can change it at any time.
 - **Its own prompt** (`life.PROMPT`): that it has a life of its own and tools to live it,
@@ -65,6 +72,9 @@ and facts (the user reads its journal), never routines, quotas, schedules or moo
   process share the exported permission ceiling and each other's failures.
 - **Asleep by default, waking at a time it sets itself.** Tried with a day as the net:
   the model ended every turn without setting one, and slept a day.
+- **Resting only through a plan step's due time.** It kept saying it rested and was then
+  woken every minute to say so again, a full turn each time: a step with a due time is
+  not how it thinks of resting.
 - **A fixed beat** (woken every 15 minutes). A rhythm set for it, and the user does not
   want its behaviour decided in advance.
 - **Routines, quotas, a share score and moods,** as Bilibili's "raising a fish" projects

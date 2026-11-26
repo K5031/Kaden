@@ -1189,3 +1189,12 @@ computer.", and the life carries on. The user talks with it from elsewhere (Bili
 phone), where no card can be answered, and a waiting prompt held its whole conversation.
 Three minutes is long enough to answer at the computer. Other conversations wait as before;
 proposals never hold a conversation and are left alone.
+
+## A life rests with Rest (2026-11-26)
+
+| Choice | Decision |
+|---|---|
+| The tool | `Rest` (`api.DUTY_TOOLS`), offered only when the duty is a life; read-only, never gated, not counted. `until` (ISO 8601, local without an offset) or `minutes`; with neither, until something wakes it. Always capped at the duty's `max_interval_s`; an unreadable time is an ERROR result |
+| The rest | Kept in the runtime only (`Runtime._rest_until`), not in the conversation: a restart wakes the life as before. Any cycle ends it, whatever started the cycle; `next_wake` takes the earlier of the rest's end and a step that falls due before it, never sooner than `min_interval_s` |
+| The prompt | `duty.prompt` names Rest beside a plan step's due time, as ways it can rest |
+| The notice | A life's scheduled check-in says `<span> passed; it is HH:MM.` (local time), the span since its last cycle ended (`duty.span`). After a restart, with no last cycle in this process, it is "Time has passed." |

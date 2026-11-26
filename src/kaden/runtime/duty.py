@@ -74,7 +74,7 @@ def prompt(duty: Duty | None, plan: Sequence[PlanItem], *, in_view: bool = False
             "You have your tools, a folder of your own, the web, and memory to keep what "
             "you want to remember. When you end your turn, you go on after "
             f"{span(duty.min_interval_s)}, unless you rest until a later time you choose "
-            "(a step of your plan given a due time with TodoWrite, at most "
+            "(with Rest, or a step of your plan given a due time with TodoWrite; at most "
             f"{span(duty.max_interval_s)} ahead). The user writing, or background work of "
             "yours finishing, wakes you sooner. When the user writes, you answer them. Text you "
             "write in a turn the user did not start reaches them as a message; a turn that "
@@ -111,11 +111,18 @@ _SAYS = {DUE: "A step in your plan is due.", CHECK_IN: "Time to check in on your
          FINISHED: "Background work finished."}
 
 
-def notice(cause: str, duty: Duty | None) -> str:
+def notice(cause: str, duty: Duty | None, *, rested_s: float | None = None,
+           now: float | None = None) -> str:
     """The message that starts a cycle a duty started. The one that turns it on states the
-    task, so the transcript keeps it after the duty ends (a goal reached mid-cycle)."""
+    task, so the transcript keeps it after the duty ends (a goal reached mid-cycle). A
+    life's check-in says how long it rested (`rested_s`, since its last turn) and the
+    time."""
     goal = duty is not None and duty.kind == DutyKind.GOAL
     if duty is not None and duty.kind == DutyKind.LIFE:
+        if cause == CHECK_IN and rested_s is not None:
+            now = time.time() if now is None else now
+            clock = datetime.fromtimestamp(now).astimezone().strftime("%H:%M")
+            return f"{span(rested_s)} passed; it is {clock}."
         return {TURNED_ON: f"Your life: {duty.instruction}", NEW_DAY: "A new day began.",
                 DUE: "A step in your plan is due.", FINISHED: "Background work finished.",
                 }.get(cause, "Time has passed.")
@@ -177,18 +184,41 @@ def parse_plan(items: Sequence[dict[str, Any]], now: float) -> list[PlanItem]:
     return plan
 
 
-def next_wake(duty: Duty, plan: Sequence[PlanItem], now: float | None = None
-              ) -> tuple[float, str]:
+def next_wake(duty: Duty, plan: Sequence[PlanItem], now: float | None = None, *,
+              rest_until: float | None = None) -> tuple[float, str]:
     """(seconds from now, cause): the earliest open item due, held between the duty's
     intervals; with nothing due, the maximum interval, or for a life the minimum: it is
-    awake unless it chose to rest until a later time."""
+    awake unless it chose to rest until a later time, a due step or `rest_until` (Rest),
+    whichever comes first."""
     now = time.time() if now is None else now
     due = [i.due for i in plan if i.due is not None and i.status in OPEN]
+    if rest_until is not None and duty.kind == DutyKind.LIFE:
+        sooner = [d for d in due if now < d < rest_until]
+        if sooner:
+            return max(duty.min_interval_s, min(sooner) - now), DUE
+        return max(duty.min_interval_s, rest_until - now), CHECK_IN
     if due and min(due) - now < duty.max_interval_s:
         return max(duty.min_interval_s, min(due) - now), DUE
     if not due and duty.kind == DutyKind.LIFE:
         return duty.min_interval_s, CHECK_IN
     return duty.max_interval_s, CHECK_IN
+
+
+def rest_until(arguments: dict[str, Any], duty: Duty, now: float) -> float:
+    """When Rest's arguments end the rest: `until`, or `minutes` from now, or with neither
+    the duty's longest wait, never later than that. ValueError for an unreadable time."""
+    longest = now + duty.max_interval_s
+    if "until" in arguments:
+        try:
+            when = datetime.fromisoformat(arguments["until"])
+            return min(longest, (when if when.tzinfo else when.astimezone()).timestamp())
+        except (ValueError, OverflowError):
+            raise ValueError(f"Cannot read the time {arguments['until']!r}: use ISO 8601, "
+                             "e.g. 2026-11-12T09:00.") from None
+    if "minutes" in arguments:
+        minutes = float(arguments["minutes"])
+        return min(longest, now + 60 * minutes) if math.isfinite(minutes) else longest
+    return longest
 
 
 def check(duty: Duty) -> Duty:

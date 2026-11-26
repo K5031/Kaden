@@ -483,6 +483,10 @@ class Runtime:
         self._duty_timer: asyncio.Task[None] | None = None
         self._duty_wake_at: float | None = None
         self._duty_cause: str | None = None  # why the next cycle was requested for a duty
+        self._rest_until: float | None = None  # a life rests until then (Rest), this turn
+        # When the last cycle of the open conversation ended: a life rested since. None:
+        # not since it was opened.
+        self._turn_ended: float | None = None
         # Without a duty: steps due up to this time have reminded, or fell due while the
         # conversation was closed and wait for the user.
         self._reminded = 0.0
@@ -624,6 +628,7 @@ class Runtime:
         self._agent_config = AgentConfig(self._config.budget, self._permissions)
         # A resumed conversation has no pending wake-up: it waits for the user.
         self._wake_set, self._immediate_wake, self._unseen = None, False, False
+        self._rest_until = self._turn_ended = None
         self._cancel_duty()
         self._answered()
         if resumed:
@@ -1272,6 +1277,8 @@ class Runtime:
                 specs["ask_for_help"] = DUTY_TOOLS["ask_for_help"]
             if conversation.duty is not None and conversation.duty.kind == DutyKind.GOAL:
                 specs["finish_goal"] = DUTY_TOOLS["finish_goal"]
+            if conversation.duty is not None and conversation.duty.kind == DutyKind.LIFE:
+                specs["Rest"] = DUTY_TOOLS["Rest"]
         await self._load_skills()
         if self._skills:
             specs[SKILL_TOOL.name] = SKILL_TOOL
@@ -1552,6 +1559,7 @@ class Runtime:
         finally:
             self._cycle_active = False
             self._phase = AgentState.THINKING
+            self._turn_ended = time.time()
             self._log.decision("cycle_end", state=self._base)
             if not self._stopping:
                 await self._flush_outside_cycle()
@@ -1572,6 +1580,7 @@ class Runtime:
     async def _cycle_body(self) -> None:
         self._set_phase(AgentState.THINKING)
         self._sent_back = False
+        self._rest_until = None  # whatever woke it ends the rest
         await self._append()  # drain any backlog first
         await self._flush_results()
         await self._deliver_inbox()
@@ -1580,7 +1589,8 @@ class Runtime:
         if self._duty_cause is not None:
             cause, self._duty_cause = self._duty_cause, None
             duty = self._conversation.duty if self._conversation is not None else None
-            notice = duties.notice(cause, duty)
+            notice = duties.notice(cause, duty, rested_s=None if self._turn_ended is None
+                                   else time.time() - self._turn_ended)
             if duty is None and cause == duties.DUE and self._conversation is not None:
                 self._reminded = time.time()
                 notice = duties.reminder(self._conversation.plan, self._reminded)
@@ -1698,7 +1708,8 @@ class Runtime:
             self._log.decision("duty_held", reason="the day's amount is spent")
             self._wake_in(max(0.0, next_day() - time.time()), duties.NEW_DAY)
             return
-        self._wake_in(*duties.next_wake(duty, self._conversation.plan))
+        self._wake_in(*duties.next_wake(duty, self._conversation.plan,
+                                        rest_until=self._rest_until))
 
     def _day_spent(self) -> bool:
         """A life has spent today's amount (Budget.max_cost_usd_per_day)."""
@@ -2802,6 +2813,20 @@ class Runtime:
                 self._emit(HelpNeeded(self._help))
                 return ToolStatus.OK, ("Asked. Your check-ins pause until your supervisor "
                                        "answers; end your turn.")
+            case "Rest":
+                duty = self._conversation.duty
+                if duty is None or duty.kind != DutyKind.LIFE:
+                    return ToolStatus.ERROR, "Only a life rests."
+                now = time.time()
+                try:
+                    self._rest_until = duties.rest_until(args, duty, now)
+                except ValueError as e:
+                    return ToolStatus.ERROR, str(e)
+                self._log.decision("rest", in_s=round(self._rest_until - now, 3))
+                return ToolStatus.OK, (
+                    f"Resting until {duties.local(self._rest_until)}. The user writing, "
+                    "something you watch happening or your background work finishing wakes "
+                    "you sooner. End your turn.")
             case "finish_goal":
                 duty = self._conversation.duty
                 if duty is None or duty.kind != DutyKind.GOAL:
