@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import socket
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -201,3 +202,9 @@ def test_find_gives_none_on_other_systems(monkeypatch):
     monkeypatch.setattr(sandbox.shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(sandbox.subprocess, "run", Probe())
     assert sandbox.find() is None
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS only")
+def test_on_a_mac_the_seatbelt_profile_is_taken():
+    """The profile is only text everywhere else: here macOS runs it (the CI's macOS job)."""
+    assert isinstance(sandbox.find(), Seatbelt)

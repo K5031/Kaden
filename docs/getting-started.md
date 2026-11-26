@@ -2,7 +2,9 @@
 
 ## What you need
 
-- Linux. macOS should work but is untested; Windows is not supported.
+- Linux or macOS. On macOS there is no ready-made download yet: install it from source
+  (below); its tests run on macOS, but it has not been tried on a Mac by hand. Windows
+  is not supported.
 - An API key from one provider: [Anthropic](https://platform.claude.com/) (Claude),
   [DeepSeek](https://platform.deepseek.com/) or [OpenAI](https://platform.openai.com/).
 

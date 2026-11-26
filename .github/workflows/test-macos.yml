@@ -1,0 +1,26 @@
+# Runs the tests on macOS, the one place the macOS code runs for real: the Seatbelt
+# sandbox profile (tests/test_sandbox.py, the boundary test in test_tools_shell_files.py),
+# the file tools without /proc, and screencapture being found.
+name: Tests (macOS)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
+      - name: Install
+        run: uv sync --python 3.14
+      - name: Lint
+        run: uv run ruff check
+      - name: Test
+        run: uv run pytest
