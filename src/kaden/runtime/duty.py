@@ -30,7 +30,7 @@ def local(t: float) -> str:
     return datetime.fromtimestamp(t).astimezone().isoformat(timespec="minutes")
 
 
-def _span(seconds: float) -> str:
+def span(seconds: float) -> str:
     if seconds >= 3600 and seconds % 3600 == 0:
         n, unit = int(seconds // 3600), "hour"
     elif seconds >= 60:
@@ -73,9 +73,9 @@ def prompt(duty: Duty | None, plan: Sequence[PlanItem], *, in_view: bool = False
             "Your time is your own: no one is waiting on you, and nothing has to be done. "
             "You have your tools, a folder of your own, the web, and memory to keep what "
             "you want to remember. When you end your turn, you go on after "
-            f"{_span(duty.min_interval_s)}, unless you rest until a later time you choose "
+            f"{span(duty.min_interval_s)}, unless you rest until a later time you choose "
             "(a step of your plan given a due time with TodoWrite, at most "
-            f"{_span(duty.max_interval_s)} ahead). The user writing, or background work of "
+            f"{span(duty.max_interval_s)} ahead). The user writing, or background work of "
             "yours finishing, wakes you sooner. When the user writes, you answer them. Text you "
             "write in a turn the user did not start reaches them as a message; a turn that "
             "ends without text reaches no one.")
@@ -88,7 +88,7 @@ def prompt(duty: Duty | None, plan: Sequence[PlanItem], *, in_view: bool = False
             "the user. Keep a todo list with TodoWrite: the steps, what you are doing, and "
             "when each falls due. After you end your turn you are woken again: when "
             "background work finishes, when an open plan item falls due, and at least "
-            f"every {_span(duty.max_interval_s)}. To react to something outside (new mail, "
+            f"every {span(duty.max_interval_s)}. To react to something outside (new mail, "
             "a webhook, a file), start a tool that waits for it; when it finishes it wakes "
             "you. If you are blocked and only your supervisor "
             "can unblock you, call ask_for_help and end your turn; solve what you can "

@@ -1178,3 +1178,14 @@ and if that fails again they are dropped and logged (`left_unsaved`); firings of
 watches held for a cycle are let go unconfirmed, so their watches see them again when it
 is back. Nothing of it reaches the next conversation. Watch files are written one at a
 time, in order, a write under way finished even when its caller is cancelled.
+
+## A life's prompts close after 3 minutes (2026-11-26)
+
+In a conversation whose duty is a life, a permission, AskUserQuestion or ExitPlanMode
+prompt left unanswered for `RuntimeConfig.life_prompt_timeout_s`, 180 s, closes by itself
+(`PromptClosed`, reply None; decision `prompt_timed_out`): the call is refused, the question
+or plan goes unanswered, each with "No answer in 3 minutes: the user may be away from the
+computer.", and the life carries on. The user talks with it from elsewhere (Bilibili on the
+phone), where no card can be answered, and a waiting prompt held its whole conversation.
+Three minutes is long enough to answer at the computer. Other conversations wait as before;
+proposals never hold a conversation and are left alone.

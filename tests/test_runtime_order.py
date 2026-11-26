@@ -17,8 +17,10 @@ from kaden.api import (
     DutyKind,
     Message,
     PermissionPolicy,
+    PromptClosed,
     PromptKind,
     Text,
+    ToolStatus,
 )
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
@@ -157,3 +159,46 @@ async def test_taskoutput_forgets_the_oldest_finished_tasks(make: Any, monkeypat
     results = await h.results()
     assert results["oa"].content == "Unknown task a."
     assert "finished with status ok" in results["oc"].content
+
+
+LIFE = Duty("You are Mira.", DutyKind.LIFE, min_interval_s=30, max_interval_s=60)
+
+
+@pytest.mark.parametrize("life", [True, False])
+async def test_a_lifes_question_to_the_user_does_not_wait_forever(make: Any, life: bool
+                                                                  ) -> None:
+    tools = FakeTools()
+    tools.instant("write", "written", read_only=False)
+    h: Harness = await make(core=ScriptedCore([
+        Step(calls=[call("write", id="w")]), Step(text="I could not write it.")],
+        default=Step(text="")), tools=tools, permissions=PermissionPolicy.ASK,
+        life_prompt_timeout_s=0.2)
+    await h.start()
+    if life:
+        await h.runtime.set_duty(LIFE)
+    else:
+        await h.runtime.send("write it")
+    await eventually(lambda: h.runtime.snapshot().prompts)
+    await asyncio.sleep(0.4)
+    if not life:
+        assert [p.kind for p in h.runtime.snapshot().prompts] == [PromptKind.PERMISSION]
+        return
+    await eventually(lambda: not h.runtime.snapshot().prompts)
+    await eventually(lambda: len([r for r in h.core.requests if not r.maintenance]) >= 2)
+    result = (await h.results())["w"]
+    assert result.status == ToolStatus.REFUSED and "away from the computer" in result.content
+    assert h.rec.of(PromptClosed)
+
+
+async def test_a_lifes_question_is_answered_with_none_after_the_wait(make: Any) -> None:
+    question = {"questions": [{"question": "Tea or coffee?", "header": "Drink",
+                               "options": [{"label": "Tea", "description": "t"},
+                                           {"label": "Coffee", "description": "c"}],
+                               "multiSelect": False}]}
+    h: Harness = await make(core=ScriptedCore([
+        Step(calls=[call("AskUserQuestion", question, id="q")]), Step(text="")],
+        default=Step(text="")), life_prompt_timeout_s=0.1)
+    await h.start()
+    await h.runtime.set_duty(LIFE)
+    await eventually(lambda: len([r for r in h.core.requests if not r.maintenance]) >= 2)
+    assert "away from the computer" in (await h.results())["q"].content

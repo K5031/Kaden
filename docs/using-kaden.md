@@ -341,7 +341,9 @@ without a system tray, closing the window quits.
 
 When Kaden, or Continuous, waits on your answer (a permission, a question) while the
 window is not in front, a desktop notification says so ("Ahri needs your answer: …");
-clicking it opens the window where the question is.
+clicking it opens the window where the question is. Continuous does not wait long: a
+question left unanswered for 3 minutes closes by itself, the action is not taken, and they
+go on, so they can still answer you elsewhere (on Bilibili, say) and ask you there.
 
 ## Backups
 

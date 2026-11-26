@@ -182,6 +182,7 @@ class _Open:
 
 _SAME = object()  # _close_prompt: the future gets the reply itself
 _IN_WORDS = object()  # a question answered by the person's message that follows
+_NO_ANSWER = object()  # a life's prompt that closed unanswered (life_prompt_timeout_s)
 
 
 def _definition(spec: ToolSpec) -> dict[str, Any]:
@@ -971,13 +972,33 @@ class Runtime:
         self._update_state()
 
     async def _wait_for_person(self, prompt: Prompt) -> Any:
-        """Open `prompt` and wait for its reply; closed unanswered if the wait ends first
-        (Stop)."""
-        answered = self._open_prompt(prompt)
+        """Open `prompt` and wait for its reply (_reply); closed unanswered if the wait ends
+        first (Stop)."""
         try:
-            return await answered
+            return await self._reply(prompt)
         finally:
             self._close_prompt(prompt.id, None)
+
+    async def _reply(self, prompt: Prompt) -> Any:
+        """Open `prompt` and wait for its reply. In a life, whose user may be away from the
+        computer (talking to it elsewhere), one left unanswered for life_prompt_timeout_s
+        closes by itself: _NO_ANSWER."""
+        answered = self._open_prompt(prompt)
+        duty = self._conversation.duty if self._conversation is not None else None
+        if duty is None or duty.kind != DutyKind.LIFE:
+            return await answered
+        try:
+            return await asyncio.wait_for(asyncio.shield(answered),
+                                          self._config.life_prompt_timeout_s)
+        except TimeoutError:
+            self._log.decision("prompt_timed_out", prompt_id=prompt.id, kind=prompt.kind,
+                               after_s=self._config.life_prompt_timeout_s)
+            self._close_prompt(prompt.id, None, outcome=_NO_ANSWER)
+            return _NO_ANSWER
+
+    def _no_answer(self) -> str:
+        return (f"No answer in {duties.span(self._config.life_prompt_timeout_s)}: the user "
+                "may be away from the computer.")
 
     def _answered_in_words(self, prompt: Prompt, text: str) -> None:
         """A message answers `prompt` (one that takes words): its result says the answer
@@ -2413,12 +2434,16 @@ class Runtime:
         # What "always" and "never" would keep, chosen once: the card names them.
         always = PermissionRule.for_calls(bare, have=self._config.permission_rules)
         never = PermissionRule.for_calls(bare, allow=False)
-        decision = Decision(await self._open_prompt(Prompt(
+        reply = await self._reply(Prompt(
             _new_id(), PromptKind.PERMISSION,
             description if isinstance(description, str) and description else call.name,
             call, {"read_only": spec.read_only, "confined": confined,
                    "reason": reason, "always": [str(r) for r in always],
-                   "never": [str(r) for r in never]})))
+                   "never": [str(r) for r in never]}))
+        if reply is _NO_ANSWER:
+            auto(Decision.DENY, "no answer")
+            return f"Refused: {self._no_answer()}"
+        decision = Decision(reply)
         if decision is Decision.ALLOW_ALWAYS and not always:
             decision = Decision.ALLOW_ONCE  # nothing to keep: as once
         if decision in (Decision.ALLOW_ALWAYS, Decision.DENY_ALWAYS):
@@ -2837,6 +2862,8 @@ class Runtime:
         if answers is _IN_WORDS:
             return ("The user answered in their own words, in the message that follows. "
                     "You can now continue with the user's answers in mind.")
+        if answers is _NO_ANSWER:
+            return f"{self._no_answer()} Go on without the answers."
         said = ", ".join(f'"{q["question"]}"="{answers.get(q["question"], "(no answer)")}"'
                          for q in questions)
         return (f"User has answered your questions: {said}. You can now continue with the "
@@ -2866,8 +2893,12 @@ class Runtime:
         Code's ExitPlanMode does."""
         plan = call.arguments["plan"]
         self._log.decision("plan_proposed", call_id=call.id, plan_chars=len(plan))
-        approved, feedback, in_words = await self._wait_for_person(Prompt(
+        outcome = await self._wait_for_person(Prompt(
             call.id, PromptKind.PLAN, "Approve the plan", call, {"plan": plan}, words=True))
+        if outcome is _NO_ANSWER:
+            return ToolStatus.REFUSED, (f"{self._no_answer()} The plan is not approved; you "
+                                        "are still in plan mode.")
+        approved, feedback, in_words = outcome
         if approved:
             return ToolStatus.OK, ("User has approved your plan. You can now start coding. "
                                    "Start with updating your todo list if applicable.\n\n"
