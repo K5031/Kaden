@@ -118,7 +118,8 @@ passwords or Kaden's own data folder: those still ask.
 
 **How "in the work folder" is enforced.** A file action counts as inside when its path is
 in the work folder; a link that leads out of it counts as outside. Commands run in a
-sandbox ([bubblewrap](https://github.com/containers/bubblewrap)) in which they can:
+sandbox ([bubblewrap](https://github.com/containers/bubblewrap) on Linux, the system's own
+sandbox on macOS) in which they can:
 
 - read and change the work folder;
 - read the files you attached to a message, wherever they are, so the agent can copy a
@@ -127,8 +128,9 @@ sandbox ([bubblewrap](https://github.com/containers/bubblewrap)) in which they c
 - use the network.
 
 They cannot change anything else, and cannot see your home folder, other programs, your
-desktop session (so not your keychain either) or environment variables whose names look
-like secrets (API keys, tokens, passwords). Searching the web and reading web pages also count as inside: they touch
+desktop session (so not your keychain either), the services running on your computer
+(Docker, the system bus) or environment variables whose names look like secrets (API
+keys, tokens, passwords). Searching the web and reading web pages also count as inside: they touch
 nothing on your computer. When a command needs more, for example a tool installed in your home
 folder, the agent asks to run it outside the sandbox, and the question says so.
 
@@ -136,8 +138,10 @@ Things to know:
 
 - **Keep secrets out of the work folder.** A command there can send the folder's contents
   anywhere.
-- **Without the sandbox, commands ask.** That is the case on macOS and on Linux without
-  bubblewrap; file actions in the work folder still run freely.
+- **Without the sandbox, commands ask.** That is the case on Linux without bubblewrap;
+  file actions in the work folder still run freely.
+- **On macOS, some programs do not run in the sandbox**: those that write only to `/tmp`,
+  or need a system service it keeps out. The agent asks to run them outside it.
 - **Your home folder is not a work folder.** If the work folder is your home folder, or a
   folder that contains it, nothing counts as inside and every action asks.
 

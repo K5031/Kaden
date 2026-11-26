@@ -1,10 +1,10 @@
 # Agent Note: A sandbox on each system
 
-Status: proposed — the shell's sandbox behind one interface, bubblewrap on Linux and Seatbelt on macOS, with the local services' sockets out of reach
+Status: implemented — the shell's sandbox is behind one interface, bubblewrap on Linux and Seatbelt on macOS, with the local services' sockets out of reach
 
 ## Problem
 
-[Free in the work folder](../implemented/2026-11-10-free-in-the-work-folder.md) lets a
+[Free in the work folder](2026-11-10-free-in-the-work-folder.md) lets a
 sandboxed command run without asking. Its sandbox has two gaps:
 
 - **Linux: local services stay reachable.** The whole system is bound read-only, and a
@@ -15,22 +15,23 @@ sandboxed command run without asking. Its sandbox has two gaps:
   under `/run`.
 - **macOS: no sandbox at all.** bubblewrap is Linux only, so every command asks there.
 
-The OS split was also spread over `shell_files/__init__.py` (`_sandbox`, `_bwrap`, the
-argument list stripped by position in `_shell`).
+Each system's way of confining a process is its own, and the code that uses the sandbox
+should not need to know which one runs.
 
-## Proposal
+## Decision
 
 A `Sandbox` protocol in `tools/shell_files/sandbox.py`, what the shell needs and not how a
 system does it:
 
 ```python
 class Sandbox(Protocol):
-    def wrap(self, command, *, root, cwd, tmp, granted) -> list[str]: ...
+    def wrap(self, command, *, root, tmp, granted) -> list[str]: ...
 ```
 
 `command` run so that it reads and writes `root` and `tmp` (an empty folder made for
-that command, its `TMPDIR`), reads `granted` (files the user attached) and the system,
-starts in `cwd`, and reaches nothing else listed in the table. `find()` is called once
+that command by `ShellFilesTools._shell`, removed after it, its `TMPDIR`), reads `granted`
+(files the user attached) and the system, and reaches nothing else listed in the table.
+It starts in the folder the process is started in, inside `root`. `find()` is called once
 when the module is built, off the event loop: it picks the backend this system has and
 **probes** it by running `true` in it; a backend that fails the probe (missing,
 user namespaces off, nested in another sandbox, a profile the system refuses) is `None`,
@@ -51,7 +52,8 @@ The table of the note above, per backend:
 | Processes | `--unshare-pid` | signals and process info only within the sandbox |
 | Network | as outside | as outside (IP) |
 
-The `/run` sockets are found each time a command is wrapped (in a thread), so a service
+The `/run` sockets are found each time a command is wrapped (`sandbox.local_sockets`, in
+a thread), so a service
 started after Kaden (Docker) is covered too. The walk stays on `/run`'s own filesystem
 (a mounted disk under `/run/media` is not walked) and skips `/run/user` (hidden whole) and
 folders the user cannot list, whose sockets the user cannot find either.
@@ -85,20 +87,24 @@ sockets.
   that stays shut as macOS adds services.
 - **Landlock, or a container.** Declined in the note above for the same reasons.
 
-## Acceptance criteria
+## Consequences
 
-- The boundary test (writing outside, the home folder, the session bus, the system bus,
-  a socket under `/run`) runs against whichever backend `find()` returns, and is skipped
-  where there is none.
-- The Seatbelt profile is generated from the table and tested row by row on Linux as
-  text; `find()`'s choice is tested with fakes; the boundary test runs for real on the
-  `macos-latest` CI job.
-- `docs/settings.md` says what the sandbox hides on both systems.
-
-## Risks
-
-- **A wrong profile is a security bug** (as for bubblewrap): only the macOS CI job runs
-  it. A profile macOS refuses fails the probe and leaves commands asking, which is safe.
+- **macOS commands run unasked in the work folder**, as on Linux.
+- **Tests.** The boundary test (`test_a_sandboxed_command_cannot_leave_the_workspace`:
+  writing outside, the home folder, the session bus, the system bus, every socket under
+  `/run`) runs against whichever backend `find()` returns. The Seatbelt profile is tested
+  row by row as text (`tests/test_sandbox.py`) and `find()`'s choice with fakes, on any
+  system; the profile itself runs only on the `macos-latest` CI job, where `find()` must
+  return Seatbelt (a profile macOS refuses fails the probe there).
+- **A wrong profile is a security bug** (as for bubblewrap), and no one has run it on a
+  Mac by hand. A profile macOS refuses fails the probe and leaves commands asking, which
+  is safe.
+- **Hard links on macOS are unchecked.** A command could link a file of the user's that
+  is visible (outside the hidden folders, such as one under a user-owned `/usr/local`)
+  into the work folder and write it through the link; on Linux the work folder is a bind
+  mount of its own and the link fails.
+- **A socket that goes away** between the walk and bubblewrap's start makes that command
+  fail; it is run again.
 - **Programs that need a mach service not on the list fail** in the sandbox on macOS;
   the agent asks to run them outside, as for a tool in the home folder.
 - `sandbox-exec` is deprecated by Apple, though Chrome, Claude Code, Codex and Gemini CLI

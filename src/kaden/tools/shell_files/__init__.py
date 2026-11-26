@@ -6,8 +6,9 @@ directory. Commands inherit the process environment (PERMISSION_CEILING_ENV incl
 sandboxed ones without the variables that look like secrets (sandbox_environment).
 
 The workspace is a boundary the runtime can rely on (`confined`): a file call is confined
-when its path is inside it, and a shell command when it runs in the bubblewrap sandbox,
-where only the workspace is writable and the home directories are hidden. The web tools
+when its path is inside it, and a shell command when it runs in the sandbox (`sandbox.py`:
+bubblewrap on Linux, Seatbelt on macOS), where only the workspace is writable and the home
+directories are hidden. The web tools
 (`web.py`) touch nothing on this computer, so they are confined too. Calls that reach
 outside still work; the runtime asks the user first.
 """
@@ -28,7 +29,7 @@ import secrets
 import shutil
 import signal
 import stat
-import subprocess
+import tempfile
 import threading
 import time
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
@@ -57,7 +58,15 @@ from kaden.api import (
     ToolSpec,
     foreground_timeout,
 )
-from kaden.tools.shell_files import attachments, bili_account, bilibili, office, screen, web
+from kaden.tools.shell_files import (
+    attachments,
+    bili_account,
+    bilibili,
+    office,
+    sandbox,
+    screen,
+    web,
+)
 
 SHELL_STALL_TIMEOUT = 600.0  # seconds without output before the runtime may stall-kill
 HEARTBEAT_INTERVAL = 0.5  # min seconds between silent heartbeats from file walks
@@ -124,15 +133,14 @@ SHELL = ToolSpec(
 )
 SANDBOX_NOTE = (
     " Commands run in a sandbox: they can read and write the workspace, read the system "
-    "and use the network, but the rest of the home directory and environment variables "
-    "holding keys or tokens are hidden, and nothing outside the workspace can be "
-    "changed. Set `dangerouslyDisableSandbox` to true only when a command needs something outside; "
+    "and use the network, but the rest of the home directory, local services and "
+    "environment variables holding keys or tokens are hidden, and nothing outside the "
+    "workspace can be changed. Set `dangerouslyDisableSandbox` to true only when a command needs something outside; "
     "the user is then asked first, so say why."
 )
 # Variables whose names look like secrets (API keys, tokens, passwords) are left out of a
 # sandboxed command's environment: it runs unasked and may use the network.
 SECRET_NAME = re.compile(r"KEY|TOKEN|SECRET|PASSW|CREDENTIAL", re.IGNORECASE)
-SANDBOX_CHECK_TIMEOUT = 5.0  # seconds for the one test run of the sandbox at startup
 FILE_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="Read",
@@ -281,38 +289,6 @@ def sandbox_environment(environ: Mapping[str, str]) -> dict[str, str]:
     return {k: v for k, v in environ.items() if not SECRET_NAME.search(k)}
 
 
-def _sandbox(bwrap: str, root: Path, home: Path) -> list[str]:
-    """The bubblewrap command line that confines a shell command to `root`.
-
-    The whole system is visible read-only, so installed programs run; home directories,
-    /tmp and the session's runtime directory are replaced by empty ones, and only the
-    workspace is bound back, writable. The network is left as it is."""
-    hidden = [p for p in (Path("/home"), Path("/root"), Path("/run/user"), Path("/tmp"), home)
-              if p.is_dir()]
-    command = [bwrap, "--ro-bind", "/", "/"]
-    for path in hidden:
-        command += ["--tmpfs", str(path)]
-    return command + ["--dir", str(home), "--bind", str(root), str(root), "--dev", "/dev",
-                      "--proc", "/proc", "--unshare-pid", "--die-with-parent",
-                      "--chdir", str(root)]
-
-
-def _bwrap(root: Path, home: Path) -> str | None:
-    """bubblewrap, if a sandbox works here (not when it is missing, user namespaces are
-    disabled, or Kaden itself runs in a sandbox). Blocking: run it where module
-    factories run, off the event loop."""
-    bwrap = shutil.which("bwrap")
-    if bwrap is None:
-        return None
-    try:
-        works = subprocess.run([*_sandbox(bwrap, root, home), "true"], check=False,
-                               capture_output=True, timeout=SANDBOX_CHECK_TIMEOUT
-                               ).returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        works = False
-    return bwrap if works else None
-
-
 class ShellFilesTools(Tools):
     """`shell_timeout`: hard limit per command (None = runtime default, math.inf = none).
     `shell_stall_timeout`: seconds without output before the command counts as hung."""
@@ -330,7 +306,7 @@ class ShellFilesTools(Tools):
     ) -> None:
         """`account`: the instance's own Bilibili account (its data folder's); none without."""
         self._default = Path(root).expanduser().resolve()
-        self._bwrap = _bwrap(self._default, Path.home().resolve())
+        self._found = sandbox.find()  # this system's, if it works here
         # Files the user attached: the sandbox shows each, read-only, where it is.
         self._attached: dict[Path, None] = {}
         self._shell_spec = replace(SHELL, timeout=shell_timeout,
@@ -364,8 +340,7 @@ class ShellFilesTools(Tools):
         home = Path.home().resolve()
         # A workspace that is or holds the home directory (or is /) is no boundary.
         self._bounded = root != home and root not in home.parents
-        self._sandbox = (_sandbox(self._bwrap, root, home)
-                         if self._bwrap is not None and self._bounded else None)
+        self._sandbox = self._found if self._bounded else None
         shell = self._shell_spec
         if self._sandbox is not None:
             shell = replace(shell, description=shell.description + SANDBOX_NOTE)
@@ -416,13 +391,6 @@ class ShellFilesTools(Tools):
         block = await asyncio.to_thread(attachments.read, self._path(str(path)))
         self._attached[self._path(str(path)).resolve()] = None
         return block
-
-    def _granted(self) -> list[str]:
-        """The sandbox's read-only binds for the files the user attached outside the
-        workspace, which it binds writable already."""
-        return [arg for path in self._attached
-                if self.root not in path.parents
-                for arg in ("--ro-bind-try", str(path), str(path))]
 
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput:
         if call.name in bili_account.NAMES and self._account is not None:
@@ -580,6 +548,17 @@ class ShellFilesTools(Tools):
     # ── shell ────────────────────────────────────────────────────────────
 
     async def _shell(self, args: dict[str, Any], ctx: ToolContext) -> str:
+        if self._sandbox is None or args.get("dangerouslyDisableSandbox"):
+            return await self._command(args, ctx, None)
+        tmp = Path(await asyncio.to_thread(tempfile.mkdtemp, prefix="kaden-sandbox-")).resolve()
+        try:
+            return await self._command(args, ctx, tmp)
+        finally:
+            await asyncio.to_thread(shutil.rmtree, tmp, True)
+
+    async def _command(self, args: dict[str, Any], ctx: ToolContext, tmp: Path | None) -> str:
+        """The command, in the sandbox with `tmp` as its temporary folder; without one,
+        as the user."""
         # Our own pipe rather than PIPE: asyncio's Process.wait() also waits for its pipes
         # to close, which never happens while a backgrounded child holds stdout.
         read_fd, write_fd = os.pipe()
@@ -591,11 +570,15 @@ class ShellFilesTools(Tools):
                   f"printf '\\n%s%s\\n' '{self._where}' \"$(pwd -P)\"\n"
                   "exit $__kaden_status\n")
         try:
-            sandbox = [] if self._sandbox is None or args.get("dangerouslyDisableSandbox") else [
-                *self._sandbox[:-2], *self._granted(), "--chdir", str(folder)]
+            command = ["sh", "-c", script]
+            if tmp is not None:
+                assert self._sandbox is not None
+                command = await asyncio.to_thread(self._sandbox.wrap, command, root=self.root,
+                                                  tmp=tmp, granted=list(self._attached))
             proc = await asyncio.create_subprocess_exec(
-                *sandbox, "sh", "-c", script,
-                env=sandbox_environment(os.environ) if sandbox else None,
+                *command,
+                env=None if tmp is None else {**sandbox_environment(os.environ),
+                                              "TMPDIR": str(tmp)},
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=write_fd,
                 stderr=asyncio.subprocess.STDOUT,

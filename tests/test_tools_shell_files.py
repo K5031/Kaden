@@ -8,7 +8,13 @@ from pathlib import Path
 import pytest
 
 from kaden.api import InstancePaths, ToolCall
-from kaden.tools.shell_files import MAX_OUTPUT_CHARS, ShellFilesTools, bilibili, factory
+from kaden.tools.shell_files import (
+    MAX_OUTPUT_CHARS,
+    ShellFilesTools,
+    bilibili,
+    factory,
+    sandbox,
+)
 from tests.conformance.tools_suite import RecordingContext, ToolCases, ToolsConformance
 
 # Two background children plus a ticking loop: cancellation must reach all of them.
@@ -377,7 +383,8 @@ async def test_a_file_is_changed_only_as_it_was_read(tools, workspace, tmp_path)
 
 # ── confined to the work folder ──
 
-BWRAP = pytest.mark.skipif(shutil.which("bwrap") is None, reason="needs bubblewrap")
+SANDBOX = pytest.mark.skipif(sandbox.find() is None,
+                             reason="needs a sandbox (bubblewrap, Seatbelt)")
 
 
 async def confined(tools: ShellFilesTools, name: str, **args) -> bool:
@@ -401,15 +408,20 @@ async def test_file_calls_are_confined_by_path(tools, workspace, tmp_path):
     assert not await confined(tools, "nope")
 
 
-@BWRAP
+@SANDBOX
 async def test_a_sandboxed_command_cannot_leave_the_workspace(tools, workspace, tmp_path):
     assert await confined(tools, "Bash", command="true")
     assert not await confined(tools, "Bash", command="true", dangerouslyDisableSandbox=True)
     outside = tmp_path / "outside.txt"
+    services = "".join(f"test -S '{path}' && echo 'SOCKET {path}'; "
+                       for path in sandbox.local_sockets(Path("/run")))
     out = await run(tools, tmp_path, "Bash", command=(
         f"cat hello.txt; echo in > inside.txt; echo out > {outside}; "
-        'echo "home:$(ls -A ~ | wc -l)"; test -e /run/user/$(id -u)/bus && echo BUS; true'))
+        'echo "home:$(ls -A ~ 2>/dev/null | wc -l | tr -d " ")"; '
+        "test -e /run/user/$(id -u)/bus && echo BUS; "
+        f"test -S /run/dbus/system_bus_socket && echo SYSTEM; {services}true"))
     assert "hello" in out.content and "home:0" in out.content and "BUS" not in out.content
+    assert "SYSTEM" not in out.content and "SOCKET" not in out.content
     assert (workspace / "inside.txt").read_text() == "in\n"
     assert not outside.exists()
 
@@ -417,7 +429,7 @@ async def test_a_sandboxed_command_cannot_leave_the_workspace(tools, workspace, 
     assert not out.is_error and outside.read_text() == "out\n"
 
 
-@BWRAP
+@SANDBOX
 async def test_a_file_the_user_attached_is_readable_in_the_sandbox(tools, workspace, tmp_path):
     """Attaching is the user's act, so the sandbox shows that one file, read-only, where it
     is: the agent can copy a picture it was sent. Its neighbours stay hidden."""
@@ -536,7 +548,7 @@ async def test_use_folder_moves_every_tool_to_that_folder(tools, workspace, tmp_
         "     1\thello\n     2\tworld\n")
 
 
-@BWRAP
+@SANDBOX
 async def test_the_sandbox_follows_the_folder(tools, workspace, tmp_path):
     other = tmp_path / "other"
     await tools.use_folder(other)
@@ -576,7 +588,7 @@ def test_secret_variables_are_left_out_of_the_sandbox():
                    "KADEN_PERMISSION_CEILING": "auto", "ANTHROPIC_BASE_URL": "https://x"}
 
 
-@BWRAP
+@SANDBOX
 async def test_a_sandboxed_command_cannot_read_keys_from_the_environment(
         tools, tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-secret")
