@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import os
 import shutil
@@ -188,7 +189,8 @@ async def test_read_numbers_its_lines_as_cat_n_does(tools, tmp_path):
 
 async def test_read_file_stops_at_its_limits_without_reading_everything(tools, workspace,
                                                                          tmp_path):
-    (workspace / "zero").symlink_to("/dev/zero")  # endless, with no line breaks
+    (workspace / "zero").touch()
+    os.truncate(workspace / "zero", 2 ** 40)  # a terabyte without line breaks, all a hole
     out = await asyncio.wait_for(run(tools, tmp_path, "Read", file_path="zero"), 5)
     assert "[truncated at" in out.content
 
@@ -696,3 +698,108 @@ async def test_glob_keeps_the_newest_when_there_are_too_many(tools, workspace, t
     out = await run(tools, tmp_path, "Glob", pattern="*.md")
     assert out.content.splitlines()[:2] == ["z.md", "c.md"]
     assert "truncated" in out.content
+
+
+# ── on any system ──
+
+def without_proc(monkeypatch) -> None:
+    """As on macOS, which has no /proc."""
+    real = os.readlink
+
+    def readlink(path, *args, **kwargs):
+        if str(path).startswith("/proc/"):
+            raise FileNotFoundError(path)
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "readlink", readlink)
+
+
+async def test_confined_file_calls_work_without_proc(tools, workspace, tmp_path, monkeypatch):
+    without_proc(monkeypatch)
+    notebook(workspace / "sales.ipynb")
+
+    async def confined_run(name: str, **args) -> str:
+        call = ToolCall("c", name, args)
+        assert await tools.confined(call)
+        out = await tools.execute(call, ctx(tmp_path, confined=True))
+        assert not out.is_error, out.content
+        return out.content
+
+    assert "hello" in await confined_run("Read", file_path="hello.txt")
+    await confined_run("Write", file_path="new/note.txt", content="one\n")
+    await confined_run("Edit", file_path="hello.txt", old_string="world", new_string="there")
+    await confined_run("Read", file_path="sales.ipynb")
+    await confined_run("NotebookEdit", notebook_path="sales.ipynb", cell_id="load",
+                       new_source="x = 1")
+    assert "pkg/mod.py" in await confined_run("Glob", pattern="**/*.py")
+    assert "pkg/mod.py" in await confined_run("Grep", pattern="answer")
+    assert (workspace / "new/note.txt").read_text() == "one\n"
+    assert (workspace / "hello.txt").read_text() == "hello\nthere\n"
+
+
+@pytest.mark.parametrize("confined_call", [False, True])
+async def test_a_pipe_or_device_is_refused_not_waited_on(tools, workspace, tmp_path,
+                                                         confined_call):
+    pipe = workspace / "pipe"
+    os.mkfifo(pipe)  # nothing ever writes to it
+    try:
+        for path in ("pipe",) if confined_call else ("pipe", "/dev/zero"):
+            out = await asyncio.wait_for(tools.execute(ToolCall(
+                "c", "Read", {"file_path": path}), ctx(tmp_path, confined=confined_call)), 5)
+            assert out.is_error and "not a regular file" in out.content
+    finally:  # a reader left waiting for a writer is let go
+        with contextlib.suppress(OSError):
+            os.close(os.open(pipe, os.O_WRONLY | os.O_NONBLOCK))
+
+
+async def test_an_edit_keeps_windows_line_endings(tools, workspace, tmp_path):
+    path = workspace / "crlf.txt"
+    path.write_bytes(b"one\r\ntwo\r\nthree\r\n")
+    assert (await run(tools, tmp_path, "Read", file_path="crlf.txt")).content == (
+        "     1\tone\n     2\ttwo\n     3\tthree\n")
+    out = await run(tools, tmp_path, "Edit", file_path="crlf.txt", old_string="one\ntwo",
+                    new_string="1\n2")
+    assert not out.is_error, out.content
+    assert path.read_bytes() == b"1\r\n2\r\nthree\r\n"
+    out = await run(tools, tmp_path, "Edit", file_path="crlf.txt", old_string="2\r\nthree",
+                    new_string="3")
+    assert not out.is_error, out.content
+    assert path.read_bytes() == b"1\r\n3\r\n"
+
+
+async def test_an_edit_leaves_mixed_line_endings_as_they_are(tools, workspace, tmp_path):
+    path = workspace / "mixed.txt"
+    path.write_bytes(b"a\r\nb\nc\r\n")
+    await run(tools, tmp_path, "Read", file_path="mixed.txt")
+    out = await run(tools, tmp_path, "Edit", file_path="mixed.txt", old_string="b",
+                    new_string="B")
+    assert not out.is_error, out.content
+    assert path.read_bytes() == b"a\r\nB\nc\r\n"
+
+
+async def test_a_notebook_edit_keeps_windows_line_endings(tools, workspace, tmp_path):
+    path = workspace / "sales.ipynb"
+    notebook(path)
+    path.write_bytes(json.dumps(json.loads(path.read_text()), indent=1).replace(
+        "\n", "\r\n").encode())
+    await run(tools, tmp_path, "Read", file_path="sales.ipynb")
+    out = await run(tools, tmp_path, "NotebookEdit", notebook_path="sales.ipynb",
+                    cell_id="load", new_source="x = 1")
+    assert not out.is_error, out.content
+    raw = path.read_bytes()
+    assert raw.count(b"\n") == raw.count(b"\r\n") > 1
+    assert json.loads(raw)["cells"][1]["source"] == "x = 1"
+
+
+async def test_a_character_split_between_reads_of_the_output_is_kept_whole():
+    from kaden.tools.shell_files import _OutputBuffer, _pump
+
+    stream, out = asyncio.StreamReader(), _OutputBuffer(1000)
+    pumping = asyncio.create_task(_pump(stream, out, RecordingContext("c")))
+    encoded = "naïve 好".encode()
+    for byte in encoded:
+        stream.feed_data(bytes([byte]))
+        await asyncio.sleep(0)
+    stream.feed_eof()
+    await pumping
+    assert out.text() == "naïve 好"

@@ -55,9 +55,12 @@ after the user allows it.
 
 A sandboxed command, which runs unasked, can create links in the work folder that point
 anywhere, and the file tools run outside the sandbox. So a call judged confined, which
-`execute` is told (`ToolContext.confined`), checks the file it actually opened (`ShellFilesTools._open`, by `/proc/self/fd`), not only the path
-it was given: a link swapped in after the check is refused. `Grep` reads regular
-files only and skips links, as ripgrep does by default.
+`execute` is told (`ToolContext.confined`), opens its file from the work folder down, one
+folder at a time, refusing a link at each step (`ShellFilesTools._open`, `O_NOFOLLOW`
+with `dir_fd`, the same on Linux and macOS), not only by the path it was given: a link
+swapped in after the check is refused. The file tools open regular files only, so a pipe
+or a device is refused rather than waited on. `Grep` reads regular files only and skips
+links, as ripgrep does by default.
 
 ### Shell: a sandbox
 

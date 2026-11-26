@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import bisect
+import codecs
 import contextlib
 import io
 import json
@@ -87,9 +88,6 @@ FILE_TYPES: dict[str, tuple[str, ...]] = {
 class ToolError(Exception):
     """Expected failure reported to the model as an is_error output."""
 
-
-# Set while a call that `confined` judged inside runs (ToolContext.confined): its files must
-# really be in the workspace, wherever a link that appeared since the check leads.
 
 
 def _object(properties: dict[str, Any], required: Sequence[str] = ()) -> dict[str, Any]:
@@ -496,21 +494,54 @@ class ShellFilesTools(Tools):
         return resolved
 
     def _open(self, path: Path, flags: int, ctx: ToolContext) -> int:
-        """os.open, for a call `confined` allowed only if the file opened is in the
-        workspace: checked on the open file, so a link swapped in after the check (or
-        between this check and the read or write) cannot lead outside."""
-        if not ctx.confined:
-            return os.open(path, flags, 0o644)
-        fd = os.open(self._within(path, ctx), flags | os.O_NOFOLLOW, 0o644)
+        """os.open of a regular file (or, with O_DIRECTORY, a folder): a pipe or a device
+        is refused rather than waited on. For a call `confined` allowed, the file is
+        reached from the workspace one folder at a time, none of them a link, so a link
+        swapped in after the check (or during the open) cannot lead outside."""
+        folder = flags & os.O_DIRECTORY
+        flags |= 0 if folder else os.O_NONBLOCK  # opening a pipe would wait for a writer
+        if ctx.confined:
+            fd = self._open_inside(path, self._within(path, ctx), flags)
+        else:
+            fd = os.open(path, flags, 0o644)
+        if not folder:
+            try:
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    raise ToolError(f"{self._display(path)} is not a regular file")
+                os.set_blocking(fd, True)
+            except BaseException:
+                os.close(fd)
+                raise
+        return fd
+
+    def _open_inside(self, path: Path, resolved: Path, flags: int) -> int:
+        """`resolved`, a path in the workspace without links, opened from the workspace
+        down, each step refusing a link (O_NOFOLLOW): what is opened is in the workspace,
+        whatever is swapped in meanwhile."""
+        *folders, last = ("", *resolved.relative_to(self.root).parts)
+        fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
         try:
-            inside = Path(os.readlink(f"/proc/self/fd/{fd}")).is_relative_to(self.root)
-        except OSError:
+            for name in folders[1:]:
+                step = self._step(path, name, os.O_RDONLY | os.O_DIRECTORY, fd)
+                os.close(fd)
+                fd = step
+            if not last:  # the workspace itself
+                return fd if flags & os.O_DIRECTORY else self._step(path, ".", flags, fd)
+            opened = self._step(path, last, flags, fd)
+        except BaseException:
             os.close(fd)
             raise
-        if not inside:
-            os.close(fd)
-            raise self._outside(path)
-        return fd
+        os.close(fd)
+        return opened
+
+    def _step(self, path: Path, name: str, flags: int, within: int) -> int:
+        try:
+            return os.open(name, flags | os.O_NOFOLLOW, 0o644, dir_fd=within)
+        except OSError:
+            with contextlib.suppress(OSError):
+                if stat.S_ISLNK(os.stat(name, dir_fd=within, follow_symlinks=False).st_mode):
+                    raise self._outside(path) from None
+            raise
 
     def _open_folder(self, path: Path, ctx: ToolContext) -> int:
         """The folder, open: what is walked is what was opened, whatever is put at its
@@ -777,10 +808,12 @@ class ShellFilesTools(Tools):
         cell_id, source, kind = args.get("cell_id"), args["new_source"], args.get("cell_type")
 
         def edit() -> str:
-            with open(self._open(path, os.O_RDWR, ctx), "r+", encoding="utf-8") as f:
+            with open(self._open(path, os.O_RDWR, ctx), "r+", encoding="utf-8",
+                      newline="") as f:
                 self._as_read(path, ctx)
+                raw = f.read()
                 try:
-                    book = json.load(f)
+                    book = json.loads(raw)
                 except json.JSONDecodeError as e:
                     raise ToolError(f"{self._display(path)} is not a notebook: {e}") from None
                 cells = book.get("cells")
@@ -815,10 +848,10 @@ class ShellFilesTools(Tools):
                     if cell.get("cell_type") == "code":
                         cell["outputs"], cell["execution_count"] = [], None
                     done = f"Replaced cell {cell_id}"
+                text = json.dumps(book, indent=1, ensure_ascii=False) + "\n"
                 f.seek(0)
                 f.truncate()
-                json.dump(book, f, indent=1, ensure_ascii=False)
-                f.write("\n")
+                f.write(text.replace("\n", "\r\n") if _crlf(raw) else text)
             self._saw(path, ctx)
             return f"{done} in {self._display(path)}"
 
@@ -854,7 +887,8 @@ class ShellFilesTools(Tools):
         def write() -> None:
             existed = os.path.lexists(path)
             self._within(path.parent, ctx).mkdir(parents=True, exist_ok=True)
-            with open(self._open(path, os.O_WRONLY | os.O_CREAT, ctx), "w", encoding="utf-8") as f:
+            with open(self._open(path, os.O_WRONLY | os.O_CREAT, ctx), "w", encoding="utf-8",
+                      newline="") as f:
                 if existed:  # checked once it is open: where it leads is refused first
                     self._as_read(path, ctx)
                 f.truncate()
@@ -870,14 +904,21 @@ class ShellFilesTools(Tools):
         replace_all = args.get("replace_all", False)
 
         def edit() -> int:
-            with open(self._open(path, os.O_RDWR, ctx), "r+", encoding="utf-8") as f:
+            with open(self._open(path, os.O_RDWR, ctx), "r+", encoding="utf-8",
+                      newline="") as f:
                 self._as_read(path, ctx)
                 text = f.read()
-                count = text.count(old)
+                crlf = _crlf(text)  # edited with LF, as Read shows it, and written back
+                if crlf:
+                    text = text.replace("\r\n", "\n")
+                find, put = (old.replace("\r\n", "\n"), new.replace("\r\n", "\n")) if crlf \
+                    else (old, new)
+                count = text.count(find)
                 if count == 1 or (count > 1 and replace_all):
+                    text = text.replace(find, put)
                     f.seek(0)
                     f.truncate()
-                    f.write(text.replace(old, new))
+                    f.write(text.replace("\n", "\r\n") if crlf else text)
             if count == 0:
                 raise ToolError(f"old_string not found in {self._display(path)}")
             if count > 1 and not replace_all:
@@ -1005,8 +1046,9 @@ async def _pump(stream: asyncio.StreamReader, out: _OutputBuffer, ctx: ToolConte
     starts with `hidden` is never shown."""
     last_report = 0.0
     pending: str | None = None
+    decoder = codecs.getincrementaldecoder("utf-8")("replace")  # a read may end mid-character
     while chunk := await stream.read(65536):
-        text = chunk.decode("utf-8", "replace")
+        text = decoder.decode(chunk)
         out.append(text)
         lines = [line for line in re.split(r"[\r\n]", text)
                  if line.strip() and not (hidden and line.startswith(hidden))]
@@ -1016,6 +1058,7 @@ async def _pump(stream: asyncio.StreamReader, out: _OutputBuffer, ctx: ToolConte
         if pending is not None and now - last_report >= PROGRESS_INTERVAL:
             ctx.progress(pending)
             pending, last_report = None, now
+    out.append(decoder.decode(b"", final=True))
     if pending is not None:
         ctx.progress(pending)
 
@@ -1178,6 +1221,11 @@ def _output_text(output: dict[str, Any]) -> str:
     if output.get("output_type") == "error":
         return f"{output.get('ename', 'Error')}: {output.get('evalue', '')}"
     return "[image]" if any(k.startswith("image/") for k in data) else ""
+
+
+def _crlf(text: str) -> bool:
+    """Whether every line ends with CR LF; a file that mixes endings is edited as it is."""
+    return "\r\n" in text and text.count("\n") == text.count("\r\n")
 
 
 def _version(path: Path) -> tuple[int, int, int]:
