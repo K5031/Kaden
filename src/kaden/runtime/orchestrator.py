@@ -216,6 +216,7 @@ PLAN_MODE_PROMPT = (
     "are refused. Read and search to understand the task, ask with AskUserQuestion where "
     "the approach is open, then present a concise plan with ExitPlanMode and wait for the "
     "user's approval.")
+KNOWN_OPS = 200  # finished operations TaskOutput still finds; their outcome is delivered
 DEFER_OVER_CHARS = 40_000  # deferrable tools' definitions together, about 10k tokens
 
 
@@ -460,7 +461,8 @@ class Runtime:
         self._came_in: list[str] = []
         self._pending_results: list[tuple[OperationResult, ToolFinished]] = []
         self._ops: dict[CallId, Operation] = {}  # running
-        self._known_ops: dict[CallId, Operation] = {}  # launched by this process
+        # Launched for the open conversation (TaskOutput), the newest KNOWN_OPS finished.
+        self._known_ops: dict[CallId, Operation] = {}
         # What waits on the person (Prompt), by id, and what each reply settles.
         self._open: dict[str, _Open] = {}
         # Tool name -> whether the grant also covers calls that reach outside the work
@@ -639,6 +641,7 @@ class Runtime:
         go unconfirmed, so their watches see them again."""
         await self._withdraw_proposals()
         await self._end_watch_tasks()
+        self._known_ops.clear()  # nothing runs: start() refuses while something does
         if self._conversation is not None and (self._inbox or self._backlog):
             try:
                 await self._deliver_inbox()
@@ -2562,6 +2565,9 @@ class Runtime:
                        on_late=self._on_late)
         self._ops[call.id] = op
         self._known_ops[call.id] = op
+        finished = [i for i, known in self._known_ops.items() if known.result is not None]
+        for old in finished[:max(0, len(finished) - KNOWN_OPS)]:
+            del self._known_ops[old]
         if call.id not in self._uncounted:
             self._budget.begin_activity()
         self._watch_duration()

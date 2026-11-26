@@ -123,3 +123,37 @@ async def test_stop_while_background_outcomes_are_saved_starts_no_cycle(make: An
     assert len([r for r in h.core.requests if not r.maintenance]) == answered
     assert h.runtime.snapshot().state == AgentState.STOPPED
 
+
+
+async def test_taskoutput_finds_only_the_open_conversations_tasks(make: Any) -> None:
+    tools = FakeTools()
+    tools.slow("bg", 0.05)
+    h: Harness = await make(core=ScriptedCore([
+        Step(calls=[call("bg", id="bg")]), Step(text="ok"), Step(text="done"),
+        Step(calls=[call("TaskOutput", {"task_id": "bg", "block": False}, id="out")]),
+        Step(text="ok")]), tools=tools, initial_wait_s=0)
+    await h.start()
+    await h.turn("go")
+    await eventually(lambda: len(h.core.requests) >= 3  # its outcome was answered
+                     and h.runtime.snapshot().state == AgentState.IDLE)
+    await h.start()
+    await h.turn("what became of bg?")
+    assert (await h.results())["out"].content == "Unknown task bg."
+
+
+async def test_taskoutput_forgets_the_oldest_finished_tasks(make: Any, monkeypatch: Any
+                                                            ) -> None:
+    monkeypatch.setattr("kaden.runtime.orchestrator.KNOWN_OPS", 1)
+    tools = FakeTools()
+    tools.instant("t")
+    h: Harness = await make(core=ScriptedCore([
+        Step(calls=[call("t", id="a")]), Step(calls=[call("t", id="b")]),
+        Step(calls=[call("t", id="c")]),
+        Step(calls=[call("TaskOutput", {"task_id": "a", "block": False}, id="oa"),
+                    call("TaskOutput", {"task_id": "c", "block": False}, id="oc")]),
+        Step(text="ok")]), tools=tools)
+    await h.start()
+    await h.turn("go")
+    results = await h.results()
+    assert results["oa"].content == "Unknown task a."
+    assert "finished with status ok" in results["oc"].content
