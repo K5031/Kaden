@@ -419,23 +419,24 @@ def frontend_loop(spec: ModuleSpec) -> EventLoop:
     return getattr(factory, "event_loop", asyncio.run)
 
 
-async def launch(args: Launch, launcher: str, config: InstanceConfig, *,
+async def launch(args: Launch, launcher: str, config: InstanceConfig | None = None, *,
                  restart: Restart | None = None,
                  runs_here: Callable[[InstanceConfig], bool] = lambda config: True,
                  ) -> Restart | None:
-    """Run instances until the user quits, the first from `config` (built for
-    `restart`), each next one built off the event loop. A Restart is returned for the
-    caller when it is to a frontend of another kind, or to one that `runs_here` says needs
+    """Run instances until the user quits, the first from `config` if given (built for
+    `restart`), every other built off the event loop. A Restart is returned for the caller
+    when it is to a frontend of another kind, or to one that `runs_here` says needs
     another loop."""
     while True:
+        if config is None:  # off the loop: building it reads the keychain, which may block
+            config = await asyncio.to_thread(load_config, args, launcher=launcher,
+                                             restart=restart)
         if not runs_here(config):
             return restart
         restart = await run_instance(config, fallback=LAUNCHER_FRONTENDS.get(launcher))
         if restart is None or restart.frontend_kind != launcher:
             return restart
-        # Off the loop: building it reads the keychain, which may block or ask.
-        config = await asyncio.to_thread(load_config, args, launcher=launcher,
-                                         restart=restart)
+        config = None
 
 
 async def _fail(error: SystemExit) -> None:
@@ -516,7 +517,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                   message="Kaden opens in the desktop app.")
         return
     try:
-        restart = run_frontends(args, TERMINAL, config)
+        # Built for this launcher only with --headless; a terminal frontend chosen in
+        # Settings needs its own.
+        restart = run_frontends(args, TERMINAL, config if args.headless else None)
     except ModuleLoadError as e:
         print(f"kaden: {e}", file=sys.stderr)
         raise SystemExit(1) from None
