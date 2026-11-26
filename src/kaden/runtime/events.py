@@ -21,6 +21,7 @@ from kaden.api import (
     BLOCK_TYPES,
     ConversationUpdated,
     EventEnvelope,
+    HelpNeeded,
     MemoriesChanged,
     MessageCommitted,
     MessageQueued,
@@ -41,6 +42,7 @@ from kaden.api import (
 # High-volume events stay out of the decision log.
 _UNLOGGED = (TextDelta, ReasoningDelta, ToolCallDelta, ToolProgress)
 _BLOCK_TAGS = {kind: tag for tag, kind in BLOCK_TYPES.items()}
+_COUNTED_SETTINGS = ("mcp_servers", "permission_rules", "tool_settings")
 
 
 def _logged(event: RuntimeEvent) -> dict[str, Any]:
@@ -64,15 +66,38 @@ def _logged(event: RuntimeEvent) -> dict[str, Any]:
                     "name": prompt.call.name if prompt.call else None}
         case PromptClosed(prompt_id=prompt_id, reply=reply):
             return {"prompt_id": prompt_id, "answered": reply is not None}
+        case HelpNeeded(question=question):
+            return {"asked": question is not None}
     data = dataclasses.asdict(event)
     match event:
         case SettingsChanged():
-            data["settings"]["system_prompt_chars"] = len(data["settings"].pop("system_prompt"))
+            settings = data["settings"]
+            settings["system_prompt_chars"] = len(settings.pop("system_prompt"))
+            for key in _COUNTED_SETTINGS:  # command lines, rules, values: how many
+                settings[key] = len(settings[key])
         case MemoriesChanged():
             data["saved"] = len(data["saved"])  # how many notes, not their titles
         case ConversationUpdated():
-            del data["info"]["title"], data["info"]["preview"]
+            info = data["info"]
+            del info["title"], info["preview"]
+            if info["duty"] is not None:
+                del info["duty"]["instruction"]
+            info["plan"] = len(info["plan"])
     return data
+
+
+def settings_saved(saved: dict[str, Any]) -> dict[str, Any]:
+    """What a settings change saved, as the decision log keeps it: lists by how many,
+    the tool settings by name, the system prompt by its length."""
+    logged: dict[str, Any] = {}
+    for key, value in saved.items():
+        if key == "system_prompt":
+            logged["system_prompt_chars"] = len(value)
+        elif key == "tool_settings":
+            logged[key] = sorted(value)
+        else:
+            logged[key] = len(value) if isinstance(value, list) else value
+    return logged
 
 
 class EventLog:

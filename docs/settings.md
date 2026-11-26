@@ -159,7 +159,7 @@ Everything is in Kaden's data folder, `~/.kaden` (or `--data-dir`, or `$KADEN_DA
 | `memory-files.db`, `projects/` | The same, with the files-per-project memory |
 | `skills/` | Your own [skills](concepts.md#skills) |
 | `usage.json` | What has been spent so far; delete it, while Kaden is closed, to start counting from zero |
-| `events.jsonl` | Activity log of what Kaden did and when; it holds no message text, tool input or tool output |
+| `events.jsonl` | Activity log of what Kaden did and when; it holds no message text, tool input or tool output, and no duty, plan, question, MCP command or permission rule text |
 
 Settings from the screen override `config.toml`, and command-line options override both.
 To see the result, with defaults filled in and secrets hidden:

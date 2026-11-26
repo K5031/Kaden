@@ -140,7 +140,7 @@ from kaden.runtime.config import (
     Restart,
     RuntimeConfig,
 )
-from kaden.runtime.events import EventBus, EventLog
+from kaden.runtime.events import EventBus, EventLog, settings_saved
 from kaden.runtime.instance import InstanceLock
 from kaden.runtime.modules import ModuleSettings
 from kaden.runtime.operations import Context, Operation
@@ -1095,10 +1095,8 @@ class Runtime:
                                          permissions=permissions)
         model_changed = model != self._model
         self._model = model
-        self._log.decision(
-            "settings", changed=changed, loosened=loosened,
-            **{k: v for k, v in saved.items() if k != "system_prompt"},
-            **({"system_prompt_chars": len(u.system_prompt)} if u.system_prompt else {}))
+        self._log.decision("settings", changed=changed, loosened=loosened,
+                           **settings_saved(saved))
         if model_changed and model is not None:
             self._emit(ModelSelected(model))
         settings = await self.settings()
