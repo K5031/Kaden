@@ -269,8 +269,9 @@ It can also have an account of its own, for example Continuous:
    posted from then on is new.
 
 Logged in, it can also send private messages, to an account by its UID or a link to its
-space page, and read the messages people send it. Its inbox is watched for it: within
-20 seconds of someone writing, it gets the message. Whose messages wake it is a
+space page, and read the messages people send it. Its inbox is watched for it: while a
+conversation is going (a message either way in the last five minutes) it gets a new
+message within about 5 seconds, otherwise within 30. Whose messages wake it is a
 setting, **Woken by Bilibili messages** (Settings → Tools, or for Continuous the gear in
 their view): from accounts it follows (the default), from anyone, or from no one. The rest
 wait unread until it reads its messages, and it is told how many are waiting. What was

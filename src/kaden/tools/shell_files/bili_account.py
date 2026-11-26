@@ -42,7 +42,9 @@ FEED_FILE = "bilibili-feed.json"  # in the data folder: the posts delivered, and
 # much: Bilibili may list a video a while after its time. A new follow's past uploads are
 # older than that, and are not news.
 LATE_S = 3600.0
-MESSAGE_CHECK_S = 20.0  # while watching the inbox: how often it is read
+MESSAGE_CHECK_S = 30.0  # while watching the inbox and no one is talking: how often it is read
+MESSAGE_ACTIVE_S = 5.0  # how often while a conversation is going
+ACTIVE_FOR_S = 300.0  # a conversation is going this long after a message either way
 MESSAGES_FILE = "bilibili-messages.json"  # in the data folder: the last delivered, by sender
 FIRST_MESSAGES = 10  # messages shown the first time
 FOLLOWS_S = 600.0  # whom it follows, read again after this
@@ -171,14 +173,16 @@ class Account:
                  store: Store | None = None,
                  poll_s: float = POLL_S, code_s: float = CODE_S,
                  feed_check_s: float = FEED_CHECK_S, batch_s: float = BATCH_S,
-                 message_check_s: float = MESSAGE_CHECK_S, wake: str = "follows") -> None:
+                 message_check_s: float = MESSAGE_CHECK_S,
+                 message_active_s: float = MESSAGE_ACTIVE_S, wake: str = "follows") -> None:
         if wake not in WAKE:
             raise ValueError(f"bilibili_wake is one of {', '.join(WAKE)}, not {wake!r}")
         self._wake = wake
         self._follows: tuple[float, set[int]] | None = None  # when read, and whom
         self._data_dir, self._name = data_dir, login_name(data_dir)
         self._names: dict[int, str] = {}  # accounts' names, by UID, as read
-        self._message_check_s = message_check_s
+        self._message_check_s, self._message_active_s = message_check_s, message_active_s
+        self._talked_at = float("-inf")  # the last message sent or read, either way
         self._transport = transport
         self._store = store or Keychain()
         self._poll_s, self._code_s = poll_s, code_s
@@ -469,6 +473,7 @@ class Account:
             "msg[timestamp]": int(time.time()), "msg[new_face_version]": 0,
             "msg[dev_id]": str(uuid.uuid4()).upper(), "from_firework": 0, "build": 0,
             "mobi_app": "web", "csrf_token": csrf, "csrf": csrf})
+        self._talked_at = time.monotonic()
         return f"Sent to {await self._name_of(to)} ({to})."
 
     async def messages(self, args: dict[str, Any]) -> str:
@@ -480,6 +485,7 @@ class Account:
             await asyncio.to_thread(self._mark_messages, written)
         if not written:
             return "Nothing new in your Bilibili messages."
+        self._talked_at = time.monotonic()
         return await self._messages_text(written)
 
     async def watch_messages(self) -> ToolOutput:
@@ -491,7 +497,7 @@ class Account:
                 marks = await self._inbox_marks()
                 await asyncio.to_thread(self._write_message_marks, marks)
             while not (written := await self._incoming_or_none(marks, waiting)):
-                await asyncio.sleep(self._message_check_s)
+                await asyncio.sleep(self._message_wait())
             text = await self._messages_text(written)
         except LoginGone as e:
             return ToolOutput(str(e), is_error=True, retry=False)
@@ -499,7 +505,13 @@ class Account:
             n = len(waiting)
             text += (f"\n{n} more conversation{'s' if n > 1 else ''} waiting, from accounts "
                      "you don't follow (BiliMessages reads them).")
+        self._talked_at = time.monotonic()
         return ToolOutput(text, confirm=lambda: self._mark_messages(written))
+
+    def _message_wait(self) -> float:
+        """Read often while a conversation is going, seldom when no one is talking."""
+        talking = time.monotonic() - self._talked_at < ACTIVE_FOR_S
+        return self._message_active_s if talking else self._message_check_s
 
     async def _incoming_or_none(self, marks: dict[str, int] | None, waiting: list[int]
                                 ) -> list[dict[str, Any]]:

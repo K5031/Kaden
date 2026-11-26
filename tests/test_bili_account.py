@@ -682,3 +682,25 @@ async def test_a_new_follows_old_videos_are_not_new(tmp_path):
     assert "Lyrebirds 3" in fired.content
     assert "Lyrebirds 1" not in fired.content and "Lyrebirds 2" not in fired.content
     await acct.aclose()
+
+
+async def test_the_inbox_is_read_often_while_talking_and_seldom_when_quiet(tmp_path):
+    store, site = Store(), Bilibili()
+    site.follows[900] = "K5"
+    acct = await logged_in(tmp_path / "life", store, site, message_check_s=10.0,
+                           message_active_s=0.02)
+    await acct.run("BiliMessages", {})
+    quiet = asyncio.create_task(acct.run("BiliWatchMessages", {}))
+    await asyncio.sleep(0.1)  # it has looked, and waits long
+    site.say(900, "are you there?")
+    await asyncio.sleep(0.2)
+    assert not quiet.done()  # quiet: read seldom
+    quiet.cancel()
+    await acct.run("BiliMessages", {})
+    await acct.run("BiliMessage", {"to": "900", "text": "yes!"})  # a conversation now
+    talking = asyncio.create_task(acct.run("BiliWatchMessages", {}))
+    await asyncio.sleep(0.1)
+    site.say(900, "oh hi")
+    fired = await asyncio.wait_for(talking, 1)  # read often
+    assert "oh hi" in fired.content
+    await acct.aclose()
