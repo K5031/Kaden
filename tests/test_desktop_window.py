@@ -2978,3 +2978,19 @@ async def test_in_the_lifes_view_a_change_updates_only_what_it_does(make, qapp, 
     monkeypatch.setattr(window, "_refresh_status", lambda: refreshed.append(True))
     window._pane_changed(PromptsChanged())
     assert refreshed == []
+
+
+def test_a_steps_details_show_each_argument_with_its_real_lines(qapp):
+    import json
+
+    from kaden.frontends.desktop.viewmodel import ToolItem
+
+    page = "<html>\n  <body>Hi</body>\n</html>"
+    item = ToolItem("c", "Write", json.dumps({"file_path": "/tmp/a.html", "content": page}))
+    card = ToolCard(item, lambda _call_id: None)
+    shown = card.details.toPlainText()
+    assert "\\n" not in shown
+    assert shown.startswith(f"file_path: /tmp/a.html\ncontent: {page}")
+    item.arguments = '{"file_path": "/tmp/a.ht'  # still streaming: as it comes
+    card.refresh()
+    assert card.details.toPlainText() == '{"file_path": "/tmp/a.ht'

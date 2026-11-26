@@ -193,7 +193,8 @@ class ToolItem:
 
     @property
     def detail(self) -> str:
-        """What runs: a command as it is, other arguments as JSON."""
+        """What runs: a command as it is, other arguments as "name: value" lines (text
+        with its own line breaks); while they stream, the text as it came."""
         return self._parts()[1]
 
     def _parts(self) -> tuple[str | None, str]:

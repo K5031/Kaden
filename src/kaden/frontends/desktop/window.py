@@ -1111,7 +1111,7 @@ class ToolCard(QFrame):
         self.cancel.setVisible(item.cancellable)
         self.progress.setText(item.progress)
         self.progress.setVisible(bool(item.progress) and item.status is None)
-        self.details.setPlainText(f"{item.arguments}\n\n{item.content}".strip())
+        self.details.setPlainText(f"{item.detail}\n\n{item.content}".strip())
         self.setAccessibleName(f"Tool {item.name}, {item.state_label}")
         if item.pictures != self._shown:
             self._show_pictures(item.pictures)
