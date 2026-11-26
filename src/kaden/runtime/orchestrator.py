@@ -1554,8 +1554,8 @@ class Runtime:
         await self._append()  # drain any backlog first
         await self._flush_results()
         await self._deliver_inbox()
-        self._own_time = self._duty_cause is not None  # a duty's, not the user's
-        duty_started = self._duty_cause is not None
+        # A duty's, not the user's.
+        duty_started = self._own_time = self._duty_cause is not None
         if self._duty_cause is not None:
             cause, self._duty_cause = self._duty_cause, None
             duty = self._conversation.duty if self._conversation is not None else None
