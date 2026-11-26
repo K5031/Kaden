@@ -4,11 +4,14 @@ notice, as Claude Code recalls memories."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
-from kaden.api import Duty, InferenceRequest, Text
+from kaden.api import AgentState, Duty, InferenceRequest, MemoryNote, Text
+from kaden.runtime.orchestrator import RECALL_SYSTEM
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step
+from tests.fakes.memory import InMemoryMemory, MemoryStore, render
 
 
 class Chooser:
@@ -93,3 +96,56 @@ async def test_a_duty_waking_by_itself_recalls_nothing(make):
                                   max_interval_s=30))
     await eventually(lambda: any(not r.maintenance for r in h.core.requests))
     assert chooser.asked == []
+
+
+class FolderMemory(InMemoryMemory):
+    """Records the folder each notes() call names, and can fail them."""
+
+    def __init__(self, store: MemoryStore) -> None:
+        super().__init__(store)
+        self.folders: list[str | None] = []
+        self.notes_error: Exception | None = None
+
+    async def notes(self, *, folder: str | None = None) -> Sequence[MemoryNote]:
+        self.folders.append(folder)
+        if self.notes_error is not None:
+            raise self.notes_error
+        return await super().notes(folder=folder)
+
+
+async def test_recall_reads_the_notes_of_the_conversations_folder(make, tmp_path):
+    store = MemoryStore()
+    memory = FolderMemory(store)
+    h: Harness = await make(core=ScriptedCore([Step(text="ok")], maintenance=Chooser()),
+                            store=store, memory=memory)
+    h.tools.folders = []
+    store.save("Kyoto trip", "plans", "Flights booked.", None, None)
+    folder = tmp_path / "project"
+    folder.mkdir()
+    await h.start(folder=str(folder))
+    await h.turn("hello")
+    assert memory.folders and set(memory.folders) == {str(folder)}
+
+
+async def test_a_memory_that_fails_to_list_its_notes_recalls_nothing(make):
+    store = MemoryStore()
+    memory = FolderMemory(store)
+    memory.notes_error = OSError("disk gone")
+    h: Harness = await make(core=ScriptedCore([Step(text="answered")]), store=store,
+                            memory=memory)
+    await h.start()
+    await h.turn("hello")
+    assert h.runtime.snapshot().state == AgentState.IDLE
+    assert any("answered" in render(m) for m in await h.transcript())
+
+
+async def test_stop_ends_a_recall_that_hangs(make):
+    def chooser(request: InferenceRequest) -> Step:
+        return Step(hang=True) if request.system == RECALL_SYSTEM else Step(text="")
+
+    h = await with_notes(make, chooser)  # type: ignore[arg-type]
+    await h.runtime.send("hello")
+    await eventually(lambda: any(r.system == RECALL_SYSTEM for r in h.core.requests))
+    await h.runtime.stop()
+    await h.rec.wait_state(AgentState.STOPPED, timeout=2)
+    assert not any(not r.maintenance for r in h.core.requests)  # the agent never answered

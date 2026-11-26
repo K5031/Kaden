@@ -2581,10 +2581,20 @@ class Runtime:
         """Before the agent answers what came in: the long-term memory notes relevant to
         it, chosen by the maintenance model from their titles and descriptions, into the
         conversation as a hidden notice. Not those every request shows, nor those still in
-        view and unchanged. A failure recalls nothing."""
+        view and unchanged. A failure recalls nothing; Stop ends it."""
         came_in, self._came_in = "\n\n".join(self._came_in)[-RECALL_INPUT_CHARS:], []
+        task = asyncio.ensure_future(self._recall_notes(came_in, specs))
+        if await self._race_stop(task) or task.cancelled():
+            return
+        if (exc := task.exception()) is not None:
+            expected = isinstance(exc, BudgetExhausted | CoreError)
+            if not expected:  # Memory's: its message may quote what it keeps
+                logger.error("recall failed", exc_info=exc)
+            self._log.decision("recall", failed=str(exc) if expected else type(exc).__name__)
+
+    async def _recall_notes(self, came_in: str, specs: dict[str, ToolSpec]) -> None:
         try:
-            notes = await self._memory.notes()
+            notes = await self._memory.notes(folder=self._project())
         except NotImplementedError:
             return
         if not any(not n.always_shown for n in notes):
@@ -2601,16 +2611,9 @@ class Runtime:
         if not candidates:
             return
         listed = "\n".join(f"- {n.title}: {n.description}" for n in candidates.values())
-        request = (f"## What came in\n<<<\n{came_in}\n>>>\n\n## The notes\n{listed}")
-        try:
-            if reason := self._check_budget("maintenance"):
-                raise BudgetExhausted(reason)
-            answer = await _Completion(self)._request(
-                RECALL_SYSTEM, [Message(_new_id(), Role.USER, (Text(request),), time.time())],
-                RECALL_MAX_TOKENS, light=True)
-        except (BudgetExhausted, CoreError) as e:
-            self._log.decision("recall", candidates=len(candidates), failed=str(e))
-            return
+        answer = await self._ask_light(
+            RECALL_SYSTEM, f"## What came in\n<<<\n{came_in}\n>>>\n\n## The notes\n{listed}",
+            RECALL_MAX_TOKENS)
         chosen: list[MemoryNote] = []
         for line in answer.splitlines():
             note = candidates.get(line.strip().lstrip("-*• ").strip().casefold())
@@ -2623,16 +2626,23 @@ class Runtime:
                 f"\n\n## {n.title}\n(note {json.dumps(n.id)}, changed {n.updated_at!r})\n"
                 f"{n.text}" for n in chosen), hidden=True)
 
+    async def _ask_light(self, system: str, request: str, max_tokens: int) -> str:
+        """One metered request to the maintenance model. BudgetExhausted or CoreError
+        when it cannot answer."""
+        if reason := self._check_budget("maintenance"):
+            raise BudgetExhausted(reason)
+        return await _Completion(self)._request(
+            system, [Message(_new_id(), Role.USER, (Text(request),), time.time())],
+            max_tokens, light=True)
+
     async def _answer(self, prompt: str, output: ToolOutput) -> ToolOutput:
         """The maintenance model's answer to `prompt` from a tool's output (answers_prompt);
         the output itself, with why, when it cannot answer."""
-        request = (f"{prompt}\n\n--- The content to answer from ---\n{output.content}")
         try:
-            if reason := self._check_budget("maintenance"):
-                raise BudgetExhausted(reason)
-            answer = await _Completion(self)._request(
-                ANSWER_SYSTEM, [Message(_new_id(), Role.USER, (Text(request),), time.time())],
-                ANSWER_MAX_TOKENS, light=True)
+            answer = await self._ask_light(
+                ANSWER_SYSTEM,
+                f"{prompt}\n\n--- The content to answer from ---\n{output.content}",
+                ANSWER_MAX_TOKENS)
         except (BudgetExhausted, CoreError) as e:
             return replace(output, content=f"[Could not answer the prompt ({e}); the content "
                                            f"itself follows.]\n{output.content}")
