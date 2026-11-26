@@ -2835,3 +2835,33 @@ async def test_always_allow_on_a_chain_names_each_part_it_keeps(make, qapp):
     await eventually(lambda: window.prompts.count() == 1)
     labels = [b.text() for b in window.prompts.itemAt(0).widget().findChildren(QPushButton)]
     assert labels == ["Allow once", "Allow for this conversation", "Deny"]
+
+
+async def test_the_lifes_saved_answers_are_in_its_settings(make, qapp):
+    """Its own, apart from the chats': seen and taken back there, at once."""
+    from kaden.api import PermissionRule, SettingsUpdate
+
+    h: Harness = await make()
+    await h.start()
+    them: Harness = await make()
+    await them.start()
+    await them.runtime.update_settings(SettingsUpdate(permission_rules=[
+        PermissionRule("BiliMessage"), PermissionRule("Bash", "cp")]))
+    life = FakeLife(them.runtime)
+    controller = Controller(h.runtime, ConversationModel())
+    window = MainWindow(h.runtime, controller, life=life)
+    asyncio.create_task(controller.run())
+    window.continuous_switch.click()
+    await eventually(lambda: window.showing_life)
+    window.open_settings()
+    dialog = await eventually(lambda: isinstance(window._dialog, LifeSettingsDialog)
+                              and window._dialog.isVisible() and window._dialog)
+    assert [dialog.answers.rules.item(i).text()
+            for i in range(dialog.answers.rules.count())] == [
+        "Always allow: BiliMessage", "Always allow: Bash: cp"]
+    dialog.answers.rules.setCurrentRow(1)
+    dialog.answers.remove.click()
+    dialog._save()
+    await eventually(lambda: not dialog.isVisible())
+    assert (await them.runtime.settings()).permission_rules == (PermissionRule("BiliMessage"),)
+    assert life.restarted == 0  # at once

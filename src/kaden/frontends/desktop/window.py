@@ -114,6 +114,7 @@ from kaden.api import (
     MemoryNote,
     ModelInfo,
     PermissionPolicy,
+    PermissionRule,
     Prompt,
     PromptKind,
     RuntimeAPI,
@@ -3554,7 +3555,10 @@ class MainWindow(QMainWindow):
             await self._show_life(True)
 
         async def saved(identity: tuple[str, str] | None, daily: Any,
-                        changes: dict[str, bool | str]) -> None:
+                        changes: dict[str, bool | str],
+                        rules: tuple[PermissionRule, ...] | None) -> None:
+            if rules is not None:
+                await life.runtime.update_settings(SettingsUpdate(permission_rules=rules))
             if identity is not None:
                 await life.set_identity(*identity)
                 self._refresh_status()
@@ -3770,6 +3774,35 @@ class LifeDialog(QDialog):
         form.addRow(buttons)
 
 
+class SavedAnswers(QWidget):
+    """The saved answers (always or never allow), and a way to take one back."""
+
+    def __init__(self, rules: Sequence[PermissionRule]) -> None:
+        super().__init__()
+        self.rules = QListWidget()
+        self.rules.setMaximumHeight(140)
+        for rule in rules:
+            item = QListWidgetItem(f"{'Always allow' if rule.allow else 'Never allow'}: {rule}")
+            item.setData(Qt.ItemDataRole.UserRole, rule)
+            self.rules.addItem(item)
+        self.remove = QPushButton("Remove")
+        self.remove.setEnabled(False)
+        self.rules.currentRowChanged.connect(lambda row: self.remove.setEnabled(row >= 0))
+        self.remove.clicked.connect(lambda: self.rules.takeItem(self.rules.currentRow()))
+        column = QVBoxLayout(self)
+        column.setContentsMargins(0, 0, 0, 0)
+        if not rules:
+            column.addWidget(_label("None yet.", selectable=False, tone="muted"))
+            self.rules.hide()
+            self.remove.hide()
+        column.addWidget(self.rules)
+        column.addWidget(self.remove, 0, Qt.AlignmentFlag.AlignLeft)
+
+    def kept(self) -> tuple[PermissionRule, ...]:
+        return tuple(self.rules.item(i).data(Qt.ItemDataRole.UserRole)
+                     for i in range(self.rules.count()))
+
+
 class LifeSettingsDialog(QDialog):
     """The life's own settings: its name and who it is, and what its own time may cost a
     day (at once); what its tools declare (when its process starts again). Its provider
@@ -3803,6 +3836,10 @@ class LifeSettingsDialog(QDialog):
         if self.tool_rows.rows:
             column.addWidget(_label(f"A change to their tools restarts {name}. Their model "
                                     "is in your Settings.", selectable=False, role="small"))
+        self.answers = SavedAnswers(settings.permission_rules)
+        column.addWidget(_setting("Saved answers", "What you said always or never to in their "
+                                  "view. Theirs, apart from your chats'.", self.answers,
+                                  below=True))
         self.error = _label()
         theme.mark(self.error, "tone", "error")
         self.error.hide()
@@ -3814,8 +3851,10 @@ class LifeSettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         column.addWidget(buttons)
         # Called with the new name and who they are (None if unchanged), the new daily
-        # amount (UNCHANGED if it is not) and the tool settings changed.
-        self.saved: Callable[[tuple[str, str] | None, Any, dict[str, bool | str]],
+        # amount (UNCHANGED if it is not), the tool settings changed, and the saved answers
+        # kept (None if unchanged).
+        self.saved: Callable[[tuple[str, str] | None, Any, dict[str, bool | str],
+                              tuple[PermissionRule, ...] | None],
                              Awaitable[None]] | None = None
 
     def resizeEvent(self, event: QResizeEvent) -> None:
@@ -3845,7 +3884,11 @@ class LifeSettingsDialog(QDialog):
                                             self.about.toPlainText().strip())
         if identity == self.identity:
             identity = None
-        if (not changes and daily is UNCHANGED and identity is None) or self.saved is None:
+        rules: tuple[PermissionRule, ...] | None = self.answers.kept()
+        if rules == tuple(self.settings.permission_rules):
+            rules = None
+        if (not changes and daily is UNCHANGED and identity is None and rules is None
+                or self.saved is None):
             self.accept()
             return
         self.save_button.setEnabled(False)
@@ -3854,7 +3897,7 @@ class LifeSettingsDialog(QDialog):
         async def save() -> None:
             assert self.saved is not None
             try:
-                await self.saved(identity, daily, changes)
+                await self.saved(identity, daily, changes, rules)
             except Exception as e:  # noqa: BLE001 - shown in the dialog
                 self.save_button.setEnabled(True)
                 self.error.setText(user_message(e))
@@ -4382,33 +4425,14 @@ class SettingsDialog(QDialog):
             spending_limit=self.limit.text(),
             permissions=PermissionPolicy(self.permissions.currentData()),
             instructions=self.instructions.toPlainText(),
-            permission_rules=tuple(self.rules.item(i).data(Qt.ItemDataRole.UserRole)
-                                   for i in range(self.rules.count())),
+            permission_rules=self.answers.kept(),
             tool_settings=self.tool_rows.values(),
         )
 
     def _rules_box(self, settings: Settings) -> QWidget:
-        """The saved answers, and a way to take one back."""
-        self.rules = QListWidget()
-        self.rules.setMaximumHeight(140)
-        for rule in settings.permission_rules:
-            item = QListWidgetItem(f"{'Always allow' if rule.allow else 'Never allow'}: {rule}")
-            item.setData(Qt.ItemDataRole.UserRole, rule)
-            self.rules.addItem(item)
-        self.remove_rule = QPushButton("Remove")
-        self.remove_rule.setEnabled(False)
-        self.rules.currentRowChanged.connect(lambda row: self.remove_rule.setEnabled(row >= 0))
-        self.remove_rule.clicked.connect(lambda: self.rules.takeItem(self.rules.currentRow()))
-        box = QWidget()
-        column = QVBoxLayout(box)
-        column.setContentsMargins(0, 0, 0, 0)
-        if not settings.permission_rules:
-            column.addWidget(_label("None yet.", selectable=False, tone="muted"))
-            self.rules.hide()
-            self.remove_rule.hide()
-        column.addWidget(self.rules)
-        column.addWidget(self.remove_rule, 0, Qt.AlignmentFlag.AlignLeft)
-        return box
+        self.answers = SavedAnswers(settings.permission_rules)
+        self.rules, self.remove_rule = self.answers.rules, self.answers.remove
+        return self.answers
 
     def _save(self, *, restart: bool = False) -> None:
         try:
