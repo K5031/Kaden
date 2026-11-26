@@ -96,7 +96,8 @@ says why. If the check fails or the spending limit is reached, Kaden asks too.
   startup files such as `~/.bashrc`, password stores, cloud credentials, browser
   profiles, the keychain, on a Mac also `~/Library/Keychains` and the `security`
   command) or Kaden's own data folder (named by its path or just by its folder name, such
-  as `.kaden`) always asks you, without a check: a secret the agent reads goes to your AI provider, and
+  as `.kaden`; a work folder inside it, such as Continuous's home, is not counted) always
+  asks you, without a check: a secret the agent reads goes to your AI provider, and
   Kaden's data folder holds your conversations and the very settings that limit the
   agent.
 - Each check is a small request to your provider and counts toward the spending limit. Set

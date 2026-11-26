@@ -276,3 +276,24 @@ def test_macos_credentials_always_ask() -> None:
         assert always_ask(call("Bash", {"command": command}), Path("/nowhere")) \
             == CREDENTIALS_REASON, command
     assert always_ask(call("Bash", {"command": "ls ~/Library/Fonts"}), Path("/nowhere")) is None
+
+
+def test_the_work_folder_inside_the_data_folder_is_not_kadens_data(tmp_path: Any,
+                                                                   monkeypatch: Any) -> None:
+    """Continuous works in ~/.kaden/life/home, inside its data folder ~/.kaden/life."""
+    from kaden.runtime.review import DATA_REASON, always_ask
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    data = home / ".kaden" / "life"
+    work = str(data / "home")
+    for command in [f"cd {work}; python3 edit.py", f"cat {work}/notes.md",
+                    "ls ~/.kaden/life/home/drafts", "cat $HOME/.kaden/life/home/a.txt",
+                    f"cat '{work}'"]:
+        assert always_ask(call("Bash", {"command": command}), data, work) is None, command
+    for command in [f"cat {data}/settings.toml", f"cd {work}; cat {data}/usage.json",
+                    f"cat {work}/../settings.toml", "cat ~/.kaden/life/events.jsonl",
+                    f"cat {work}x/a"]:
+        assert always_ask(call("Bash", {"command": command}), data, work) == DATA_REASON, \
+            command
+    assert always_ask(call("Bash", {"command": f"cat {work}/a"}), data, None) == DATA_REASON

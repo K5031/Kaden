@@ -2385,7 +2385,7 @@ class Runtime:
         # the call touches what always asks (Kaden's own data, credentials).
         if (self._ceiling is None
                 and PermissionRule.allows(self._config.permission_rules, bare)
-                and always_ask(call, self._config.data_dir) is None):
+                and always_ask(call, self._config.data_dir, self._project()) is None):
             auto(Decision.ALLOW_ALWAYS, "rule")
             return None
         if call.name in self._grants and (confined or self._grants[call.name]):
@@ -2440,7 +2440,7 @@ class Runtime:
 
     async def _review(self, call: ToolCall, spec: ToolSpec) -> Verdict:
         """The automatic permission check (review.py). Fails closed: any problem asks."""
-        if reason := always_ask(call, self._config.data_dir):
+        if reason := always_ask(call, self._config.data_dir, self._project()):
             self._log.decision("permission_review", call_id=call.id, allow=False, by="rule")
             return Verdict(False, reason)
         if reason := self._check_budget("review"):

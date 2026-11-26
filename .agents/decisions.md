@@ -1139,6 +1139,13 @@ with a common name (`--data-dir ~/data`) makes every call that names such a fold
 asking is the safe side, and the default `.kaden` is distinctive. Not attempted: resolving
 `cd` and relative paths in a command, which the shell, not a pattern, decides.
 
+A work folder inside the data folder (Continuous's `~/.kaden/life/home` in its data folder
+`~/.kaden/life`) is not Kaden's data: before matching, the paths that name it or lie in it
+(its resolved and given absolute forms, `~/`, `$HOME/`, `${HOME}/`) are taken out of the
+arguments, unless `..` follows in the same path. A data-folder path outside it still asks;
+the same folder reached by a relative path from elsewhere (`cd ~ && cat .kaden/life/home/x`)
+asks too, since only the name is seen.
+
 ## A step falls due at most a hundred years ahead (2026-11-26)
 
 `duty.parse_plan` refuses a TodoWrite due time (`due` or `due_in_minutes`) more than
