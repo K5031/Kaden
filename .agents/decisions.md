@@ -1111,7 +1111,7 @@ The design is in [the note](notes/implemented/2026-11-26-memory-recall.md); the 
 | Choice | Decision |
 |---|---|
 | The hook | `Runtime._came_in` collects the text appended from the inbox (the user's messages, `notify`'s notices, a kept watch's firings) and the conversation's own watches' firings; before the next inference, after upkeep and the budget check, `_recall` runs once for it. The activation notice and a duty's own notice add nothing to it |
-| The call | The maintenance model (`light`), `RECALL_SYSTEM`, at most 300 tokens out; it sees the end of what came in (4000 characters, between `<<<` and `>>>`) and `- title: description` per candidate; only exact titles (case ignored, bullets stripped) count, at most 5 (`RECALL_MAX`). Budgeted as maintenance; a refusal or failure is logged (`recall`, `failed`) and recalls nothing |
+| The call | The maintenance model (`light`), `RECALL_SYSTEM`, at most 300 tokens out; it sees the end of what came in (4000 characters, between `<<<` and `>>>`) and `- title: description` per candidate; only exact titles (case ignored, bullets stripped) count, at most 5 (`RECALL_MAX`). Budgeted as maintenance; raced against Stop; a refusal or failure (the Core's, or Memory's `notes()`/`assemble()`, logged by its type only) is logged (`recall`, `failed`) and recalls nothing. The notes are those of the conversation's folder (`Memory.notes(folder=...)`) |
 | The notice | Hidden, Kaden's: `RECALL_HEADER`, then per note `## <title>`, `(note "<id>", changed <updated_at>)` and its text |
 | Not twice | What the assembled context still holds of those lines (`_RECALLED`): a note recalled and still in view, unchanged, is not a candidate; a recall summarized away, or a note changed since, can come again. Notes with `MemoryNote.always_shown` (the built-in profile, the files module's `MEMORY.md`) are never candidates; with no other note, nothing is assembled or asked |
 | Built-in memory | Its save pass leaves out Kaden's hidden notices (a recalled note is not news); the files module's memory tool still asks for a note to be viewed before it is edited |
@@ -1154,3 +1154,20 @@ between the intervals), and it is kept: an overdue step is work the duty has not
 the user chose the minimum interval, and a duty that waits on the user has ask_for_help,
 which pauses the check-ins. Not done: waking once per overdue step as reminders without
 a duty do, which would let a duty forget a step it left open.
+
+## What TaskOutput still finds (2026-11-26)
+
+TaskOutput finds the operations launched for the open conversation: opening another one
+forgets them (none runs then: `start()` refuses while one does). Of the finished ones it
+keeps the newest `KNOWN_OPS`, 200; an older one's outcome is in the conversation already,
+delivered when it finished.
+
+## What a conversation keeps when another one is opened (2026-11-26)
+
+`Runtime._leave`, before `start()` opens another conversation: its proposals are withdrawn,
+its watch tasks end (awaited, a call that outlasts `cancel_grace_s` left) and so do the
+watches' writes; messages that wait to be saved (an append failed) are saved into it,
+and if that fails again they are dropped and logged (`left_unsaved`); firings of its own
+watches held for a cycle are let go unconfirmed, so their watches see them again when it
+is back. Nothing of it reaches the next conversation. Watch files are written one at a
+time, in order, a write under way finished even when its caller is cancelled.

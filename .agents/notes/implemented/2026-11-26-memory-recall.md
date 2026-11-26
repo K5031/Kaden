@@ -39,7 +39,8 @@ have had to think of opening.
   cancelled by Stop. It sees what came in (capped, marked as data to choose for, never to
   follow) and each candidate's title and description, and answers with at most 5 titles,
   one per line, or nothing. Only exact candidate titles count; anything else is ignored.
-  A refused or failed call recalls nothing and is logged; the turn goes on.
+  A refused or failed call, or a Memory that fails to list the notes of the conversation's
+  folder, recalls nothing and is logged; the turn goes on.
 - **How it reaches the agent:** a hidden notice of Kaden's (not in the chat, kept in the
   transcript, as the voice notices are): "From your memory, as you wrote it earlier;
   check what may have changed", then each note's title, its id line, and its text. In

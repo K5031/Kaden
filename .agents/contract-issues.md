@@ -904,3 +904,20 @@ was used.
 - **Proposed fix:** A declared kind of secret a Tools module may read (its name in its
   spec or factory), written through `RuntimeAPI.update_settings` like a Core's key, so a
   frontend never writes what a module reads directly.
+
+## 16. Found in the code review of 2026-11-26
+
+### P7 (S) The launcher knows the built-in Tools' work-folder option by name
+- **Status:** Open.
+- **Where:** `src/kaden/__main__.py` `load_config` (`running["tools"] == "shell-files"`,
+  `"root"`); `ModuleState.work_folder`; `Settings.work_folder`.
+- **Problem:** The launcher gives the Tools module the current directory as its `root`
+  option only when the running module's id is `shell-files`, and the saved work folder
+  only to a module whose options have `root`. Another Tools module with a work folder
+  cannot have one set in Settings, and renaming the built-in's option breaks it silently.
+  No contract says how a module declares the option that names its work folder.
+- **Assumed:** The built-in Tools module's option is `root`, as today.
+- **Proposed fix:** A Tools factory declares the option (`work_folder_option = "root"`,
+  beside `user_config`); the launcher reads it through the factory, as it reads
+  `user_config`, and drops the id and option names. Needs the change in
+  `tools/shell_files` and the launcher in one change.
