@@ -103,9 +103,10 @@ says why. If the check fails or the spending limit is reached, Kaden asks too.
 - It can be wrong. Choose "Work freely in the work folder, ask before anything else" to
   decide everything outside the folder yourself.
 
-**Saved answers.** When Kaden asks, **Always…** keeps your answer for every
-conversation: **Always allow** runs calls like it without asking from then on, **Never
-allow** refuses them without asking. A command is kept by its program and subcommand
+**Saved answers.** When Kaden asks, **Always allow** keeps your answer for every
+conversation: calls like it run without asking from then on. **Never allow**, under ▾
+beside Deny, refuses them without asking. In Continuous's view they are its own answers,
+apart from your chats'. A command is kept by its program and subcommand
 (`git status` covers `git status -s` too, but not `git status && rm …`); a command that
 runs code of any kind, such as `python fix.py`, is kept whole. Settings → Permissions
 lists what you saved, and **Remove** takes one back. An "always" never covers keys,

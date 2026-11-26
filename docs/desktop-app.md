@@ -83,7 +83,7 @@ another reason, the Settings window opens with the message.
 | Talk instead of typing, or hear the replies | Click the microphone button in the message box to talk: Kaden sends what you said when you stop talking. Click the speaker button to hear each reply read aloud. Use either or both; the message box shows whether it is listening, thinking or speaking. **Esc** stops the reading. Click a button again to turn it off. See [Talking with Kaden](using-kaden.md#talking-with-kaden). |
 | Run a skill | Send its name as a message: `/consolidate-memory`. See [Skills](concepts.md#skills). |
 | Stop Kaden | Press the round button in the message box (it shows a square while Kaden works) or **Esc**. |
-| Answer a permission request | Choose **Allow once**, **Allow for this conversation** or **Deny** on the card above the message box. |
+| Answer a permission request | Choose **Allow once**, **Allow for this conversation**, **Always allow** or **Deny** on the card above the message box; **Never allow** is under ▾ beside Deny. In Continuous's view there is no "for this conversation". |
 | Answer with a click | When Kaden needs a decision, a card above the message box asks the question and offers buttons, Kaden's pick first. A click sends that answer, or does what it says. ✕ closes the card. See [The wrap-up card](using-kaden.md#the-wrap-up-card). |
 | Answer a proposal | When Kaden proposes something of its own, a card above the message box says what and why: **Approve** runs it, **Dismiss** declines. See [Proposals](using-kaden.md#proposals). |
 | Cancel one task | Press **Cancel** on its card. |

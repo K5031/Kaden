@@ -110,8 +110,9 @@ doesn't match the input, trust the input.
 | Answer | Effect |
 |---|---|
 | Allow once | Runs this one call |
-| Allow for this conversation | Runs this tool without asking again in this conversation, until you quit |
-| Deny | The agent is told the call was refused |
+| Allow for this conversation | Runs this tool without asking again in this conversation, until you quit (not in Continuous's view, whose conversation never ends) |
+| Always allow | Never asks about calls like it again; kept in Settings → Permissions |
+| Deny | The agent is told the call was refused; ▾ beside it has **Never allow** |
 
 The permission level is set in [Settings](settings.md#permissions).
 

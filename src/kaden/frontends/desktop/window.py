@@ -1471,7 +1471,11 @@ class Detail(QWidget):
 
 
 class PermissionCard(QFrame):
-    def __init__(self, request: Prompt, resolve: Callable[[str, Any], None]) -> None:
+    """Allow once, for the conversation (not in the life's view, whose conversation never
+    ends), always, or deny; never allow is on Deny's menu, a step away from always."""
+
+    def __init__(self, request: Prompt, resolve: Callable[[str, Any], None], *,
+                 per_conversation: bool = True) -> None:
         super().__init__()
         self.setObjectName("prompt")
         layout = QVBoxLayout(self)
@@ -1484,26 +1488,30 @@ class PermissionCard(QFrame):
         layout.addWidget(_label(request_note(request), tone="muted"))
         if detail:
             layout.addWidget(Detail(detail))
+        # Always and never are kept for every conversation, as the rule the runtime saves.
+        rule = PermissionRule.for_call(call)
+        what = f"“{rule.prefix}”" if rule.prefix is not None else rule.tool
+        answers = [(Decision.ALLOW_ONCE, "Allow once")]
+        if per_conversation:
+            answers.append((Decision.ALLOW_CONVERSATION, "Allow for this conversation"))
+        answers += [(Decision.ALLOW_ALWAYS, f"Always allow {what}"), (Decision.DENY, "Deny")]
         buttons = QHBoxLayout()
-        for decision, label in ((Decision.ALLOW_ONCE, "Allow once"),
-                                (Decision.ALLOW_CONVERSATION, "Allow for this conversation"),
-                                (Decision.DENY, "Deny")):
+        for decision, label in answers:
             button = QPushButton(label)
             if decision is Decision.ALLOW_ONCE:
                 _primary(button)
             button.clicked.connect(lambda _=False, d=decision: self._answer(request.id, d))
             buttons.addWidget(button)
-        # Kept for every conversation, as the rule the runtime will save.
-        rule = PermissionRule.for_call(call)
-        what = f"“{rule.prefix}”" if rule.prefix is not None else rule.tool
-        always = QPushButton("Always…")
-        menu = QMenu(always)
-        menu.addAction(f"Always allow {what}").triggered.connect(
-            lambda: self._answer(request.id, Decision.ALLOW_ALWAYS))
+        # Deny stays one click; never allow is behind ▾ beside it.
+        self.more_deny = QToolButton(text="▾")
+        self.more_deny.setToolTip("More ways to deny")
+        self.more_deny.setAccessibleName("More ways to deny")
+        self.more_deny.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu = QMenu(self.more_deny)
         menu.addAction(f"Never allow {what}").triggered.connect(
             lambda: self._answer(request.id, Decision.DENY_ALWAYS))
-        always.setMenu(menu)
-        buttons.insertWidget(2, always)
+        self.more_deny.setMenu(menu)
+        buttons.addWidget(self.more_deny)
         buttons.addStretch()
         layout.addLayout(buttons)
         self.resolve = resolve
@@ -2044,6 +2052,9 @@ class ConversationView(QScrollArea):
         self._widgets: dict[int, QWidget] = {}  # by id() of its item
         self._groups: dict[int, StepGroup] = {}  # by id() of its first step
         self._arrange_pending = False
+        # Whether an answer can be kept for the conversation: not on the life's, which
+        # never ends (MainWindow sets it).
+        self.per_conversation = True
         self.setFrameShape(QFrame.Shape.NoFrame)
         content = QWidget(objectName="transcript")
         centred = QHBoxLayout(content)
@@ -2193,8 +2204,9 @@ class ConversationView(QScrollArea):
             if child.widget() is not None:
                 _discard(child.widget())
         respond = self.controller.respond
+        permission = partial(PermissionCard, per_conversation=self.per_conversation)
         cards = {PromptKind.QUESTION: QuestionCard, PromptKind.PLAN: PlanApprovalCard,
-                 PromptKind.PERMISSION: PermissionCard, PromptKind.PROPOSAL: ProposalCard}
+                 PromptKind.PERMISSION: permission, PromptKind.PROPOSAL: ProposalCard}
         for prompt in self.model.prompts.values():
             if prompt.kind == PromptKind.PROPOSAL and prompt.details.get("card"):
                 continue  # shown on its wrap-up card
@@ -3254,6 +3266,9 @@ class MainWindow(QMainWindow):
         in the title bar), or the chats'. While it wakes, a line
         stands where its conversation will be."""
         self._life_on = on
+        if self.conversation.per_conversation == on:
+            self.conversation.per_conversation = not on
+            self.conversation._rebuild_prompts()
         self.sidebar.setVisible(not on)
         self.title_label.setVisible(not on)
         for widget in (self.life_name, self.view_menu_button,

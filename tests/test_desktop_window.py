@@ -142,10 +142,15 @@ async def test_an_answer_can_be_kept_for_every_conversation(make, qapp):
     controller.send("look")
     await eventually(lambda: window.prompts.count() == 1)
     card = window.prompts.itemAt(0).widget()
-    [always] = buttons(card, "Always…")
-    entries = [a.text() for a in always.menu().actions()]
-    assert entries == ["Always allow “git status”", "Never allow “git status”"]
-    always.menu().actions()[0].trigger()
+    labels = [b.text() for b in card.findChildren(QPushButton)]
+    assert labels == ["Allow once", "Allow for this conversation",
+                      "Always allow “git status”", "Deny"]  # always: one click
+    [deny] = buttons(card, "Deny")
+    assert deny.menu() is None  # deny is one click
+    assert [a.text() for a in card.more_deny.menu().actions()] == [
+        "Never allow “git status”"]
+    [always] = buttons(card, "Always allow “git status”")
+    always.click()
     await eventually(lambda: window.prompts.count() == 0 and not controller.model.busy)
     settings = await h.runtime.settings()
     assert settings.permission_rules == (PermissionRule("Bash", "git status"),)
@@ -2735,3 +2740,26 @@ async def test_the_lifes_settings_show_their_descriptions_whole(make, qapp):
     for label in wrapped:
         assert label.height() >= label.heightForWidth(label.width()), label.text()
     dialog.close()
+
+
+async def test_in_the_lifes_view_an_answer_is_once_or_for_good(make, qapp):
+    """Its conversation never ends, so "for this conversation" would only last until its
+    process restarts: not offered there."""
+    h: Harness = await make()
+    await h.start()
+    them: Harness = await make(permissions=PermissionPolicy.ASK)
+    them.tools.instant("BiliMessage", read_only=False)
+    them.core.add(Step(calls=[call("BiliMessage", {"to": "900", "text": "hi"})]),
+                  Step(text="sent"))
+    await them.start()
+    life = FakeLife(them.runtime)
+    controller = Controller(h.runtime, ConversationModel())
+    window = MainWindow(h.runtime, controller, life=life)
+    asyncio.create_task(controller.run())
+    window.continuous_switch.click()
+    await eventually(lambda: window.showing_life and window.controller is not window.home)
+    window.controller.send("say hi to K5")
+    await eventually(lambda: window.prompts.count() == 1)
+    card = window.prompts.itemAt(0).widget()
+    labels = [b.text() for b in card.findChildren(QPushButton)]
+    assert labels == ["Allow once", "Always allow BiliMessage", "Deny"]
