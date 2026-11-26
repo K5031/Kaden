@@ -565,14 +565,19 @@ class Runtime:
         if self._state() not in (AgentState.NOT_STARTED, AgentState.IDLE, AgentState.STOPPED,
                                  AgentState.FAILED):
             raise RuntimeStateError(f"cannot start while {self._state()}", Refusal.BUSY)
-        await self._withdraw_proposals()  # a proposal belongs to its conversation
-        if self._ops:
+        if self._ops.keys() - self._proposals().keys():  # proposals are withdrawn below
             raise RuntimeStateError("operations are still outstanding", Refusal.BUSY)
         if options.conversation_id is not None and (options.seed_from is not None
                                                     or options.folder is not None):
             raise ValueError("seed_from and folder apply to a new conversation only")
         if options.folder is not None and not Path(options.folder).expanduser().is_dir():
             raise ValueError(f"{options.folder} is not a folder")
+        # What is opened, looked up first: a start refused for an unknown id changes nothing.
+        found = None
+        if options.conversation_id is not None:
+            found = await self._find_conversation(options.conversation_id)
+        elif options.seed_from is not None:
+            await self._find_conversation(options.seed_from)
         if not self._models:
             await self._refresh_models()
         model = options.model or self._model or next(iter(self._models), None)
@@ -593,8 +598,15 @@ class Runtime:
             self._log.open(data_dir / EVENT_LOG_FILE)
             self._loop_task = asyncio.create_task(self._run_loop())
 
-        await self._end_watch_tasks()  # the conversation left keeps them, for when it is back
-        conversation, resumed = await self._open_conversation(options)
+        await self._leave()
+        try:
+            conversation, resumed = await self._open_conversation(options, found)
+        except Exception:  # the open conversation goes on as it was
+            if self._conversation is not None:
+                with contextlib.suppress(ValueError):
+                    await self._use_folder(self._conversation.folder)
+                await self._resume_watches()
+            raise
         if self._conversation is None or conversation.id != self._conversation.id:
             self._grants.clear()
             self._set_plan_mode(False, "conversation")
@@ -608,7 +620,6 @@ class Runtime:
         self._wake_set, self._immediate_wake, self._unseen = None, False, False
         self._cancel_duty()
         self._answered()
-        self._backlog.clear()
         if resumed:
             await self._repair()
         self._log.decision("start", conversation=conversation.id, resumed=resumed,
@@ -620,6 +631,26 @@ class Runtime:
             self._schedule_duty()
         await self._resume_watches()
         return conversation
+
+    async def _leave(self) -> None:
+        """What belongs to the open conversation stays with it: its proposals are
+        withdrawn, its watch tasks end (it keeps the watches, for when it is back), the
+        messages waiting to be saved are saved into it, and the firings it holds are let
+        go unconfirmed, so their watches see them again."""
+        await self._withdraw_proposals()
+        await self._end_watch_tasks()
+        if self._conversation is not None and (self._inbox or self._backlog):
+            try:
+                await self._deliver_inbox()
+                await self._append()
+            except _AppendFailed:
+                self._log.decision("left_unsaved",
+                                   messages=len(self._inbox) + len(self._backlog))
+        self._inbox.clear()
+        self._backlog.clear()
+        self._fired.clear()
+        self._confirms.clear()
+        self._came_in.clear()
 
     async def select_model(self, model_id: str) -> None:
         await self._refresh_models()
@@ -1297,12 +1328,13 @@ class Runtime:
 
     # ── Conversations and resume repair ──────────────────────────────────
 
-    async def _open_conversation(self, options: StartOptions) -> tuple[ConversationInfo, bool]:
-        """Find or create the conversation and move the Tools to its folder."""
-        if options.conversation_id is not None:
-            info = await self._find_conversation(options.conversation_id)
-            await self._use_folder(info.folder)
-            return info, True
+    async def _open_conversation(self, options: StartOptions, found: ConversationInfo | None
+                                 ) -> tuple[ConversationInfo, bool]:
+        """`found` (the conversation resumed), or one created; the Tools moved to its
+        folder."""
+        if found is not None:
+            await self._use_folder(found.folder)
+            return found, True
         folder = options.folder
         if folder is None and options.seed_from is not None:
             folder = (await self._find_conversation(options.seed_from)).folder
@@ -1316,14 +1348,8 @@ class Runtime:
         if options.seed_from is None:  # stored with its first use (_save_draft)
             now = time.time()
             return ConversationInfo(_new_id(), None, now, now, folder=folder), False
-        try:
-            info = await self._memory.create_conversation(seed_from=options.seed_from,
-                                                          folder=folder)
-        except BaseException:
-            if self._conversation is not None:
-                with contextlib.suppress(ValueError):
-                    await self._use_folder(self._conversation.folder)
-            raise
+        info = await self._memory.create_conversation(seed_from=options.seed_from,
+                                                      folder=folder)
         return info, False
 
     async def _use_folder(self, folder: str | None) -> bool:
@@ -1475,6 +1501,8 @@ class Runtime:
                 continue
             if self._flush_tasks:
                 await asyncio.wait(self._flush_tasks)
+                if not self._cycle_requested or self._stopping or self._closed:
+                    continue  # Stop came meanwhile
             self._cycle_requested = False
             self._cycle_active = True
             self._cycle_task = asyncio.create_task(self._cycle())
