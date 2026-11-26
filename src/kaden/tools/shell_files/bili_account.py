@@ -242,8 +242,7 @@ class Account:
             try:
                 me = await self._call("GET", f"{API}/x/web-interface/nav")
             except LoginGone:
-                await self._log_out()
-                self._outcome = "The login stopped working. "
+                pass  # forgotten: a new code follows
             else:
                 return ToolOutput(f"Logged in as {me.get('uname')} (id {me.get('mid')}).")
         if self._pending is not None and not self._pending.done():
@@ -323,6 +322,20 @@ class Account:
             await asyncio.to_thread(self._drop)
             self._login, self._loaded = None, True
             self._retire()
+
+    async def _forget(self, login: dict[str, str] | None) -> None:
+        """Bilibili no longer takes `login`: it is dropped, so its tools and the inbox
+        watch go with it, unless another was kept meanwhile. A code being scanned stays."""
+        async with self._saving:
+            if self._login is not login or login is None:
+                return
+            try:
+                await asyncio.to_thread(self._drop)
+            except Exception:  # forgotten here all the same: Bilibili refuses it
+                logger.exception("the Bilibili login could not be forgotten")
+            self._login = None
+            self._retire()
+            self._outcome = "The login stopped working. "
 
     async def _logged_in(self) -> bool:
         if not self._loaded:
@@ -562,8 +575,9 @@ class Account:
         """Others' text messages past each sender's mark, oldest first; the first time (no
         marks), the latest few. With `only`, conversations with others are not read: those
         with something new are put in `waiting`."""
-        assert self._login is not None or await self._logged_in()
-        me = int((self._login or {}).get("DedeUserID") or 0)
+        await self._account()
+        assert self._login is not None
+        me = int(self._login.get("DedeUserID") or 0)
         written = []
         for talker, last, unread in await self._sessions():
             mark = (marks or {}).get(str(talker), 0)
@@ -628,10 +642,12 @@ class Account:
                     data: dict[str, Any] | None = None) -> Any:
         """Bilibili's answer's data; its refusal, as it is, otherwise: never retried."""
         client = await self._account()
+        login = self._login
         response = await client.request(method, url, params=params, data=data)
         response.raise_for_status()
         body = response.json()
         if body.get("code") == -101:
+            await self._forget(login)
             raise LoginGone("The Bilibili login stopped working: BiliLogin gives a new code "
                             "to log in again.")
         if body.get("code") != 0:

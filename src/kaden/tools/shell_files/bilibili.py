@@ -118,6 +118,7 @@ class Bilibili:
         self._ffmpeg = ffmpeg
         self._cut = cut or self._ffmpeg_cut
         self._client: httpx2.AsyncClient | None = None
+        self._starting = asyncio.Lock()
         self._mixin: tuple[str, float] | None = None  # the signing key, and when read
 
     @property
@@ -276,12 +277,17 @@ class Bilibili:
 
     async def _session(self) -> httpx2.AsyncClient:
         """A visitor's session: the home page first, for the cookie it gives visitors."""
-        if self._client is None:
-            client = httpx2.AsyncClient(transport=self._transport, headers=HEADERS,
-                                        follow_redirects=True, timeout=TIMEOUT)
-            (await client.get("https://www.bilibili.com/")).raise_for_status()
-            self._client = client
-        return self._client
+        async with self._starting:  # calls at once share the one that is starting
+            if self._client is None:
+                client = httpx2.AsyncClient(transport=self._transport, headers=HEADERS,
+                                            follow_redirects=True, timeout=TIMEOUT)
+                try:
+                    (await client.get("https://www.bilibili.com/")).raise_for_status()
+                except BaseException:
+                    await client.aclose()
+                    raise
+                self._client = client
+            return self._client
 
     async def _signed(self, params: dict[str, Any]) -> dict[str, Any]:
         """`params` signed as Bilibili's pages sign theirs (WBI)."""
@@ -308,8 +314,11 @@ class Bilibili:
         try:
             _out, err = await asyncio.wait_for(process.communicate(), CUT_TIMEOUT)
         except TimeoutError:
-            process.kill()
             raise BiliError(f"The frame at {clock(second)} took too long to cut.") from None
+        finally:  # too slow, or stopped
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
         if process.returncode != 0 or not out.exists():
             raise BiliError(f"The frame at {clock(second)} could not be cut: "
                             + err.decode(errors="replace").strip()[-300:])

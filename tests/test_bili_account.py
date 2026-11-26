@@ -459,10 +459,9 @@ async def test_a_watch_whose_login_is_gone_cannot_pass(tmp_path):
     store, site = Store(), Bilibili()
     acct = await logged_in(tmp_path / "life", store, site, feed_check_s=0.02)
     site.feed = []
-    store.saved.clear()  # as if Bilibili had ended the login: its calls now answer -101
-    acct._login = {"SESSDATA": "gone"}
-    acct._retire()
     for name in ("BiliWatchFeed", "BiliWatchMessages"):
+        acct._login = {"SESSDATA": "gone"}  # Bilibili ended the login: its calls answer -101
+        acct._retire()
         out = await asyncio.wait_for(acct.run(name, {}), 2)
         assert out.is_error and not out.retry and "stopped working" in out.content
     await acct.aclose()
@@ -703,4 +702,21 @@ async def test_the_inbox_is_read_often_while_talking_and_seldom_when_quiet(tmp_p
     site.say(900, "oh hi")
     fired = await asyncio.wait_for(talking, 1)  # read often
     assert "oh hi" in fired.content
+    await acct.aclose()
+
+
+async def test_a_login_that_stopped_working_is_forgotten_and_no_longer_watched(tmp_path):
+    """Bilibili ended the login: the inbox watch is not started again each cycle, and the
+    next BiliLogin gives a new code at once, saying why."""
+    store, site = Store(), Bilibili()
+    acct = await logged_in(tmp_path / "life", store, site)
+    assert await acct.standing()
+    acct._login = {"SESSDATA": "gone"}  # Bilibili answers -101 to it
+    acct._retire()
+    out = await asyncio.wait_for(acct.run("BiliWatchMessages", {}), 2)
+    assert out.is_error and not out.retry
+    assert await acct.standing() == [] and not store.saved
+    assert names(await acct.specs()) == {"BiliLogin"}
+    again = await acct.run("BiliLogin", {})
+    assert "stopped working" in again.content and again.attachments
     await acct.aclose()
