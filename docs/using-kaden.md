@@ -295,8 +295,12 @@ takes a screenshot of your whole desktop and sees it, also when you talk to it.
   Auto it looks without asking when your message asks for it.
 - **Everything on screen is sent to the model**: close what you do not want it to see.
 - **It only looks.** It cannot click or type on your desktop.
-- **KDE Plasma only** for now: it uses Spectacle, KDE's screenshot program. On other
-  desktops the agent does not have this tool.
+- **On Linux** it asks your desktop for the picture (GNOME, KDE and others, through the
+  desktop portal); your desktop may ask you to allow it. Without a portal the agent does
+  not have this tool.
+- **On macOS** Kaden needs the Screen Recording permission (System Settings → Privacy &
+  Security → Screen Recording, for Kaden or the terminal you started it from). Without it
+  the agent says so instead of looking.
 
 A screenshot costs about as much as a page of text each time, and stays in the
 conversation like an attached picture.

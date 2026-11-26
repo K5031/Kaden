@@ -958,12 +958,14 @@ The design is in [the note](notes/implemented/2026-11-12-voice-conversation.md);
 
 ## Seeing the screen
 
-Design: [Agent Note](notes/implemented/2026-11-12-seeing-the-screen.md).
+Design: [Agent Note](notes/implemented/2026-11-12-seeing-the-screen.md), capture:
+[Agent Note](notes/implemented/2026-11-26-screenshots-on-each-system.md).
 
 | Choice | Decision |
 |---|---|
-| Program | `spectacle`, looked up on `PATH` when the module is made; without it the tool is not listed |
-| Capture | `-b -n -f -o <folder>/screenshot.png` in a `kaden-screen-` temporary folder, removed after the read; 20 s (`screen.CAPTURE_TIMEOUT`), then the program is killed, as on Stop |
+| Capture | `screen.find()` when the module is made: macOS `screencapture` on `PATH`; Linux the desktop portal when its Screenshot `version` property answers on the session bus within 2 s; else none and the tool is not listed |
+| Portal | `Screenshot("", {handle_token: "kaden<16 hex>", interactive: false})` over jeepney's asyncio router, the `Response` signal matched (`AddMatch`) before the call; response 1 is "refused on the desktop", another non-zero or no `uri` "gave no screenshot"; the file at the URI read, then removed; on Stop or after 20 s `Request.Close` is sent |
+| macOS | `CGPreflightScreenCaptureAccess` (ctypes, CoreGraphics) first: false is an error naming System Settings → Privacy & Security → Screen Recording; a macOS without the function counts as allowed. Then `screencapture -x -t png <folder>/screenshot.png` in a `kaden-screen-` temporary folder, removed after the read; 20 s (`screen.CAPTURE_TIMEOUT`), then the program is killed, as on Stop |
 | Result | `[Screenshot of the user's desktop, W x H pixels]` (the size from the PNG header) with the picture as `Image("image/png", …, "screenshot.png")`; over 5 MB is an error |
 | Tool | No arguments, not read-only, never confined, timeout 60 s |
 

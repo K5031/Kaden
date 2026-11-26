@@ -313,7 +313,7 @@ class ShellFilesTools(Tools):
                                    stall_timeout=shell_stall_timeout)
         self._web = web_tools or web.Web()
         self._bili = bilibili_tools or bilibili.Bilibili()
-        self._screen = screen_tools or screen.Screen.found()
+        self._screen = screen_tools or screen.Screen(screen.find())
         self._account = account
         # Each conversation's files as it last read or wrote them: (conversation, file)
         # to what _version says of it.
