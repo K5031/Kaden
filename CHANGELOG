@@ -6,15 +6,25 @@ The first release with packages to download: Ubuntu 24.04 and 26.04, Fedora 44 a
 Arch. Kaden is now licensed under the AGPL, version 3 or later.
 
 - **Continuous:** one Kaden with a life of its own beside your chats, behind the switch at
-  the top right: their own memory, journal, daily amount and settings.
+  the top right: their own memory, journal and daily amount, and their own settings
+  behind the gear in their view (name, who they are, daily amount, tool settings, saved
+  answers).
+- **Memory recall:** before the agent answers, the notes from its long-term memory that
+  are relevant to what came in are brought before it, as in Claude Code.
 - **Claude Code's tools and ways:** its shell, file and web tools, plan mode, subagents
-  (also in their own git worktree), AskUserQuestion, hooks, skills, and saved answers to
-  permission questions (always or never allow).
+  (also in their own git worktree), AskUserQuestion, hooks and skills.
+- **Permissions:** Always allow is one click and names what it keeps; on commands joined
+  with `&&`, `;` or `|` it keeps each part, and such a chain runs without asking only when
+  every part is allowed. Never allow is under ▾ beside Deny.
+- **Notifications:** when Kaden or Continuous waits on your answer and the window is not
+  in front, a desktop notification says so.
 - **Voice:** talk with Kaden, choose its voice or add one from a recording, and, with an
   NVIDIA GPU, a natural voice; microphone and speaker apart, loaded at start if you like.
 - **Watches:** a tool can watch something (new videos, messages) and wake the agent each
   time it happens, also after a restart.
-- **A Bilibili account of its own** for the agent, logged in by a QR code you scan.
+- **A Bilibili account of its own** for the agent, logged in by a QR code you scan: it
+  follows channels, hears of their new videos, and reads and sends messages, quickly
+  while a conversation is going. Whose messages wake it is a setting.
 - **Tool settings:** a Tools module can offer settings, on a Tools page in Settings.
 - **Backups** of your chats and Continuous, once a day.
 - Attachments reach the agent as files, and a look closer to Claude's.
