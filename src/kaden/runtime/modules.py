@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import importlib
 import logging
 import os
+import pkgutil
 import re
 import shlex
 import sys
@@ -80,11 +80,8 @@ def installed(kind: str) -> list[Installed]:
 
 
 def load_entry(kind: str, module_id: str, target: str) -> Installed | None:
-    module_name, _, attr = target.partition(":")
     try:
-        factory: Any = importlib.import_module(module_name)
-        for part in attr.split("."):
-            factory = getattr(factory, part)
+        factory: Any = pkgutil.resolve_name(target)
     except Exception:
         logger.info("module %s %r (%s) does not load", kind, module_id, target, exc_info=True)
         return None
@@ -96,9 +93,8 @@ def load_entry(kind: str, module_id: str, target: str) -> Installed | None:
 def declared_settings(target: str) -> tuple[ToolSetting, ...]:
     """The settings a Tools factory declares (its user_config); none if it declares none,
     declares them wrongly, or does not load (building it says why). Blocks (imports it)."""
-    module_name, _, attr = target.partition(":")
     try:
-        factory: Any = getattr(importlib.import_module(module_name), attr)
+        factory: Any = pkgutil.resolve_name(target)
     except Exception:
         logger.info("tools %s do not load", target, exc_info=True)
         return ()

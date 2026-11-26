@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import importlib
 import os
+import pkgutil
 import subprocess
 import sys
 import tomllib
@@ -412,11 +412,7 @@ type EventLoop = Callable[[Coroutine[Any, Any, Any]], Any]
 def frontend_loop(spec: ModuleSpec) -> EventLoop:
     """How a frontend runs: its factory's event_loop, else asyncio.run. Imports the factory
     without calling it."""
-    module_name, _, attr = spec.factory.partition(":")
-    factory: Any = importlib.import_module(module_name)
-    for part in attr.split("."):
-        factory = getattr(factory, part)
-    return getattr(factory, "event_loop", asyncio.run)
+    return getattr(pkgutil.resolve_name(spec.factory), "event_loop", asyncio.run)
 
 
 async def launch(args: Launch, launcher: str, config: InstanceConfig | None = None, *,

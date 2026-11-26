@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
-import importlib
 import os
+import pkgutil
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -22,6 +22,8 @@ from kaden.runtime.config import InstanceConfig, ModuleSpec, Restart
 from kaden.runtime.modules import targets
 
 LOCK_FILE = "instance.lock"
+
+
 class ModuleLoadError(Exception):
     """A module could not be built from its configuration (bad factory path, bad options,
     missing credentials). The message names the factory and fits on one line."""
@@ -60,12 +62,12 @@ class InstanceLock:
 
 def load_module[T](spec: ModuleSpec, kind: type[T], paths: InstancePaths) -> T:
     """Import "package.module:factory" and call factory(options, paths)."""
-    module_name, sep, attr = spec.factory.partition(":")
+    _, sep, attr = spec.factory.partition(":")
     if not sep or not attr:
         raise ModuleLoadError(
             f"module path must be 'package.module:factory', got {spec.factory!r}")
     try:
-        factory: Any = getattr(importlib.import_module(module_name), attr)
+        factory: Any = pkgutil.resolve_name(spec.factory)
         module = factory(dict(spec.options), paths)
     except (ImportError, AttributeError, ValueError, TypeError) as e:
         raise ModuleLoadError(f"{spec.factory}: {e}") from e
