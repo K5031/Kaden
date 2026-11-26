@@ -116,3 +116,31 @@ def test_hooks_are_read_from_the_configuration(tmp_path):
         '[[hooks]]\nwhen = "after"\ntool = "Edit"\ncommand = "ruff format ."\n')
     assert load_config(Launch(tmp_path)).runtime.hooks == (
         Hook("after", "ruff format .", tool="Edit"),)
+
+
+async def test_a_hook_cut_short_ends_with_everything_it_started(tmp_path):
+    import asyncio
+    import os
+
+    from kaden.runtime import hooks
+
+    pid_file = tmp_path / "child.pid"
+    command = f"sh -c 'sleep 30 & echo $! > {pid_file}; wait'"
+    task = asyncio.create_task(hooks.run(Hook("before", command), {}, None))
+    for _ in range(200):
+        if pid_file.exists() and pid_file.read_text().strip():
+            break
+        await asyncio.sleep(0.01)
+    child = int(pid_file.read_text())
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    for _ in range(200):
+        try:
+            os.kill(child, 0)
+        except ProcessLookupError:
+            break
+        await asyncio.sleep(0.01)
+    else:
+        os.kill(child, 9)
+        pytest.fail("the hook's child outlived it")

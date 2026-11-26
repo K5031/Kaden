@@ -46,18 +46,25 @@ async def run(hook: Hook, call: dict[str, Any], folder: Path | None) -> Outcome:
             hook.command, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
             cwd=folder if folder is not None and folder.is_dir() else None,
-            start_new_session=True)  # its own group, so a hook that hangs is ended whole
+            start_new_session=True)  # its own group, so a hook is ended whole
     except OSError as e:
         return Outcome(None, str(e))
     try:
         _, err = await asyncio.wait_for(proc.communicate(json.dumps(call).encode()),
                                         TIMEOUT_S)
     except TimeoutError:
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(proc.pid, signal.SIGKILL)
+        _end(proc)
         await proc.wait()
         return Outcome(None, f"did not end within {TIMEOUT_S:g} s")
+    except BaseException:  # cancelled (Stop): it ends too, whatever it started included
+        _end(proc)
+        raise
     return Outcome(proc.returncode, err.decode("utf-8", "replace").strip())
+
+
+def _end(proc: asyncio.subprocess.Process) -> None:
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(proc.pid, signal.SIGKILL)
 
 
 def parse(hooks: Any, where: str) -> tuple[Hook, ...]:
