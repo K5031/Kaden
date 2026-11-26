@@ -276,3 +276,36 @@ async def test_a_stream_the_duration_limit_cannot_end_is_reported(make: Any) -> 
         held.set()
     kinds = [f.kind for f in h.rec.of(Failure)]
     assert FailureKind.INTERNAL in kinds and kinds[-1] == FailureKind.BUDGET
+
+
+@pytest.mark.parametrize("content", [
+    {"schema_version": 2, "input_tokens": 5},
+    {"schema_version": 1, "input_tokens": 5, "spent_on_cake": 1},
+    {"input_tokens": 5},
+])
+async def test_usage_of_another_kind_is_refused_and_left_as_it_is(
+        make: Any, tmp_path: Any, content: dict[str, Any]) -> None:
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "usage.json").write_text(json.dumps(content))
+    h: Harness = await make(data_dir=data)
+    with pytest.raises(ValueError, match="usage.json"):
+        await h.start()
+    await h.close()
+    assert json.loads((data / "usage.json").read_text()) == content
+
+
+async def test_a_failed_usage_write_still_lets_go_of_the_data_folder(
+        make: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    from kaden.runtime import budget
+    from kaden.runtime.instance import InstanceLock
+
+    h: Harness = await make()
+    await h.start()
+
+    def fail(path: Any, data: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(budget, "_write_json", fail)
+    await h.close()
+    InstanceLock.acquire(h.data_dir).release()  # free again

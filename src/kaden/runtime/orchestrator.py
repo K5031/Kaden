@@ -593,8 +593,11 @@ class Runtime:
 
         if not self._started:
             data_dir = self._config.data_dir
+            try:
+                await asyncio.to_thread(self._budget.load, data_dir / USAGE_FILE)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"{data_dir / USAGE_FILE} cannot be read: {e}") from None
             self._started = True
-            await asyncio.to_thread(self._budget.load, data_dir / USAGE_FILE)
             self._budget.save()
             await self._budget.flush()
             self._log.open(data_dir / EVENT_LOG_FILE)
@@ -1025,7 +1028,10 @@ class Runtime:
                 logger.exception("module aclose failed")
         if self._started:
             self._budget.save()
-            await self._budget.flush()
+            try:
+                await self._budget.flush()
+            except Exception:  # the data folder is let go all the same
+                logger.exception("usage could not be saved")
         if self._inherited is None:
             os.environ.pop(PERMISSION_CEILING_ENV, None)
         else:

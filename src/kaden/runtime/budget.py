@@ -118,9 +118,15 @@ class Totals:
 
 
 def _read_totals(path: Path) -> Totals:
+    """ValueError for a file of another schema version, or one that is not usage."""
     data = json.loads(path.read_text())
-    data.pop("schema_version", None)
-    return Totals(**data)
+    if not isinstance(data, dict) or data.pop("schema_version", None) != USAGE_SCHEMA_VERSION:
+        raise ValueError(f"{path} is not usage of schema version {USAGE_SCHEMA_VERSION}")
+    try:
+        return Totals(**data)
+    except TypeError:
+        raise ValueError(f"{path} holds what usage does not: "
+                         f"{', '.join(sorted(set(data) - set(asdict(Totals()))))}") from None
 
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
@@ -156,9 +162,10 @@ class BudgetTracker:
         self._writer: asyncio.Task[None] | None = None
 
     def load(self, path: Path) -> None:
-        self._path = path
+        """ValueError for a file it cannot read (_read_totals); then nothing is written."""
         if path.exists():
             self.totals = _read_totals(path)
+        self._path = path
 
     def save(self) -> None:
         if self._path is None:
