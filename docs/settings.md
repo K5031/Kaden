@@ -60,7 +60,8 @@ set with `[memory]` in [config.toml](#configtoml). Kaden comes with two:
   worktrees share one memory; a folder outside any repository is its own project. The agent writes them itself while it works, and every
   conversation in that folder sees the index as it was when the conversation started: a
   memory saved or edited meanwhile shows up in the next conversation. The agent reads a
-  memory before it changes it and edits it in place. A conversation gets the first 200
+  memory before it changes it and edits it in place. Hidden files (such as `.DS_Store`)
+  and files that are not text are not memories and are left out. A conversation gets the first 200
   lines of the index, so the agent is told to condense it when it grows past that. Choose
   it with:
 

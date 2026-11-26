@@ -404,3 +404,37 @@ async def test_str_replace_takes_edits_names_and_others_are_named_back(make, tmp
     assert results["e"].status is ToolStatus.ERROR
     assert "'old_str'" in results["e"].content and "unexpected" in results["e"].content
     assert results["v"].status is ToolStatus.OK  # every tool's step_summary is still taken
+
+
+async def test_files_that_are_not_memories_are_left_out(tmp_path: Path):
+    """A folder can hold what the system or another program put there (.DS_Store, an
+    image): they are not notes, and listing them breaks nothing."""
+    from kaden.api import ToolCall
+
+    memory = FilesMemory(tmp_path / "m.db", CONFIG, projects=tmp_path / "p")
+    await memory.save_note("tea", "Drinks tea", "Only green tea.")
+    folder = tmp_path / "p" / "default" / "memory"
+    (folder / ".DS_Store").write_bytes(b"\x00\x00\x00\x01Bud1\xff\xfe")
+    (folder / "photo.md").write_bytes(b"\x89PNG\r\n\x1a\n\xff")
+    assert [n.title for n in await memory.notes()] == ["tea.md"]
+    conv = await memory.create_conversation()
+    listed = await memory.execute(ToolCall("v", "memory", {"command": "view", "path": ""}),
+                                  Context(conv.id))
+    assert not listed.is_error and listed.content.startswith("tea.md (")
+    assert ".DS_Store" not in listed.content and "photo.md" not in listed.content
+    read = await memory.execute(ToolCall("r", "memory", {"command": "view",
+                                                         "path": "photo.md"}),
+                                Context(conv.id))
+    assert read.is_error and "not a text file" in read.content
+    await memory.aclose()
+
+
+async def test_a_description_stays_on_one_line(tmp_path: Path):
+    """Frontmatter takes one line per field: a description written over several lines is
+    joined, as the built-in memory does."""
+    memory = FilesMemory(tmp_path / "m.db", CONFIG, projects=tmp_path / "p")
+    note = await memory.save_note("tea", "Drinks tea\nmetadata: none\n  green", "Body.")
+    assert note.description == "Drinks tea metadata: none green"
+    [listed] = await memory.notes()
+    assert listed.description == note.description and listed.text == "Body.\n"
+    await memory.aclose()

@@ -11,6 +11,7 @@ import pytest
 from openai import AsyncOpenAI
 
 from kaden.api import (
+    Image,
     InferenceRequest,
     InstancePaths,
     Message,
@@ -18,6 +19,7 @@ from kaden.api import (
     Role,
     StopReason,
     Text,
+    TextDelta,
     ToolCall,
     ToolResult,
     ToolStatus,
@@ -243,16 +245,63 @@ async def test_missing_usage_is_estimated(oai: OpenAIDriver) -> None:
 
 
 async def test_tool_calls_with_stop_finish_reason(oai: OpenAIDriver) -> None:
-    # Some local servers report "stop" even when the turn ends in tool calls.
+    """Some local servers report "stop" even when the turn ends in tool calls. The stop
+    reason stays as reported: the runtime runs a turn's calls whatever it is."""
     oai.stub.queue(Reply(events=[
         chunk({"tool_calls": [{"index": 0, "function": {"name": "get_weather",
                                                         "arguments": '{"city": "Rome"}'}}]}),
         chunk(finish="stop"), DONE,
     ]))
     done = check_stream(await collect(oai.core, oai.request([user("hi")])))
-    assert done.stop is StopReason.TOOL_USE
+    assert done.stop is StopReason.END_TURN
     [call] = done.message.blocks
     assert isinstance(call, ToolCall) and call.id and call.arguments == {"city": "Rome"}
+
+
+async def test_a_filtered_turn_with_calls_is_a_refusal(oai: OpenAIDriver) -> None:
+    oai.stub.queue(Reply(events=[
+        chunk({"tool_calls": [{"index": 0, "id": "c", "function": {
+            "name": "get_weather", "arguments": '{"city": "Rome"}'}}]}),
+        chunk(finish="content_filter"), DONE,
+    ]))
+    done = check_stream(await collect(oai.core, oai.request([user("hi")])))
+    assert done.stop is StopReason.REFUSAL
+
+
+async def test_a_refusal_is_the_answers_text(oai: OpenAIDriver) -> None:
+    """OpenAI streams a refusal in its own field, not in content."""
+    oai.stub.queue(Reply(events=[
+        chunk({"role": "assistant", "content": None, "refusal": "I can't "}),
+        chunk({"refusal": "help with that."}),
+        chunk(finish="stop"), usage_chunk(), DONE,
+    ]))
+    events = await collect(oai.core, oai.request([user("hi")]))
+    done = check_stream(events)
+    assert done.stop is StopReason.REFUSAL
+    assert done.message.blocks == (Text("I can't help with that."),)
+    assert "".join(e.text for e in events if isinstance(e, TextDelta)) == (
+        "I can't help with that.")
+
+
+async def test_an_estimate_counts_an_image_as_a_picture_not_its_bytes(
+        oai: OpenAIDriver) -> None:
+    picture = "A" * 400_000  # base64 of a 300 kB screenshot
+    message = Message("u", Role.USER, (Text("What is this?"), Image("image/png", picture)),
+                      time.time())
+    oai.stub.queue(Reply(events=text_events(["A cat."], usage=False)))
+    done = check_stream(await collect(oai.core, oai.request([message])))
+    assert picture in json.dumps(oai.stub.bodies[-1]["messages"])  # it was sent
+    assert 0 < done.usage.input_tokens < 5_000
+
+
+async def test_an_estimate_is_of_what_was_sent(deepseek: DeepSeekDriver) -> None:
+    """DeepSeek gets its reasoning back: the estimate counts it."""
+    thought = "x" * 40_000
+    messages = [user("q"), assistant(Reasoning(thought, model=MODEL), Text("a")), user("q2")]
+    deepseek.stub.queue(Reply(events=text_events(["ok"], usage=False)))
+    done = check_stream(await collect(deepseek.core, deepseek.request(messages)))
+    assert thought in json.dumps(deepseek.stub.bodies[-1]["messages"])
+    assert done.usage.input_tokens >= 10_000
 
 
 async def test_truncated_stream_is_transient(oai: OpenAIDriver) -> None:

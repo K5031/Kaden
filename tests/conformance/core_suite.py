@@ -171,9 +171,9 @@ def check_stream(events: Sequence[CoreEvent]) -> Completed:
             raw = "".join(d.arguments_chunk for d in fragments)
             assert (json.loads(raw) if raw else {}) == call.arguments
 
-    if calls:
-        assert done.stop in (StopReason.TOOL_USE, StopReason.MAX_TOKENS)
-    elif done.stop is StopReason.TOOL_USE:
+    # With calls, the stop is what the provider reported (a server may say "stop", a
+    # filter may refuse): the runtime runs a turn's calls whatever it is.
+    if not calls and done.stop is StopReason.TOOL_USE:
         pytest.fail("TOOL_USE without tool calls")
 
     reports = [e.usage for e in events if isinstance(e, UsageReport)]

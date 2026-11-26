@@ -141,6 +141,8 @@ class FilesMemory(SqliteArchive):
             if note_id is not None:
                 current = files.read(note_id)  # KeyError if unknown
                 fields, _ = split_frontmatter(current.text)
+                if path != current.path and files.exists(path):
+                    raise ValueError(f"another note is titled {path!r}")
             else:
                 fields = {}
                 try:

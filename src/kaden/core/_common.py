@@ -17,6 +17,8 @@ from kaden.api import (
     JSON,
     KEYCHAIN_SERVICE,
     Block,
+    ContextOverflowError,
+    CoreError,
     Message,
     ModelInfo,
     OperationResult,
@@ -24,9 +26,13 @@ from kaden.api import (
     ServerToolUse,
     ToolResult,
     ToolStatus,
+    TransientCoreError,
 )
 
 ERROR_STATUSES = frozenset(ToolStatus) - {ToolStatus.OK, ToolStatus.BACKGROUNDED}
+# What providers say when a request is longer than the model takes; there is no common code.
+_OVERFLOW_MESSAGES = ("maximum context length", "context length", "context window",
+                      "too many tokens", "prompt is too long", "exceed context limit")
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +112,26 @@ def retry_after(headers: Mapping[str, str] | None) -> float | None:
         return max(0.0, parsedate_to_datetime(value).timestamp() - time.time())
     except (TypeError, ValueError):
         return None
+
+
+def status_error(status: int, message: str, *, overflow: bool = False,
+                 transient: bool = False, headers: Mapping[str, str] | None = None
+                 ) -> CoreError:
+    """The CoreError for an HTTP error status. A 400 or 413 whose `message` says the
+    request is too long, or that the provider marked so (`overflow`), is a
+    ContextOverflowError; 408, 409, 429, 5xx, or what the provider marked `transient`, is
+    retried after `headers`' retry-after; anything else is permanent."""
+    if status in (400, 413) and (overflow or any(m in message.lower()
+                                                 for m in _OVERFLOW_MESSAGES)):
+        return ContextOverflowError(message)
+    if transient or status in (408, 409, 429) or status >= 500:
+        return TransientCoreError(message, retry_after(headers))
+    return CoreError(message)
+
+
+def transport_error(error: Exception) -> CoreError:
+    """A failure with no HTTP status: connection failures, timeouts, errors mid-stream."""
+    return TransientCoreError(f"{type(error).__name__}: {error}")
 
 
 def result_text(result: ToolResult, *, mark_errors: bool = False) -> str:

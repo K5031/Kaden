@@ -197,9 +197,16 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   view if it alone is too big), then the summary, then the newest long-term entries (at
   most 5% of the budget), then older verbatim messages as far back as fits.
 - Storage format 2: blocks are `{"type": tag, "data": {...}}` with `BLOCK_TYPES` tags.
-  `OpaqueBlock(type, data)` is stored as exactly that. An unknown tag, or a known tag whose
-  data the current class cannot take (a field added later), decodes to `OpaqueBlock`, so it
-  re-encodes unchanged. Appending a block class without a tag raises TypeError.
+  `OpaqueBlock(type, data)` is stored as exactly that, also as a tool result's attachment.
+  An unknown tag decodes to `OpaqueBlock`, so it re-encodes unchanged. An `OpaqueBlock`
+  under a tag this version knows is refused at `append` (ValueError): it would be stored
+  as a block that cannot be read back. Data a known class cannot take is not decoded
+  leniently: only another schema version could hold it, and that store is refused.
+  Appending a block class without a tag raises TypeError.
+- The `messages.format` column (`codec.FORMAT_VERSION`) is written and never read. It
+  stays: dropping it needs a new schema version, which refuses every existing store
+  (no migration code), and an unused integer per row costs nothing. Drop it with the next
+  schema change that happens anyway.
 - Stores use only the stable tags from the start; no code reads Python import-path tags.
   Version 1 stores written by the pre-migration module with import-path tags are refused
   rather than read as opaque blocks. Schema versions: see "SqliteMemory schema" below.
@@ -212,8 +219,14 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   score = −bm25 (higher is better). Unknown `conversation_id` raises KeyError.
 - Concurrency: WAL journal, one connection per `SqliteMemory` on a dedicated worker
   thread; a second process opening the same file reads and writes alongside it (SQLite's
-  default 5 s busy timeout). Token counting in `assemble`/`maintain` runs on the event loop
-  (the counter is the runtime's fast estimate).
+  default 5 s busy timeout). Encoding and decoding blocks runs on that thread too. Token
+  counting in `assemble`/`maintain` runs on the event loop (the counter is the runtime's
+  fast estimate).
+- Schema scripts run one statement at a time inside the open transaction
+  (`executescript` would commit it); a statement ends where `sqlite3.complete_statement`
+  says, so a trigger body's own semicolons and line breaks are safe.
+- recall with scope "all" lists the conversations, then searches them; a conversation
+  deleted in between (KeyError) is handled by listing once more and searching again.
 
 ### Core (`kaden.core.anthropic`, `kaden.core.openai_compat`)
 
@@ -232,7 +245,14 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   extras) or None. OpenAI-compatible also reads a `max_output_tokens` extra.
 - `count_tokens`: Anthropic uses its counting endpoint; OpenAI-compatible returns None.
   When an OpenAI-compatible server reports no usage, `Completed.usage` is a 4-chars-per-
-  token estimate.
+  token estimate of the request as it was sent (reasoning replayed, images as the profile
+  sends them), each picture counted as 1 000 tokens (`_IMAGE_TOKENS`, about a megapixel on
+  OpenAI's models) instead of its base64.
+- Errors: both Cores map an HTTP status through `_common.status_error`: a 400 or 413 whose
+  message names the context limit (one list of phrases, `_common._OVERFLOW_MESSAGES`, as
+  no provider has a common code; OpenAI's `context_length_exceeded` code also counts) is
+  `ContextOverflowError`; 408, 409, 429, 5xx and Anthropic's transient error types retry;
+  the rest are permanent.
 - Unparseable or non-object tool arguments give `ToolCall(arguments={}, raw_arguments=raw)`.
   When replayed, such a call is sent with `{}` arguments.
 - Rendering: ToolResults with a status other than OK and ERROR are prefixed `[<status>]`
@@ -258,7 +278,18 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   not used: it drops every block after the first mismatch on each request unless the
   failing blocks are removed from the history, which the Core cannot do, and it is only
   accepted with adaptive thinking.
-- Stop reasons: Anthropic `refusal` and OpenAI `content_filter` map to REFUSAL.
+- Stop reasons: Anthropic `refusal` and OpenAI `content_filter` map to REFUSAL. An OpenAI
+  `delta.refusal` is the answer's text (streamed as TextDelta) and makes the stop REFUSAL.
+  A turn with tool calls keeps the stop the provider reported (a local server's "stop", a
+  filter's refusal): the runtime runs a turn's calls whatever its stop reason, so nothing
+  rewrites it to TOOL_USE, and the Core conformance suite asks TOOL_USE only to come with
+  calls.
+- Anthropic tool input is parsed once, when its block ends (`content_block_stop`); a
+  paused turn's continuation and the final message both use that.
+- Keys: a Core reads its key from the environment, then the keychain
+  (`_common.stored_key`, as `api.KEYCHAIN_SERVICE` says). It duplicates the runtime's
+  `settings.read_secret`; a Core must not import the runtime, so the one function belongs
+  in `api.py` beside `KEYCHAIN_SERVICE` (contract issue P7). Until then both stay.
 
 ### OpenAI-compatible profiles (`profile` option of `kaden.core.openai_compat:factory`)
 
@@ -479,16 +510,20 @@ Design: [Agent Note](notes/implemented/2026-11-07-autonomy-into-sessions.md).
   forgotten texts (casefolded, whitespace collapsed); compaction drops a new entry whose
   fingerprint is there. A reworded fact is new to it.
 - `summaries`: one row per conversation, its current summary; writing a new one deletes
-  the old row in the same transaction (`_replace_summary`). Summaries are derived from
+  the old row in the same transaction (`_commit_summary`). Summaries are derived from
   messages the archive keeps, so they are working state, not part of the append-only
   archive.
 - Seeding: while `seed_from` is set and the conversation has no summary row, `maintain`
   first runs the compaction prompt (light model) on the source's current summary and as
   many of its newest exchanges as fit, and stores the result as a summary with
   `through_seq` 0. Long-term lines in that output are ignored (the source already
-  contributed them). An empty source writes nothing. An empty result writes nothing and
-  skips that maintain's compaction too, since a first summary from compaction would end
-  seeding; the next maintain tries again.
+  contributed them). Only the source's messages created before the conversation was are
+  read; its summary is the current one, which covers later messages only if the source
+  was compacted since. An empty source writes an empty summary row, so it is read once
+  and what it gets later is not seeded. A source deleted while maintain runs is no seed
+  (its `seed_from` is NULL by then). An empty result writes nothing and skips that
+  maintain's compaction too, since a first summary from compaction would end seeding;
+  the next maintain tries again.
 - Titles: after seeding and compaction, a conversation with no title gets one from its
   first USER message with Text (2000 characters at most), light model, 20 output tokens,
   prompt `_TITLE_PROMPT`. The first non-empty line is kept, quotes, `#*_` and a trailing
@@ -585,6 +620,8 @@ Design: [Agent Note](notes/implemented/2026-11-10-memory-notes.md). Tools offere
 | Save pass | In `maintain` when the newest message is an answer calling no tool and comes after the last saved one; reads the messages since (the newest part when long), the profile, notes' texts within 5 % of the light model's window (most recently written first, stopping at the first that does not fit) and the rest as an index; writes `<save>` (whole text) and `<append>` changes; up to 1 024 output tokens; a CoreError is logged and the exchange is read again after the next answer |
 | Runtime | `maintain` is called once more after a cycle's last answer, before IDLE; when it acted, `MemoriesChanged(saved)` names the notes whose latest revision is new (read with `notes()` before and after); the event log keeps their number, not their titles |
 | Notice | Frontends show a non-empty `saved` as a line after the answer: "Memory updated: Trip, About you", with an "Open memory" link in the desktop app. Saves by the agent's tools show as steps, and the user's own edits are not announced |
+| Concurrent edits | The save pass writes from notes as it read them before the light-model call. A `<save>` of a note whose current revision is no longer the one read (edited by the user or the agent's `save_note` meanwhile, or created under that title meanwhile) is skipped and logged; that edit stays. `<append>` adds to the current text, so it still applies |
+| Agent deletion | `forget_note` erases the note with its revisions, when the user asks or the agent finds it no longer true. The user decided this on 2026-11-26; AGENTS.md's archive rule names notes as the exception. Messages are never erased by the agent |
 | Compaction | Writes the summary only; facts are the save pass's |
 | Checked | Against Claude Haiku 5.5 (2026-11-10): a self-introduction made a profile and a project note, small talk saved nothing, a later plan was appended to the project note; about one cent for three turns |
 
@@ -647,7 +684,8 @@ Design: [Agent Note](notes/implemented/2026-11-10-provider-web-search.md).
 | Steps | One `ServerToolUse` per web search or web fetch, placed where its result came; the code dynamic filtering runs is not shown (unless a turn has nothing else) |
 | Replay | A turn's server blocks, all of them in the order they came (they refer to each other), ride on its first shown use and are sent back unchanged, to the same model, while web search is on, and only after the user's latest message; earlier turns' searches go as text (summary and found pages). Checked against Opus 5.5 (2026-11-10): a second turn replaying the whole set cost about three times the first |
 | Fallbacks | A 400 saying web search is not enabled switches it off for the instance (Kaden's own search is offered again); a 400 that names a server tool block (its `srvtoolu_` id or its block type, `anthropic._SERVER_BLOCK_ERROR`), in a request that replays some, resends them as text, and those uses go as text in every later request too (`AnthropicCore._refused`, by their ids), so the refusal is paid for once. Any other 400 is reported from the request that got it. The request that goes again is the same one, built by the one function that builds every body (`AnthropicCore._body`): a paused turn sent back to be continued goes again with what it had, and the answer's reasoning is bound to the body that was sent |
-| Paused turns | `pause_turn` is continued in the same request, up to 5 times, the turn's blocks sent back as the assistant's |
+| Paused turns | `pause_turn` is continued in the same request, up to 5 times, the turn's blocks sent back as the assistant's. Still paused after that, the turn ends with stop MAX_TOKENS (cut short); a server tool use still waiting for its result is a failed step ("Not finished") without state, so it goes back as text, and it is not among the blocks replayed |
+| Search off | The request's WebSearch is the Core's when search was on as it started (`AnthropicCore.stream`, `ours`). Once a 400 switches search off, the retry leaves the Core's WebSearch out (nothing runs it), and `tools` with it when nothing is left; a later request's WebSearch is Kaden's own and goes as a client tool. The 400s are told apart by the error body's message, as the API has no code for either |
 | Sources | The cited pages, deduplicated in citing order, as a final "Sources:" line of links |
 
 ## One window per data folder
@@ -913,7 +951,8 @@ The design is in [the note](notes/implemented/2026-11-12-voice-conversation.md);
 |---|---|
 | Shared archive | `SqliteArchive` (`kaden.memory.sqlite`): messages, summaries, search, conversation metadata, erasure. Hooks `_long_term(info) -> LongTerm(head, lines, render)`, `_after_answer`, `_erase`. `SqliteMemory` adds notes (schema 9, `memory.db`); `FilesMemory` adds the memory folders (schema 2, `memory-files.db`) |
 | Budget | The head (rules or profile) whenever it fits the room, then lines from the top within the long-term fraction |
-| Files as notes | Id and title = path, description = frontmatter `description`, text = body. Saving writes Claude Code frontmatter (not for `MEMORY.md`); a new title renames the file. No revisions |
+| Files as notes | Id and title = path, description = frontmatter `description`, text = body. Saving writes Claude Code frontmatter (not for `MEMORY.md`), the description on one line (its whitespace collapsed, as the built-in memory does); a new title renames the file, and one that another file has is refused (ValueError). No revisions |
+| Other files | Hidden files and folders (`.DS_Store`, `.git`) and files that are not UTF-8 text are not memories: `notes()` and `view ""` leave them out, and viewing one by path answers that it is not a text file |
 | Folder | The runtime passes the open conversation's work folder to `notes`, `save_note`, `delete_note`; `SqliteMemory` ignores it |
 | Project | `FilesMemory` names the memory folder after `folder.project_root`: the nearest folder with a `.git` directory, or for a `.git` file (a worktree) the repository its `commondir` points to; a submodule is its own project. Found once per work folder and process (`FilesMemory._keys`) |
 | `modified` | UTC, ISO 8601 with milliseconds and `Z`, under `metadata`; replaced on each write, added with a `metadata` block when the frontmatter has none; a file without frontmatter and `MEMORY.md` are not stamped |

@@ -424,7 +424,7 @@ class MemoryConformance:
         conv = await memory.create_conversation(title="test")
         message = Message(
             "future", Role.USER,
-            (Text("tok0001 before"), OpaqueBlock("image", {"w": 3, "tags": ["a"], "r": 0.1}),
+            (Text("tok0001 before"), OpaqueBlock("hologram", {"w": 3, "tags": ["a"], "r": 0.1}),
              Text("after")),
             1_700_000_000.123456,
         )
@@ -774,6 +774,21 @@ class MemoryConformance:
         assert not any(n.title.startswith("journey") for n in await memory.notes(folder=project))
         with pytest.raises(KeyError):
             await memory.delete_note(renamed.id, folder=project)
+
+    async def test_a_note_is_not_renamed_onto_another(self, open_memory: MemoryFactory,
+                                                     tmp_path: Path):
+        memory = open_memory()
+        await self.editable(memory)
+        project = str(tmp_path / "project")
+        trip = await memory.save_note("trip", "The Oslo trip", "Leaves Friday.",
+                                      folder=project)
+        tea = await memory.save_note("tea", "Drinks", "Green tea.", folder=project)
+        with pytest.raises(ValueError):
+            await memory.save_note(tea.title, "", "Leaves Saturday.", note_id=trip.id,
+                                   folder=project)
+        kept = {n.id: n for n in await memory.notes(folder=project)}
+        assert "Green tea." in kept[tea.id].text and "Leaves Friday." in kept[trip.id].text
+        await memory.aclose()
 
     # ── Continue from ─────────────────────────────────────────────────────
 

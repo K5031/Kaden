@@ -3,6 +3,8 @@ replayed to Anthropic, continued when the API pauses a turn, charged per search.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from kaden.api import (
@@ -286,7 +288,59 @@ async def test_an_answer_after_a_fallback_is_bound_to_the_request_that_was_sent(
         *finish("tool_use")]))
     answer = (await collect(driver.core, request()))[-1].message
     driver.stub.queue(Reply(events=[message_start(), *text_block(0, ["ok"]), *finish("end_turn")]))
-    await collect(driver.core, request(OPUS, [user("Who plays the final?"), answer,
-                                              tool_results()]))
+    # Search is off now: the runtime no longer offers the Core's WebSearch.
+    await collect(driver.core, InferenceRequest(
+        OPUS, "", [user("Who plays the final?"), answer, tool_results()], [WEATHER_TOOL]))
     replayed = driver.stub.bodies[-1]["messages"][1]["content"]
     assert replayed[0].get("signature") == "sig-1"
+
+
+SEARCH_OFF = {"type": "error", "error": {
+    "type": "invalid_request_error",
+    "message": "Web search is not enabled for your organization."}}
+
+
+async def test_the_request_after_search_is_switched_off_has_no_search_tool(driver):
+    """The Core's WebSearch goes as Anthropic's own or not at all: no module runs it as a
+    tool of Kaden's. Once search is off, a WebSearch in a request is Kaden's own."""
+    driver.stub.queue(Reply(status=400, json_body=SEARCH_OFF))
+    driver.stub.queue(Reply(events=[message_start(), *text_block(0, ["ok"]), *finish("end_turn")]))
+    await collect(driver.core, request())
+    assert [t["name"] for t in driver.stub.bodies[-1]["tools"]] == [WEATHER_TOOL.name]
+    driver.stub.queue(Reply(events=[message_start(), *text_block(0, ["ok"]), *finish("end_turn")]))
+    await collect(driver.core, request())  # the runtime now offers Kaden's own WebSearch
+    assert driver.stub.bodies[-1]["tools"][0] == {
+        "name": "WebSearch", "description": "search", "input_schema": {"type": "object"}}
+
+
+async def test_a_retry_without_search_sends_no_tools_when_none_are_left(driver):
+    driver.stub.queue(Reply(status=400, json_body=SEARCH_OFF))
+    driver.stub.queue(Reply(events=[message_start(), *text_block(0, ["ok"]), *finish("end_turn")]))
+    only_search = InferenceRequest(OPUS, "", [user("q")], [ToolSpec("WebSearch", "s", {})])
+    await collect(driver.core, only_search)
+    assert "tools" not in driver.stub.bodies[-1]
+
+
+async def test_a_turn_paused_too_often_is_cut_short(driver):
+    """After MAX_CONTINUATIONS the turn ends unfinished: its stop says so, and a search
+    still waiting for its result is a failed step, which goes back as text."""
+    from kaden.api import StopReason
+    from kaden.core.anthropic import MAX_CONTINUATIONS
+
+    for _ in range(MAX_CONTINUATIONS):
+        driver.stub.queue(Reply(events=[message_start(), *search_blocks(0),
+                                        *searched("pause_turn")]))
+    pending = block(0, {"type": "server_tool_use", "id": "srvtoolu_9", "name": "web_search",
+                        "input": {}},
+                    [{"type": "input_json_delta", "partial_json": json_query("more")}])
+    driver.stub.queue(Reply(events=[message_start(), *pending, *searched("pause_turn")]))
+    done = (await collect(driver.core, request()))[-1]
+    assert len(driver.stub.bodies) == MAX_CONTINUATIONS + 1
+    assert done.stop is StopReason.MAX_TOKENS
+    [unfinished] = [b for b in done.message.blocks
+                    if isinstance(b, ServerToolUse) and b.id == "srvtoolu_9"]
+    assert unfinished.is_error and unfinished.input == {"query": "more"}
+    driver.stub.queue(Reply(events=[message_start(), *text_block(0, ["ok"]), *finish("end_turn")]))
+    await collect(driver.core, request(OPUS, [user("q"), done.message, tool_results()]))
+    sent = driver.stub.bodies[-1]["messages"][1]["content"]
+    assert "srvtoolu_9" not in json.dumps([c for c in sent if c["type"] != "text"])

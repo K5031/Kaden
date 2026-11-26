@@ -18,7 +18,6 @@ from kaden.api import (
     JSON,
     Block,
     Completed,
-    ContextOverflowError,
     Core,
     CoreError,
     CoreEvent,
@@ -58,9 +57,10 @@ from kaden.core._common import (
     parse_arguments,
     request_options,
     result_text,
-    retry_after,
     server_tool_text,
+    status_error,
     stored_key,
+    transport_error,
 )
 
 PROVIDER = "anthropic"
@@ -78,8 +78,8 @@ _STOP_REASONS = {
     "max_tokens": StopReason.MAX_TOKENS,
     "model_context_window_exceeded": StopReason.MAX_TOKENS,
     "refusal": StopReason.REFUSAL,
+    "pause_turn": StopReason.MAX_TOKENS,  # still paused after MAX_CONTINUATIONS: cut short
 }
-_OVERFLOW_MESSAGES = ("prompt is too long", "exceed context limit", "context window")
 
 # Anthropic's own web search (Core.list_tools): run on Anthropic's side, $10 per 1 000
 # searches. Models with dynamic filtering take the newer version.
@@ -193,10 +193,17 @@ class AnthropicCore(Core):
     async def list_tools(self) -> Sequence[ToolSpec]:
         return [WEB_SEARCH] if self._search else []
 
-    def _tools(self, specs: Sequence[ToolSpec], model: str) -> list[JSON]:
-        """The request's tools, web_search as Anthropic's own while it is on."""
-        return [search_tool(model) if spec.name == WEB_SEARCH.name and self._search
-                else to_tool(spec) for spec in specs]
+    def _tools(self, specs: Sequence[ToolSpec], model: str, ours: bool) -> list[JSON]:
+        """The request's tools. With `ours`, its WebSearch is this Core's (search was on
+        when the runtime listed the tools): Anthropic's own while search is on, else left
+        out, since nothing runs it. Otherwise a WebSearch is Kaden's, sent as it is."""
+        tools = []
+        for spec in specs:
+            if spec.name != WEB_SEARCH.name or not ours:
+                tools.append(to_tool(spec))
+            elif self._search:
+                tools.append(search_tool(model))
+        return tools
 
     async def list_models(self) -> Sequence[ModelInfo]:
         try:
@@ -213,16 +220,17 @@ class AnthropicCore(Core):
         except (anthropic.APIError, httpx2.TransportError) as e:
             raise _map_error(e) from e
 
-    def _body(self, request: InferenceRequest) -> tuple[list[JSON], list[JSON], str]:
+    def _body(self, request: InferenceRequest, ours: bool
+              ) -> tuple[list[JSON], list[JSON], str]:
         """The request's tools and turns as they go to the API, and the Prefix the
-        answer's reasoning is bound to."""
-        tools = self._tools(request.tools, request.model)
+        answer's reasoning is bound to. `ours`: see _tools."""
+        tools = self._tools(request.tools, request.model, ours)
         turns, bound = to_messages(request.messages, request.model, request.system, tools,
                                    search=self._search, refused=self._refused)
         return tools, turns, bound
 
     async def count_tokens(self, request: InferenceRequest) -> int:
-        tools, turns, _ = self._body(request)
+        tools, turns, _ = self._body(request, self._search)
         params: dict[str, Any] = {"model": request.model, "messages": turns}
         if request.system:
             params["system"] = request.system
@@ -235,37 +243,40 @@ class AnthropicCore(Core):
         return result.input_tokens
 
     async def stream(self, request: InferenceRequest) -> AsyncIterator[CoreEvent]:
-        tools, turns, bound = self._body(request)
+        ours = self._search  # the request's WebSearch is this Core's while search is on
         options = request_options(self._options, self._models.get(request.model))
         if request.maintenance:
             options = {**options, **self._maintenance_options}
-        params: dict[str, Any] = {
-            "model": request.model,
-            "messages": turns,
-            "max_tokens": request.max_output_tokens or self._default_max_tokens,
-            "extra_body": _cached(_thinking_shown(request.model, options), request),
-        }
-        if request.system:
-            params["system"] = request.system
-        if tools:
-            params["tools"] = tools
-
-        turn = _Turn(request.model, bound, self._write_premium(request.model,
-                                                               params["extra_body"]))
+        extra_body = _cached(_thinking_shown(request.model, options), request)
         paused: list[JSON] = []  # what the turn had when the API paused it, sent back
+
+        def params() -> tuple[dict[str, Any], list[JSON], str]:
+            """The request as it goes now, its turns, and the Prefix they bind."""
+            tools, turns, bound = self._body(request, ours)
+            body: dict[str, Any] = {
+                "model": request.model,
+                "messages": [*turns, *paused],
+                "max_tokens": request.max_output_tokens or self._default_max_tokens,
+                "extra_body": extra_body,
+            }
+            if request.system:
+                body["system"] = request.system
+            if tools:
+                body["tools"] = tools
+            return body, turns, bound
+
+        turn = _Turn(request.model, "", self._write_premium(request.model, extra_body))
         try:
             for continuation in range(MAX_CONTINUATIONS + 1):
+                body, turns, turn.bound = params()
                 try:
-                    response = await self._client.messages.create(**params, stream=True)
+                    response = await self._client.messages.create(**body, stream=True)
                 except anthropic.BadRequestError as e:
                     # A 400 that says what the request can do without: once more, as the
                     # same request without it. Any other 400 is the request's own.
                     self._does_without(e, turns)
-                    tools, turns, turn.bound = self._body(request)
-                    params["messages"] = [*turns, *paused]
-                    if tools:
-                        params["tools"] = tools
-                    response = await self._client.messages.create(**params, stream=True)
+                    body, _, turn.bound = params()
+                    response = await self._client.messages.create(**body, stream=True)
                 async with response as events:
                     async for event in events:
                         for out in turn.feed(event):
@@ -276,7 +287,6 @@ class AnthropicCore(Core):
                     break
                 # The API paused a long server-side turn: send it back to be continued.
                 paused = [{"role": "assistant", "content": turn.content()}]
-                params["messages"] = [*turns, *paused]
                 turn.next_response()
         except (anthropic.APIError, httpx2.TransportError) as e:
             raise _map_error(e) from e
@@ -297,8 +307,11 @@ class AnthropicCore(Core):
     def _does_without(self, error: anthropic.BadRequestError, turns: Sequence[JSON]) -> None:
         """Note what a 400 says the request can go again without: web search, switched
         off for the account, or the server tool blocks `turns` sent back as they came,
-        which go as text from now on. Raises the error when it names neither."""
-        text = str(error)
+        which go as text from now on. Raises the error when it names neither. The API has
+        no error code for either: its message says which."""
+        body = error.body if isinstance(error.body, dict) else {}
+        detail = body.get("error") if isinstance(body.get("error"), dict) else {}
+        text = str(detail.get("message", error.message))
         replayed = {c["id"] for t in turns for c in t["content"]
                     if c.get("type") == "server_tool_use"}
         if self._search and any(m in text.lower() for m in _SEARCH_OFF):
@@ -320,6 +333,7 @@ class _Block:
     type: str
     raw: JSON  # the block as the API sent it, deltas applied: what a continuation resends
     parts: list[str] = field(default_factory=list)  # tool input JSON as it streamed
+    bad: str | None = None  # that JSON, when it is not an object (ToolCall.raw_arguments)
     id: str = ""
     name: str = ""
 
@@ -354,6 +368,10 @@ class _Turn:
                 return self._start(event.index, event.content_block)
             case "content_block_delta":
                 return self._delta(self._index[event.index], event.delta)
+            case "content_block_stop":
+                b = self._index[event.index]
+                if b.parts:  # the input is complete: as the API takes it back
+                    b.raw["input"], b.bad = parse_arguments("".join(b.parts))
             case "message_delta":
                 self.stop_reason = event.delta.stop_reason
                 return [self._usage(event.usage)]
@@ -414,10 +432,7 @@ class _Turn:
         )
 
     def content(self) -> list[JSON]:
-        """The blocks so far as the API takes them back, tool inputs complete."""
-        for b in self.blocks:
-            if b.parts:
-                b.raw["input"], _ = parse_arguments("".join(b.parts))
+        """The blocks so far as the API takes them back."""
         return [b.raw for b in self.blocks]
 
     def completed(self) -> Completed:
@@ -428,10 +443,12 @@ class _Turn:
         # Every server-side block of the turn, in the order it came: they refer to each
         # other (dynamic filtering runs code that calls the search), so they are replayed
         # together, from the first use shown.
+        answered = {b.raw["tool_use_id"] for b in self.blocks if b.type.endswith("_tool_result")
+                    and "tool_use_id" in b.raw and b.type != "tool_result"}
         server = [b.raw for b in self.blocks
-                  if b.type == "server_tool_use" or b.type.endswith("_tool_result")
-                  and "tool_use_id" in b.raw and b.type != "tool_result"]
-        self.content()
+                  if b.type == "server_tool_use" and b.id in answered
+                  or b.type.endswith("_tool_result") and b.raw.get("tool_use_id") in answered
+                  and b.type != "tool_result"]
         for b in self.blocks:
             raw = b.raw
             match raw["type"]:
@@ -449,9 +466,7 @@ class _Turn:
                              "prefix": self.bound}
                     blocks.append(Reasoning("", state, self.model))
                 case "tool_use":
-                    arguments, bad = (parse_arguments("".join(b.parts)) if b.parts
-                                      else (raw.get("input", {}), None))
-                    blocks.append(ToolCall(raw["id"], raw["name"], arguments, bad))
+                    blocks.append(ToolCall(raw["id"], raw["name"], raw.get("input", {}), b.bad))
                 case "server_tool_use":
                     uses[raw["id"]] = raw
                 case kind if kind.endswith("_tool_result") and raw.get("tool_use_id") in uses:
@@ -463,6 +478,11 @@ class _Turn:
         for n, i in enumerate(shown):
             state = {"provider": PROVIDER, "model": self.model, "blocks": server if n == 0 else []}
             blocks[i] = replace(blocks[i], state=state)
+        # A turn paused more often than MAX_CONTINUATIONS ends with uses still running:
+        # failed steps, without state, so they go back as text.
+        blocks += [replace(_server_use(use, {}, self.model), content="Not finished: the "
+                           "turn was paused too often.", is_error=True)
+                   for use in uses.values()]
         if sources:
             links = " · ".join(f"[{title}]({url})" for url, title in sources.items())
             self.sources_line = f"\n\nSources: {links}"
@@ -515,15 +535,24 @@ class Prefix:
     def __init__(self, system: str, tools: Sequence[JSON]) -> None:
         definitions = sorted(json.dumps(t, sort_keys=True) for t in tools)
         self._hash = hashlib.sha256(json.dumps([system, definitions]).encode())
-        self._turns = 0
+        self._turns = 0  # how many of the turns are in _hash
 
     def of(self, turns: Sequence[JSON]) -> str:
-        """The fingerprint before the turn that follows `turns`; takes a growing list."""
-        for turn in turns[self._turns:]:
-            content = [c for c in turn["content"] if c["type"] not in _THINKING]
-            self._hash.update(json.dumps([turn["role"], content], sort_keys=True).encode())
-        self._turns = len(turns)
-        return self._hash.hexdigest()[:16]
+        """The fingerprint of `turns`: what comes next is bound to. Takes a growing list
+        whose last turn may still grow (a message of the same role merged into it), so
+        that one is hashed anew each time."""
+        for turn in turns[self._turns:-1]:
+            self._hash.update(_turn_digest(turn))
+        self._turns = max(self._turns, len(turns) - 1)
+        whole = self._hash.copy()
+        if turns:
+            whole.update(_turn_digest(turns[-1]))
+        return whole.hexdigest()[:16]
+
+
+def _turn_digest(turn: JSON) -> bytes:
+    content = [c for c in turn["content"] if c["type"] not in _THINKING]
+    return json.dumps([turn["role"], content], sort_keys=True).encode()
 
 
 def to_messages(messages: Sequence[Message], model: str, system: str = "",
@@ -622,16 +651,11 @@ def _map_error(error: Exception) -> CoreError:
     if isinstance(error, anthropic.APIStatusError):
         body = error.body if isinstance(error.body, dict) else {}
         detail = body.get("error") if isinstance(body.get("error"), dict) else {}
-        status = error.status_code
-        transient = (status in (408, 409, 429) or status >= 500
-                     or detail.get("type") in _TRANSIENT_ERROR_TYPES)
         text = str(detail.get("message", error.message))
-        message = f"{status} {detail.get('type', '')}: {text}"
-        if status in (400, 413) and any(m in text.lower() for m in _OVERFLOW_MESSAGES):
-            return ContextOverflowError(message)
-        if transient:
-            return TransientCoreError(message, retry_after(error.response.headers))
-        return CoreError(message)
+        return status_error(error.status_code,
+                            f"{error.status_code} {detail.get('type', '')}: {text}",
+                            transient=detail.get("type") in _TRANSIENT_ERROR_TYPES,
+                            headers=error.response.headers)
     if isinstance(error, (anthropic.APIConnectionError, httpx2.TransportError)):
-        return TransientCoreError(f"{type(error).__name__}: {error}")
+        return transport_error(error)
     return CoreError(f"{type(error).__name__}: {error}")
