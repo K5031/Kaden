@@ -306,3 +306,33 @@ async def test_plan_mode_is_driven_over_the_channel(make, clients):
     snapshot = (await client.request("snapshot"))["result"]
     assert snapshot["plan_mode"] is False
     assert (await h.runtime.settings()).permissions == PermissionPolicy.ALLOW_WORKSPACE
+
+
+async def test_a_line_over_the_limit_is_an_error_and_the_channel_goes_on(
+        make, clients, monkeypatch):
+    from kaden.frontends import headless
+
+    monkeypatch.setattr(headless, "_LINE_LIMIT", 1024)
+    h: Harness = await make()
+    client = clients()
+    await client.run(h.runtime)
+    client.write("x" * 4096)
+    await eventually(lambda: any(m.get("error", {}).get("code") == -32600
+                                 for m in client.messages))
+    assert (await client.request("snapshot"))["result"]["type"] == "RuntimeSnapshot"
+
+
+async def test_a_bug_in_a_command_is_not_called_bad_parameters(make, clients, monkeypatch,
+                                                                caplog):
+    h: Harness = await make()
+
+    def broken() -> None:
+        raise TypeError("a bug inside the command")
+
+    monkeypatch.setattr(h.runtime, "snapshot", broken)
+    client = clients()
+    await client.run(h.runtime)
+    error = (await client.request("snapshot"))["error"]
+    assert error["code"] == -32000 and error["data"]["type"] == "TypeError"
+    assert "headless request snapshot failed" in caplog.text
+    assert (await client.request("snapshot", nope=1))["error"]["code"] == -32602

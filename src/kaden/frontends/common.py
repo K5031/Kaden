@@ -152,25 +152,28 @@ _IRREGULAR = {
     "leave": "left", "make": "made", "put": "put", "read": "read", "rerun": "reran",
     "run": "ran", "see": "saw", "send": "sent", "set": "set", "show": "showed",
     "take": "took", "tell": "told", "think": "thought", "undo": "undid",
-    "understand": "understood", "write": "wrote", "rewrite": "rewrote",
+    "understand": "understood", "write": "wrote", "rewrite": "rewrote", "split": "split",
+    "backup": "backed up",
 }
 _DOUBLED = {"stop": "stopped", "plan": "planned", "drop": "dropped", "commit": "committed",
             "submit": "submitted", "ship": "shipped", "zip": "zipped", "unzip": "unzipped",
-            "tag": "tagged", "log": "logged", "pin": "pinned", "map": "mapped"}
+            "tag": "tagged", "log": "logged", "pin": "pinned", "map": "mapped",
+            "debug": "debugged", "scan": "scanned", "trim": "trimmed", "grep": "grepped",
+            "format": "formatted"}
 _REGULAR = frozenset({
-    "message", "add", "analyse", "analyze", "append", "apply", "archive", "ask", "back", "backup",
+    "message", "add", "analyse", "analyze", "append", "apply", "archive", "ask", "back",
     "calculate", "cancel", "change", "check", "clean", "clear", "clone", "close", "collect",
     "combine", "compare", "compile", "compress", "configure", "confirm", "convert", "copy",
-    "count", "crawl", "create", "debug", "decrypt", "delete", "deploy", "describe", "disable",
+    "count", "crawl", "create", "decrypt", "delete", "deploy", "describe", "disable",
     "download", "draft", "edit", "enable", "encrypt", "estimate", "execute", "explain",
-    "export", "extract", "fetch", "fill", "filter", "fix", "format", "gather", "generate",
-    "grep", "inspect", "install", "launch", "list", "load", "locate", "look", "merge", "move",
+    "export", "extract", "fetch", "fill", "filter", "fix", "gather", "generate",
+    "inspect", "install", "launch", "list", "load", "locate", "look", "merge", "move",
     "name", "open", "organise", "organize", "parse", "paste", "patch", "pause", "ping", "play",
     "prepare", "print", "process", "pull", "push", "query", "remember", "remove", "rename",
     "render", "reorganise", "reorganize", "replace", "reply", "report", "request", "research",
-    "resize", "restart", "restore", "retry", "review", "save", "scan", "schedule", "scrape",
-    "search", "select", "sort", "split", "start", "summarise", "summarize", "sync", "test",
-    "track", "transcribe", "translate", "trim", "try", "type", "update", "upgrade", "upload",
+    "resize", "restart", "restore", "retry", "review", "save", "schedule", "scrape",
+    "search", "select", "sort", "start", "summarise", "summarize", "sync", "test",
+    "track", "transcribe", "translate", "try", "type", "update", "upgrade", "upload",
     "use", "validate", "verify", "view", "visit", "wait", "watch",
 })
 
@@ -343,7 +346,7 @@ def loosening(current: Settings, update: SettingsUpdate) -> list[str]:
     reasons = []
     if update.budget is not None:
         old, new = current.budget.max_cost_usd, update.budget.max_cost_usd
-        if old is not None and (new is None or new > old):
+        if raises_limit(old, new):
             reasons.append(f"raises the spending limit from {dollars(old)} to {dollars(new)}"
                            if new is not None else
                            f"removes the {dollars(old)} spending limit")
@@ -360,10 +363,10 @@ def loosening(current: Settings, update: SettingsUpdate) -> list[str]:
     return reasons
 
 
-# The modules settings offer. Memory is chosen in config.toml only: another Memory module
-# is another archive, so a choice in the app would hide every conversation.
-# The modules a settings screen lets the user choose. The interface is not among them:
-# every launcher opens the desktop app, unless a frontend the user installed is chosen.
+# The modules a settings screen lets the user choose. Memory is chosen in config.toml
+# only: another Memory module is another archive, so a choice in the app would hide every
+# conversation. The interface is not among them: every launcher opens the desktop app,
+# unless a frontend the user installed is chosen.
 MODULE_LABELS = {"core": "AI provider", "tools": "Tools"}
 COMPACTING = "Compacting conversation…"
 COMPACTED = "Conversation compacted"

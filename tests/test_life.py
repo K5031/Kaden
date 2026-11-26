@@ -244,3 +244,80 @@ async def test_it_lives_without_a_ceiling_on_what_the_user_allows_it(
         assert PERMISSION_CEILING_ENV not in child.environ()
     finally:
         await life.aclose()
+
+
+async def test_a_start_that_fails_leaves_it_stopped_and_it_can_start_again(tmp_path, child_env):
+    import sys
+
+    import pytest
+
+    data = home(tmp_path, [{"text": ""}])
+    life = Life(data, pace_s=(0.05, 30), command=(sys.executable, "-c", "pass"))  # quits
+    with pytest.raises(Exception):  # noqa: B017 - whatever the channel says
+        await life.start()
+    assert not life.running
+    life.command = (sys.executable, "-m", "kaden")
+    try:
+        await life.start()  # tried again, not the first failure again
+        assert life.running and await eventually(lambda: life.snapshot)
+    finally:
+        await life.aclose()
+
+
+async def test_it_is_not_running_once_its_process_ends(tmp_path, child_env):
+    data = home(tmp_path, [{"text": ""}])
+    life = Life(data, pace_s=(0.05, 30))
+    changes: list[bool] = []
+    life.listeners.append(lambda: changes.append(life.running))
+    try:
+        await life.start()
+        life.runtime.channel.process.kill()
+        await eventually(lambda: not life.running, timeout=10)
+        assert changes[-1] is False  # the app was told
+    finally:
+        await life.aclose()
+
+
+async def test_restarting_it_while_it_starts_starts_it_once(tmp_path, child_env):
+    import asyncio
+    import sys
+
+    import psutil
+    import pytest
+
+    from kaden.api import RuntimeStateError
+
+    data = home(tmp_path, [{"text": ""}, {"text": ""}])
+    silent = (sys.executable, "-c", "import sys; sys.stdin.read()")  # never answers
+    life = Life(data, pace_s=(0.05, 30), command=silent)
+    first = asyncio.create_task(life.start())
+    await eventually(lambda: any("--headless" in p.cmdline()
+                                 for p in psutil.Process().children(recursive=True)),
+                     timeout=10)
+    life.command = (sys.executable, "-m", "kaden")
+    try:
+        await life.restart()  # no CancelledError from the start it closed
+        assert life.running
+        with pytest.raises(RuntimeStateError):  # that start was closed, and says so
+            await first
+        children = [p for p in psutil.Process().children(recursive=True)
+                    if "--headless" in p.cmdline()]
+        assert len(children) == 1  # the silent one was closed
+    finally:
+        await life.aclose()
+
+
+async def test_its_settings_are_written_whole(tmp_path, child_env, monkeypatch):
+    """The settings file is replaced in one step, never seen half written."""
+    import os
+
+    data = home(tmp_path, [{"text": ""}])
+    life = Life(data, pace_s=(0.05, 30))
+    replaced: list[str] = []
+    real = os.replace
+    monkeypatch.setattr(os, "replace", lambda a, b: (replaced.append(str(b)), real(a, b)))
+    try:
+        await life.start()
+        assert str(data / "life" / "settings.toml") in replaced
+    finally:
+        await life.aclose()

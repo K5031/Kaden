@@ -63,7 +63,7 @@ async def test_a_child_works_on_its_task_and_reports_back(make, tmp_path, child_
     [child] = sessions.sessions
     assert child.task == "Write a haiku" and child.state == "done"
     assert child.conversation_id == h.conversation.id
-    assert any("Drafting." in text for _, text in child.lines())
+    assert any("Drafting." in str(m.blocks) for m in child.messages)
     settings = tomllib.loads((child.data_dir / "settings.toml").read_text())
     assert settings["budget"] == {"max_cost_usd": 0.5}
     assert settings["work_folder"] == str(tmp_path)
@@ -533,3 +533,212 @@ async def test_isolation_outside_a_git_repository_is_an_error(make, tmp_path, ch
     result = (await h.results())["s"]
     assert result.status == ToolStatus.ERROR and "git repository" in result.content
     assert sessions.sessions == []
+
+
+class _Ctx:
+    def __init__(self, conversation_id: str = "conv") -> None:
+        self.conversation_id = conversation_id
+
+    def progress(self, text: str) -> None:
+        pass
+
+
+REFUSER = (  # a child that refuses every request, as one that cannot start does
+    "import json, sys\n"
+    "for line in sys.stdin:\n"
+    "    r = json.loads(line)\n"
+    "    print(json.dumps({'jsonrpc': '2.0', 'id': r['id'], 'error': {'code': -32000, "
+    "'message': 'cannot start', 'data': {'type': 'RuntimeStateError', "
+    "'reason': 'unavailable'}}}), flush=True)\n")
+
+
+async def test_a_child_that_refuses_to_start_fails_and_is_closed(tmp_path):
+    import sys
+
+    from kaden.api import ToolCall
+
+    sessions = SubSessions(tmp_path, command=[sys.executable, "-c", REFUSER])
+    result = await sessions.execute(
+        ToolCall("c", "Agent", {"description": "Anything", "prompt": "Anything"}), _Ctx())
+    [child] = sessions.sessions
+    assert child.state == "failed" and "cannot start" in (child.failure or "")
+    assert result.is_error and "failed: cannot start" in result.content
+    await eventually(lambda: child.returncode is not None, timeout=10)
+    await sessions.aclose()
+
+
+async def test_concurrent_opens_start_one_process(make, tmp_path, child_env):
+    import psutil
+
+    h, sessions = await parent(make, tmp_path, [
+        Step(calls=[call("Agent", {"description": "Write a haiku", "prompt": "Write a haiku",
+                                   "run_in_background": True}, id="s")]),
+        Step(text="Started."), Step(text="Got it.")],
+        [finish("Haiku written."), {"text": "Done."}])
+    await h.turn("Go")
+    await eventually(lambda: sessions.sessions and sessions.sessions[0].returncode
+                     is not None, timeout=30)
+    await h.close()
+    again = SubSessions(h.data_dir)
+    [child] = again.sessions
+    first, second = await asyncio.gather(again.open(child), again.open(child))
+    children = [p for p in psutil.Process().children(recursive=True)
+                if "--headless" in p.cmdline()]
+    assert len(children) == 1
+    again.release(child, first)
+    again.release(child, second)
+    await again.aclose()
+
+
+async def test_a_reopened_child_keeps_the_state_another_caller_gave_it(tmp_path):
+    """open() marks a child it started again as idle, unless meanwhile something else
+    (a SendMessage, a resume) set it working."""
+    from kaden.frontends.sessions import SubSession
+
+    sessions = SubSessions(tmp_path)
+    child = SubSession("1", "Task", "conv", tmp_path / "c", state="stopped",
+                       child_conversation_id="x")
+
+    class Live:
+        attached = True
+        channel = None
+
+    async def running(session: SubSession) -> Any:
+        session.live = Live()  # type: ignore[assignment]
+        sessions._set(session, state="working")  # another caller, while this one waited
+        return Live(), True  # this call started its process
+
+    async def attach(self: Any) -> Any:
+        return self
+
+    sessions._running = running  # type: ignore[method-assign]
+    import kaden.frontends.sessions as module
+
+    original = module.RemoteRuntime
+    module.RemoteRuntime = type("R", (), {"__init__": lambda self, ch: None,  # type: ignore
+                                          "attach": attach, "detach": lambda self: None})
+    try:
+        await sessions.open(child)
+    finally:
+        module.RemoteRuntime = original  # type: ignore[misc]
+    assert child.state == "working"
+
+
+async def test_a_blank_reply_is_no_step_and_later_listeners_still_hear(tmp_path):
+    import time
+
+    from kaden.api import EventEnvelope, Message, MessageCommitted, Role, Text
+    from kaden.frontends.sessions import SubSession
+
+    sessions = SubSessions(tmp_path)
+    child = SubSession("1", "Task", "conv", tmp_path / "c", state="working", step="Before")
+    sessions.sessions.append(child)
+    message = Message("m", Role.ASSISTANT, (Text("  \n "),), time.time())
+    sessions._event(child, EventEnvelope(1, MessageCommitted(message)))
+    assert child.step is None and child.messages == [message]
+    await sessions.aclose()
+
+
+async def test_a_listener_that_fails_does_not_keep_the_others_from_hearing():
+    import json
+
+    from kaden.frontends.remote import Channel
+
+    class Process:
+        def __init__(self) -> None:
+            self.stdout, self.stderr = asyncio.StreamReader(), asyncio.StreamReader()
+            self.stdin = None
+
+    process = Process()
+    channel = Channel(process)  # type: ignore[arg-type]
+    heard: list[int] = []
+
+    def broken(envelope: Any) -> None:
+        raise IndexError("a bug")
+
+    channel.listeners += [broken, lambda envelope: heard.append(envelope and envelope.seq)]
+    process.stdout.feed_data(json.dumps({"method": "event", "params": {
+        "seq": 3, "event": {"type": "StateChanged", "state": "idle"}}}).encode() + b"\n")
+    await eventually(lambda: heard == [3])
+    process.stdout.feed_eof()
+    process.stderr.feed_eof()
+    await channel.ended.wait()
+
+
+async def test_a_broken_pipe_is_a_closed_channel():
+    from kaden.frontends.remote import Channel, ChannelClosed
+
+    class Process:
+        def __init__(self) -> None:
+            self.stdout, self.stderr = asyncio.StreamReader(), asyncio.StreamReader()
+            self.stdin = self
+
+        def write(self, data: bytes) -> None:
+            pass
+
+        async def drain(self) -> None:
+            raise BrokenPipeError
+
+    process = Process()
+    channel = Channel(process)  # type: ignore[arg-type]
+    with pytest.raises(ChannelClosed):
+        await channel.request("snapshot")
+    assert channel._pending == {}
+    process.stdout.feed_eof()
+    process.stderr.feed_eof()
+    await channel.ended.wait()
+
+
+def test_a_child_that_ended_its_turn_says_so_with_its_last_reply(tmp_path):
+    import time
+
+    from kaden.api import Message, Role, Text
+    from kaden.frontends.sessions import SubSession
+
+    sessions = SubSessions(tmp_path)
+    child = SubSession("4", "Task", "conv", tmp_path / "c", state="idle", messages=[
+        Message("m", Role.ASSISTANT, (Text("Nothing more to do here."),), time.time())])
+    text = sessions._outcome(child)
+    assert "failed" not in text and "None" not in text
+    assert "Sub-session 4" in text and "Nothing more to do here." in text
+
+
+async def test_send_message_reaches_only_the_conversations_own_subagents(tmp_path):
+    from kaden.api import ToolCall
+    from kaden.frontends.sessions import SubSession
+
+    sessions = SubSessions(tmp_path)
+    sessions.sessions.append(SubSession("1", "Theirs", "other", tmp_path / "c",
+                                        state="done", child_conversation_id="x"))
+    result = await sessions.execute(
+        ToolCall("m", "SendMessage", {"to": "1", "message": "hi"}), _Ctx("conv"))
+    assert result.is_error and "no subagent '1'" in result.content
+
+
+async def test_a_deleted_childs_id_is_not_given_again(tmp_path):
+    """Its kept worktree and branch are named by it."""
+    sessions = SubSessions(tmp_path)
+    first = await sessions._new("One", None, "conv")
+    second = await sessions._new("Two", None, "conv")
+    await sessions.delete(second)
+    await sessions.aclose()
+    again = SubSessions(tmp_path)
+    third = await again._new("Three", None, "conv")
+    assert third.id not in (first.id, second.id)
+    await again.aclose()
+
+
+async def test_its_settings_are_written_whole_and_a_broken_one_is_refused(tmp_path):
+    """The parent's settings, as the child gets them; a settings file that does not read
+    is a failure to start, not a crash."""
+    import sys
+
+    from kaden.api import ToolCall
+
+    (tmp_path / "settings.toml").write_text("this is = = not toml")
+    sessions = SubSessions(tmp_path, command=[sys.executable, "-c", "pass"])
+    result = await sessions.execute(
+        ToolCall("c", "Agent", {"description": "Anything", "prompt": "Anything"}), _Ctx())
+    [child] = sessions.sessions
+    assert result.is_error and child.state == "failed"
+    await sessions.aclose()

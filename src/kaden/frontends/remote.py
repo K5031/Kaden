@@ -88,8 +88,11 @@ class Channel:
         line = json.dumps({"jsonrpc": "2.0", "id": request_id, "method": method,
                            "params": to_json(params)})
         try:
-            self.process.stdin.write(line.encode() + b"\n")
-            await self.process.stdin.drain()
+            try:
+                self.process.stdin.write(line.encode() + b"\n")
+                await self.process.stdin.drain()
+            except ConnectionError as e:  # a broken pipe, a reset: the child has gone
+                raise ChannelClosed from e
             return await future
         finally:  # answered, cancelled or failed: no longer pending
             del self._pending[request_id]
@@ -117,7 +120,10 @@ class Channel:
             params = message["params"]
             envelope = EventEnvelope(params["seq"], from_json(params["event"]))
             for listener in list(self.listeners):
-                listener(envelope)
+                try:
+                    listener(envelope)
+                except Exception:  # one listener's failure is not another's
+                    logger.exception("a listener failed on %s", type(envelope.event).__name__)
         elif ((future := self._pending.get(message.get("id"))) is not None
               and not future.done()):  # done: its caller is being cancelled right now
             if "error" in message:
