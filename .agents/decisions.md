@@ -245,7 +245,14 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   extras) or None. OpenAI-compatible also reads a `max_output_tokens` extra.
 - `count_tokens`: Anthropic uses its counting endpoint; OpenAI-compatible returns None.
   When an OpenAI-compatible server reports no usage, `Completed.usage` is a 4-chars-per-
-  token estimate.
+  token estimate of the request as it was sent (reasoning replayed, images as the profile
+  sends them), each picture counted as 1 000 tokens (`_IMAGE_TOKENS`, about a megapixel on
+  OpenAI's models) instead of its base64.
+- Errors: both Cores map an HTTP status through `_common.status_error`: a 400 or 413 whose
+  message names the context limit (one list of phrases, `_common._OVERFLOW_MESSAGES`, as
+  no provider has a common code; OpenAI's `context_length_exceeded` code also counts) is
+  `ContextOverflowError`; 408, 409, 429, 5xx and Anthropic's transient error types retry;
+  the rest are permanent.
 - Unparseable or non-object tool arguments give `ToolCall(arguments={}, raw_arguments=raw)`.
   When replayed, such a call is sent with `{}` arguments.
 - Rendering: ToolResults with a status other than OK and ERROR are prefixed `[<status>]`
@@ -271,7 +278,18 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
   not used: it drops every block after the first mismatch on each request unless the
   failing blocks are removed from the history, which the Core cannot do, and it is only
   accepted with adaptive thinking.
-- Stop reasons: Anthropic `refusal` and OpenAI `content_filter` map to REFUSAL.
+- Stop reasons: Anthropic `refusal` and OpenAI `content_filter` map to REFUSAL. An OpenAI
+  `delta.refusal` is the answer's text (streamed as TextDelta) and makes the stop REFUSAL.
+  A turn with tool calls keeps the stop the provider reported (a local server's "stop", a
+  filter's refusal): the runtime runs a turn's calls whatever its stop reason, so nothing
+  rewrites it to TOOL_USE, and the Core conformance suite asks TOOL_USE only to come with
+  calls.
+- Anthropic tool input is parsed once, when its block ends (`content_block_stop`); a
+  paused turn's continuation and the final message both use that.
+- Keys: a Core reads its key from the environment, then the keychain
+  (`_common.stored_key`, as `api.KEYCHAIN_SERVICE` says). It duplicates the runtime's
+  `settings.read_secret`; a Core must not import the runtime, so the one function belongs
+  in `api.py` beside `KEYCHAIN_SERVICE` (contract issue P7). Until then both stay.
 
 ### OpenAI-compatible profiles (`profile` option of `kaden.core.openai_compat:factory`)
 
@@ -666,7 +684,8 @@ Design: [Agent Note](notes/implemented/2026-11-10-provider-web-search.md).
 | Steps | One `ServerToolUse` per web search or web fetch, placed where its result came; the code dynamic filtering runs is not shown (unless a turn has nothing else) |
 | Replay | A turn's server blocks, all of them in the order they came (they refer to each other), ride on its first shown use and are sent back unchanged, to the same model, while web search is on, and only after the user's latest message; earlier turns' searches go as text (summary and found pages). Checked against Opus 5.5 (2026-11-10): a second turn replaying the whole set cost about three times the first |
 | Fallbacks | A 400 saying web search is not enabled switches it off for the instance (Kaden's own search is offered again); a 400 that names a server tool block (its `srvtoolu_` id or its block type, `anthropic._SERVER_BLOCK_ERROR`), in a request that replays some, resends them as text, and those uses go as text in every later request too (`AnthropicCore._refused`, by their ids), so the refusal is paid for once. Any other 400 is reported from the request that got it. The request that goes again is the same one, built by the one function that builds every body (`AnthropicCore._body`): a paused turn sent back to be continued goes again with what it had, and the answer's reasoning is bound to the body that was sent |
-| Paused turns | `pause_turn` is continued in the same request, up to 5 times, the turn's blocks sent back as the assistant's |
+| Paused turns | `pause_turn` is continued in the same request, up to 5 times, the turn's blocks sent back as the assistant's. Still paused after that, the turn ends with stop MAX_TOKENS (cut short); a server tool use still waiting for its result is a failed step ("Not finished") without state, so it goes back as text, and it is not among the blocks replayed |
+| Search off | The request's WebSearch is the Core's when search was on as it started (`AnthropicCore.stream`, `ours`). Once a 400 switches search off, the retry leaves the Core's WebSearch out (nothing runs it), and `tools` with it when nothing is left; a later request's WebSearch is Kaden's own and goes as a client tool. The 400s are told apart by the error body's message, as the API has no code for either |
 | Sources | The cited pages, deduplicated in citing order, as a final "Sources:" line of links |
 
 ## One window per data folder

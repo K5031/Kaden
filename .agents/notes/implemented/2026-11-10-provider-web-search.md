@@ -41,7 +41,9 @@ about $10 per 1 000 searches.
 - Sends them back only within the turn that made them (after the user's latest message):
   the results hold the pages' text, which every later request would pay for again. Earlier
   turns' searches go as text; the model searches again when it needs more.
-- Continues a turn the API paused (`pause_turn`) within the same request, up to 5 times.
+- Continues a turn the API paused (`pause_turn`) within the same request, up to 5 times;
+  a turn still paused after that ends cut short, with any search still running as a failed
+  step.
 - Lists the sources cited in the answer as a final "Sources:" line of links.
 - Falls back on a 400: web search switched off for the account turns it off for the
   instance; server blocks the API will not take back (a 400 that names one) are sent

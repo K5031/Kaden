@@ -904,3 +904,19 @@ was used.
 - **Proposed fix:** A declared kind of secret a Tools module may read (its name in its
   spec or factory), written through `RuntimeAPI.update_settings` like a Core's key, so a
   frontend never writes what a module reads directly.
+
+### P7 (C) Cores and the runtime each read the keychain
+- **Status:** Open.
+- **Where:** `api.KEYCHAIN_SERVICE` ("Cores read their key from the environment first, then
+  from here"); `core/_common.stored_key`; `runtime/settings.read_secret` and
+  `get_stored_key`.
+- **Problem:** The contract names the keychain service but not how to read it, so the
+  Cores and the runtime each carry the same `keyring.get_password` wrapper. A Core may not
+  import the runtime (modules never call each other's code), so the Core cannot reuse
+  the runtime's.
+- **Assumed:** Both copies stay, identical.
+- **Proposed fix:** `api.read_key(name) -> str | None` beside `KEYCHAIN_SERVICE` (the
+  environment, then the keychain; blocking), used by the Cores and the runtime alike;
+  `stored_key`, `read_secret` and the runtime's `read_key` go. (Alternatively the runtime
+  passes the key as the factory's `api_key` option, and Cores read no keychain; that
+  changes the contract sentence above.)

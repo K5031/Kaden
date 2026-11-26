@@ -540,3 +540,33 @@ async def test_writing_the_cache_is_charged_its_premium(options: dict, premium: 
     usage = events[-1].usage
     assert (usage.input_tokens, usage.cached_tokens) == (1017, 5)
     assert usage.extra_cost_usd == pytest.approx(1000 * 4.0 * premium / 1_000_000)
+
+
+def test_a_fingerprint_sees_content_merged_into_the_turn_before():
+    """Two assistant messages in a row go as one turn: the second's content is part of
+    what the answer after them is bound to."""
+    def bound(second: str) -> str:
+        messages = [user("q"), Message("a1", Role.ASSISTANT, (Text("first"),), 0.0),
+                    Message("a2", Role.ASSISTANT, (Text(second),), 0.0)]
+        turns, prefix = to_messages(messages, MODEL)
+        assert len(turns) == 2
+        return prefix
+
+    assert bound("second") != bound("second, shrunk")
+
+
+async def test_tool_input_is_parsed_once(anthropic, monkeypatch):
+    from kaden.core import anthropic as module
+
+    calls = []
+    parse = module.parse_arguments
+
+    def counted(raw):
+        calls.append(raw)
+        return parse(raw)
+
+    monkeypatch.setattr(module, "parse_arguments", counted)
+    request, expect = anthropic.tool_turn()
+    done = check_stream(await collect(anthropic.core, request))
+    assert expect.tool_call in done.message.blocks
+    assert calls == ['{"city": "Paris"}']

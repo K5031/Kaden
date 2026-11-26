@@ -17,7 +17,6 @@ from kaden.api import (
     JSON,
     Block,
     Completed,
-    ContextOverflowError,
     Core,
     CoreError,
     CoreEvent,
@@ -56,9 +55,10 @@ from kaden.core._common import (
     parse_arguments,
     request_options,
     result_text,
-    retry_after,
     server_tool_text,
+    status_error,
     stored_key,
+    transport_error,
 )
 
 _CONTEXT_WINDOW_FIELDS = ("context_length", "max_model_len", "context_window")
@@ -71,8 +71,9 @@ _STOP_REASONS = {
     "content_filter": StopReason.REFUSAL,
 }
 _OVERFLOW_CODES = ("context_length_exceeded", "string_above_max_length")
-_OVERFLOW_MESSAGES = ("maximum context length", "context length", "context window",
-                      "too many tokens", "prompt is too long")
+# A picture in the usage estimate, for a server that reports no usage: what one of about
+# a megapixel costs OpenAI's models (its base64 would count a hundred times that).
+_IMAGE_TOKENS = 1_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,10 +207,8 @@ class OpenAICompatCore(Core):
         if turn.finish_reason in self._profile.transient_finish_reasons:
             raise TransientCoreError(f"generation interrupted: {turn.finish_reason}")
         if turn.usage is None:
-            payload = [to_messages(request.system, request.messages),
-                       [to_tool(t) for t in request.tools]]
             turn.usage = Usage(
-                input_tokens=_estimate(json.dumps(payload)),
+                input_tokens=_estimated_input(params["messages"], params.get("tools", [])),
                 output_tokens=_estimate("".join(turn.text) + "".join(turn.reasoning)
                                         + "".join("".join(c.args) for c in turn.calls.values())),
             )
@@ -245,6 +244,22 @@ def _estimate(text: str) -> int:
     return math.ceil(len(text) / 4)
 
 
+def _estimated_input(messages: Sequence[JSON], tools: Sequence[JSON]) -> int:
+    """The input tokens of a request as sent: its text, and each picture as a picture."""
+    images = 0
+
+    def without_images(message: JSON) -> JSON:
+        nonlocal images
+        if not isinstance(message.get("content"), list):
+            return message
+        parts = [p for p in message["content"] if p.get("type") != "image_url"]
+        images += len(message["content"]) - len(parts)
+        return {**message, "content": parts}
+
+    text = json.dumps([[without_images(m) for m in messages], list(tools)])
+    return _estimate(text) + images * _IMAGE_TOKENS
+
+
 @dataclass
 class _Call:
     id: str
@@ -258,6 +273,7 @@ class _Turn:
         self.model = model
         self.text: list[str] = []
         self.reasoning: list[str] = []
+        self.refused = False  # some of the text is a refusal (`delta.refusal`)
         self.calls: dict[int, _Call] = {}
         self.finish_reason: str | None = None
         self.usage: Usage | None = None
@@ -272,9 +288,11 @@ class _Turn:
                     self.reasoning.append(extra[name])
                     out.append(ReasoningDelta(extra[name]))
                     break
-            if delta.content:
-                self.text.append(delta.content)
-                out.append(TextDelta(delta.content))
+            for text in (delta.content, getattr(delta, "refusal", None)):
+                if text:
+                    self.refused = self.refused or text is not delta.content
+                    self.text.append(text)
+                    out.append(TextDelta(text))
             for tc in delta.tool_calls or ():
                 out.extend(self._tool_delta(tc))
             if choice.finish_reason:
@@ -317,9 +335,8 @@ class _Turn:
                 raise CoreError("model sent a tool call without a name")
             arguments, raw = parse_arguments("".join(call.args))
             blocks.append(ToolCall(call.id, call.name, arguments, raw))
-        stop = _STOP_REASONS.get(self.finish_reason or "", StopReason.END_TURN)
-        if self.calls and stop in (StopReason.END_TURN, StopReason.REFUSAL):
-            stop = StopReason.TOOL_USE
+        stop = (StopReason.REFUSAL if self.refused
+                else _STOP_REASONS.get(self.finish_reason or "", StopReason.END_TURN))
         return Completed(assistant_message(blocks), self.usage or Usage(), stop)
 
 
@@ -351,9 +368,7 @@ def to_messages(system: str, messages: Sequence[Message], *,
         if returned:
             out.append({"role": "user", "content": [
                 {"type": "text", "text": "[What the tool returned with its result]"},
-                *({"type": "image_url",
-                   "image_url": {"url": f"data:{b.media_type};base64,{b.data}"}}
-                  for b in returned)]})
+                *map(_image_part, returned)]})
         if message.role is Role.ASSISTANT:
             if not texts and not calls:
                 continue
@@ -377,10 +392,13 @@ def to_messages(system: str, messages: Sequence[Message], *,
             text = "\n\n".join(texts)
             out.append({"role": "user", "content": text if not shown else [
                 *([{"type": "text", "text": text}] if text else []),
-                *({"type": "image_url",
-                   "image_url": {"url": f"data:{b.media_type};base64,{b.data}"}}
-                  for b in shown)]})
+                *map(_image_part, shown)]})
     return out
+
+
+def _image_part(image: Image) -> JSON:
+    return {"type": "image_url",
+            "image_url": {"url": f"data:{image.media_type};base64,{image.data}"}}
 
 
 def _text(block: Block) -> str | None:
@@ -398,16 +416,9 @@ def _text(block: Block) -> str | None:
 
 def _map_error(error: Exception) -> CoreError:
     if isinstance(error, openai.APIStatusError):
-        status = error.status_code
-        message = f"{status}: {error.message}"
-        code = str(getattr(error, "code", None) or "")
-        if status in (400, 413) and (code in _OVERFLOW_CODES or any(
-                m in str(error.message).lower() for m in _OVERFLOW_MESSAGES)):
-            return ContextOverflowError(message)
-        if status in (408, 409, 429) or status >= 500:
-            return TransientCoreError(message, retry_after(error.response.headers))
-        return CoreError(message)
+        return status_error(error.status_code, f"{error.status_code}: {error.message}",
+                            overflow=str(getattr(error, "code", None)) in _OVERFLOW_CODES,
+                            headers=error.response.headers)
     if isinstance(error, (openai.APIError, httpx2.TransportError)):
-        # Connection failures, timeouts and errors sent mid-stream (no HTTP status).
-        return TransientCoreError(f"{type(error).__name__}: {error}")
+        return transport_error(error)
     return CoreError(f"{type(error).__name__}: {error}")
