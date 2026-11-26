@@ -999,6 +999,10 @@ class Controller:
         self._switching = asyncio.Lock()  # conversation switches, one after another
         self._wanted: StartOptions | None = None  # the newest switch asked for
         self.folder_picked = False  # the open chat is in a folder the user chose for it
+        # A new chat here works nowhere until the user picks it a folder (the window's own
+        # conversations; not a sub-session's or Continuous's).
+        self.folder_required = False
+        self.ask_for_folder: Callable[[], None] | None = None  # the host offers folders
         self.can_delete = True  # False once Memory said it cannot delete conversations
         self.sessions: SubSessions | None = None  # deleted with their conversation
         # Called with each event after the model took it (voice mode reads replies aloud).
@@ -1084,11 +1088,35 @@ class Controller:
 
     # ── commands ──────────────────────────────────────────────────────────
 
-    def send(self, text: str, files: Sequence[str] = (), *, spoken: bool = False) -> None:
+    @property
+    def needs_folder(self) -> bool:
+        """The open chat is new and the user has not given it a folder: nothing is sent to
+        it until they do."""
+        model = self.model
+        return (self.folder_required and not self.folder_picked
+                and model.conversation is not None and model.conversation.folder is not None
+                and not model.items and not model.has_earlier)
+
+    def send(self, text: str, files: Sequence[str] = (), *, spoken: bool = False,
+             refused: Callable[[], None] | None = None) -> None:
         """The user's message with the files they attached to it; `spoken` in a voice
-        conversation."""
-        if text.strip() or files:
-            self.command(self.runtime.send(text.strip(), files=list(files), spoken=spoken))
+        conversation. `refused` is called when it is not sent: the chat needs a folder
+        (ask_for_folder is called), or the runtime refused it (its reason is noticed)."""
+        if not (text.strip() or files):
+            return
+        if self.needs_folder:
+            if self.ask_for_folder is not None:
+                self.ask_for_folder()
+            if refused is not None:
+                refused()
+            return
+
+        def failed(error: Exception) -> None:
+            self.model.notify(user_message(error))
+            if refused is not None:
+                refused()
+        self.command(self.runtime.send(text.strip(), files=list(files), spoken=spoken),
+                     failed=failed)
 
     def notify(self, text: str) -> None:
         """A notice for the agent, written into the conversation as Kaden."""

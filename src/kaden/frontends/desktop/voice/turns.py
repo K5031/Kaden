@@ -196,6 +196,7 @@ class Voice:
         if not text:
             self._listen()
             return
+        self._tasks.discard(asyncio.current_task())  # understood: the agent's turn now
         self._agent_busy = True
         self._send(text)
 

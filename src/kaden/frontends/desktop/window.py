@@ -2267,6 +2267,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.runtime = runtime
         self.home = controller  # this window's own conversation
+        controller.folder_required = True  # its new chats get a folder before a message
+        controller.ask_for_folder = self._offer_folders
         self.life = life  # the one who lives on, hosted by the app
         self.life_dialog: LifeDialog | None = None
         self.journal_dialog: JournalDialog | None = None
@@ -2280,7 +2282,6 @@ class MainWindow(QMainWindow):
         self._quitting = False
         self._life_on = False  # its view is up, or coming up while it starts
         self._viewing: Viewing | None = None  # the sub-session on screen instead of it
-        self._needs_folder = False  # a new chat the user has not given a folder
         self._target = Target()
         # Talking with Kaden; its speech models are kept beside the zoom's file, which
         # the frontend reads before the window opens and writes when it has closed.
@@ -2957,12 +2958,11 @@ class MainWindow(QMainWindow):
         self.folder_action.setVisible(folder is not None)
         new_chat = (self._viewing is None and folder is not None and not model.items
                     and not model.has_earlier)
-        # A new chat works nowhere until the user gives it a folder.
-        self._needs_folder = new_chat and not self.controller.folder_picked
+        needs_folder = self.controller.needs_folder
         self.title_label.setToolTip(f"Kaden works in {folder_path(folder)}"
-                                    if folder is not None and not self._needs_folder else "")
+                                    if folder is not None and not needs_folder else "")
         self.folder_button.setVisible(new_chat)
-        if self._needs_folder:
+        if needs_folder:
             self.folder_button.setText("  Choose folder  ⌄")
             self.folder_button.setToolTip("")
         elif folder is not None:
@@ -3399,7 +3399,7 @@ class MainWindow(QMainWindow):
         if self.model.conversation is None:
             self.model.notify("Open a conversation first.")
             return
-        if self._needs_folder:
+        if self.controller.needs_folder:
             self._offer_folders()
             return
         DutyDialog(self, self.controller, self.model.conversation).open()
@@ -3411,8 +3411,8 @@ class MainWindow(QMainWindow):
 
     def _send(self) -> None:
         text, files = self.input.toPlainText().strip(), self.attachments.paths()
-        if (text or files) and self._needs_folder:
-            self._offer_folders()
+        if (text or files) and self.controller.needs_folder:
+            self._offer_folders()  # the message stays in the box
             return
         if text or files:
             self.input.clear()

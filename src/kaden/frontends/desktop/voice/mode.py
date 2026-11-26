@@ -95,6 +95,7 @@ class VoiceMode(QObject):
         self._voice: Voice | None = None
         self._microphone: object | None = None
         self._starting: asyncio.Task[None] | None = None
+        self._previewing: Player | None = None  # the preview playing
         self._loading: asyncio.Task[None] | None = None  # the engine, while it loads
         self.load_at_start = False  # the user's choice: load the engine when Kaden starts
         self._streamed = False  # the reply under way came as deltas
@@ -120,15 +121,20 @@ class VoiceMode(QObject):
             self._starting = asyncio.ensure_future(self._start())
         elif self._voice is not None:
             self._voice.set_speaking(speaking)
-            self._microphone_on(listening)
-            self._voice.set_listening(listening)
+            try:
+                self._microphone_on(listening)
+            except Exception as e:  # noqa: BLE001 - said; the speaker goes on
+                self.listening = False
+                self.controller.model.notify(f"Voice could not listen: {e}")
+            self._voice.set_listening(self.listening)
         self.changed.emit()
 
     def _microphone_on(self, on: bool) -> None:
         assert self._voice is not None
         if on and self._microphone is None:
-            self._microphone = self._make_microphone(self._voice.heard)
-            self._microphone.start()  # type: ignore[attr-defined]
+            microphone = self._make_microphone(self._voice.heard)
+            microphone.start()  # type: ignore[attr-defined]
+            self._microphone = microphone
         elif not on and self._microphone is not None:
             self._microphone.stop()  # type: ignore[attr-defined]
             self._microphone = None
@@ -232,11 +238,15 @@ class VoiceMode(QObject):
             return
         assert self._engine is not None
         samples, rate = await asyncio.to_thread(self._engine.speak, SAMPLE)
-        speaker = self._make_speaker()
+        if self._previewing is not None:  # one preview at a time: the newest
+            self._previewing.stop()
+        speaker = self._previewing = self._make_speaker()
         try:
             await speaker.play(samples, rate)
         finally:
             speaker.close()
+            if self._previewing is speaker:
+                self._previewing = None
 
     async def _ready(self) -> bool:
         """The engine is loaded, its models fetched first with the user's yes; False when
@@ -349,7 +359,13 @@ class VoiceMode(QObject):
         self.controller.model.notify(f"Voice stopped: {error}")
 
     def _said(self, text: str) -> None:
-        self.controller.send(text, spoken=self.speaking)
+        self.controller.send(text, spoken=self.speaking, refused=self._not_sent)
+
+    def _not_sent(self) -> None:
+        """What was said was not taken (refused, or the chat needs a folder first): no
+        reply comes, so it listens again."""
+        if self._voice is not None:
+            self._voice.agent_idle()
 
     def _moved(self) -> None:
         if self._voice is not None:

@@ -1777,6 +1777,12 @@ async def test_a_new_chat_offers_its_folder_and_recent_ones(make, qapp, tmp_path
     assert menu.isVisible() and window.input.toPlainText() == "hello there"
     assert not h.core.requests and controller.model.items == []
     menu.hide()
+    refused: list[bool] = []
+    controller.send("said aloud", spoken=True, refused=lambda: refused.append(True))
+    assert refused == [True] and menu.isVisible()  # nor by voice, which listens again
+    await asyncio.sleep(0.1)
+    assert not h.core.requests and controller.model.items == []
+    menu.hide()
     window.open_duty()  # nor a duty before the chat has its folder
     assert menu.isVisible()
     menu.hide()
