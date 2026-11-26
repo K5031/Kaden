@@ -160,5 +160,7 @@ user choose each chat's folder.
   by what may be changed.
 - **Linux only.** Without bubblewrap (macOS, some Linux setups, a Kaden that itself runs
   in a sandbox) shell commands ask; file calls in the work folder still run freely.
+  [A sandbox on each system](../proposed/2026-11-26-a-sandbox-on-each-system.md) proposes
+  Seatbelt for macOS and closing the local services' sockets on Linux.
 - **A looser default.** New users get an agent that changes files in its folder unasked.
   The folder is theirs to choose, and the welcome says what the agent may do.
