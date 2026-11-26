@@ -66,7 +66,8 @@ src/kaden/tools/                     Tools
 src/kaden/frontends/                 Frontends; common.py is what every frontend shows the same way,
                                       headless.py, remote.py and wire.py the headless channel,
                                       sessions.py the sub-sessions a frontend hosts, worktrees.py
-                                      their git worktrees
+                                      their git worktrees, life.py Continuous, child.py how
+                                      both children are started
   desktop/                            desktop app: viewmodel.py (no Qt), window.py, voice/ (speech), assets
 src/kaden/skills/                    the skills Kaden comes with (runtime/skills.py loads them)
 src/kaden/window.py                  the window launcher
