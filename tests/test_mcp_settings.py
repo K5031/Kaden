@@ -103,3 +103,45 @@ def test_saved_servers_become_an_mcp_tools_module(tmp_path, keychain):
 def test_no_servers_no_module(tmp_path):
     config = launcher.load_config(launcher.parse_args(["--data-dir", str(tmp_path)]))
     assert config.extra_tools == ()
+
+
+async def test_without_a_keychain_a_server_with_a_value_is_not_saved(make, keychain,
+                                                                     monkeypatch):
+    import keyring.errors
+
+    def refuse(service: str, username: str, password: str) -> None:
+        raise keyring.errors.KeyringError("locked")
+
+    h = await setup(make)
+    monkeypatch.setattr(keychain, "set_password", refuse)
+    with pytest.raises(ValueError, match="keychain"):
+        await h.runtime.update_settings(SettingsUpdate(mcp_servers=[GITHUB]))
+    assert not (h.data_dir / "settings.toml").exists()
+    assert (await h.runtime.settings()).mcp_servers == ()
+
+
+async def test_a_failed_save_puts_the_servers_values_back(make, keychain, monkeypatch):
+    h = await setup(make)
+    await h.runtime.update_settings(SettingsUpdate(mcp_servers=[GITHUB]))
+    monkeypatch.setattr("kaden.runtime.modules.save_settings",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    changed = McpServer("github", command=GITHUB.command, env={"GITHUB_TOKEN": "ghp-new"})
+    with pytest.raises(OSError):
+        await h.runtime.update_settings(SettingsUpdate(mcp_servers=[changed, DOCS]))
+    assert keychain.store[("kaden", "mcp/github/GITHUB_TOKEN")] == "ghp-secret"
+
+
+async def test_setup_runtime_saves_concurrent_changes_one_at_a_time(tmp_path):
+    import asyncio
+
+    from kaden.api import PermissionPolicy
+    from kaden.runtime import RuntimeConfig
+    from kaden.runtime.setup import SetupRuntime
+
+    runtime = SetupRuntime(RuntimeConfig(data_dir=tmp_path), "terminal", "no key")
+    await asyncio.gather(*[runtime.update_settings(SettingsUpdate(system_prompt=f"p{i}"))
+                           for i in range(10)],
+                         runtime.update_settings(SettingsUpdate(
+                             permissions=PermissionPolicy.ASK)))
+    data = tomllib.loads((tmp_path / "settings.toml").read_text())
+    assert data["permissions"] == "ask" and data["system_prompt"] == "p9"
