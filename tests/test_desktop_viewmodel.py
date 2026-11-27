@@ -793,6 +793,39 @@ def test_a_step_still_arriving_says_what_it_does_without_its_input(name, arrivin
     assert ToolItem("c", name, '{"file_path": "/src/ma').summary == arriving
 
 
+def test_a_tools_title_names_a_step_without_a_description():
+    """A tool server's title (ToolSpec.title) in place of "Server: tool name"; a phrase of
+    Kaden's own for a tool still comes first."""
+    titles = {"mcp__notes__add": "Add numbers", "Read": "Reader"}
+    assert ToolItem("c", "mcp__notes__add", '{"a": 1}', titles=titles).summary == "Add numbers"
+    assert ToolItem("c", "mcp__notes__add", '{"a', titles=titles).summary == "Add numbers"
+    assert ToolItem("c", "Read", '{"file_path": "a.py"}', titles=titles).summary == "Read a.py"
+    described = ToolItem("c", "mcp__notes__add", '{"step_summary": "Add up the bill"}',
+                         titles=titles)
+    assert described.summary == "Add up the bill"
+
+
+async def test_steps_learn_tool_titles_from_the_runtime(make):
+    """Titles come from RuntimeAPI.list_tools: for a tool first seen in an event (a tool
+    server that started later), and for history loaded at the start."""
+    from dataclasses import replace
+
+    h: Harness = await make(permissions=PermissionPolicy.ALLOW_WORKSPACE)
+    spec = h.tools.instant("mcp__notes__add", "3")
+    h.tools.specs[spec.name] = replace(spec, title="Add numbers")
+    h.tools.confined_names = {spec.name}
+    h.core.add(Step(calls=[call(spec.name, {"a": 1}, id="a")]), Step(text="3."))
+    await h.start()
+    model, controller, _ = await attach(h)
+    controller.send("add")
+    await eventually(lambda: of(model, ToolItem) and not model.busy)
+    [step] = of(model, ToolItem)
+    assert step.summary == "Added numbers"  # done: in the past tense, as every step
+    later, _, _ = await attach(h)  # the history, as a window opened now shows it
+    await eventually(lambda: of(later, ToolItem))
+    assert [s.summary for s in of(later, ToolItem)] == ["Added numbers"]
+
+
 async def test_a_tool_the_provider_ran_is_a_finished_step(make):
     from kaden.api import ServerToolUse
 

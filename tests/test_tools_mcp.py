@@ -32,6 +32,13 @@ async def test_tools_are_named_by_server(tools):
     assert add.parameters["properties"].keys() == {"a", "b"}
 
 
+async def test_a_tools_title_is_the_servers_own(tools):
+    """Frontends name a step by it (common.tool_sentence); a tool without one has none."""
+    specs = {s.name: s for s in await tools.list_tools()}
+    assert specs["mcp__notes__add"].title == "Add numbers"
+    assert specs["mcp__notes__broken"].title is None
+
+
 async def test_a_servers_read_only_hint_is_not_taken_on_trust(tools):
     """`add` says it is read-only; the server is a program of its own, so its calls are
     reviewed or asked about all the same."""

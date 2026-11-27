@@ -25,7 +25,7 @@ from typing import Any
 
 import httpx2
 
-from kaden.api import Image, ToolOutput, ToolSpec
+from kaden.api import DESCRIPTION_ARG, DESCRIPTION_SCHEMA, Image, ToolOutput, ToolSpec
 from kaden.tools.shell_files.attachments import MAX_IMAGE_BYTES
 
 AGENT = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -48,7 +48,8 @@ _DANMAKU = re.compile(r'<d p="([^"]*)">([^<]*)</d>')
 _VIDEO = {"video": {"type": "string",
                     "description": "The video: its BV id, or a link to it (b23.tv too)"},
           "part": {"type": "integer", "minimum": 1,
-                   "description": "Which part of a video in parts (default: the first)"}}
+                   "description": "Which part of a video in parts (default: the first)"},
+          DESCRIPTION_ARG: DESCRIPTION_SCHEMA}
 SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="BiliVideo",

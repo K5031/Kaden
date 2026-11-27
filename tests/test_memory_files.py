@@ -394,8 +394,7 @@ async def test_str_replace_takes_edits_names_and_others_are_named_back(make, tmp
                        Step(calls=[call("memory", {"command": "str_replace", "path": "a.md",
                                                    "old_str": "x", "new_str": "y"},
                                         id="e"),
-                                   call("memory", {"command": "view", "path": "",
-                                                   "step_summary": "List my memories"},
+                                   call("memory", {"command": "view", "path": ""},
                                         id="v")]),
                        Step(text="Oops.")], maintenance=Step(text="Notes")))
     project = tmp_path / "project"
@@ -405,7 +404,7 @@ async def test_str_replace_takes_edits_names_and_others_are_named_back(make, tmp
     results = await h.results()
     assert results["e"].status is ToolStatus.ERROR
     assert "'old_str'" in results["e"].content and "unexpected" in results["e"].content
-    assert results["v"].status is ToolStatus.OK  # every tool's step_summary is still taken
+    assert results["v"].status is ToolStatus.OK
 
 
 async def test_files_that_are_not_memories_are_left_out(tmp_path: Path):

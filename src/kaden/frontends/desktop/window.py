@@ -16,7 +16,7 @@ import re
 import shutil
 import tempfile
 import time
-from collections.abc import Awaitable, Callable, Container, Sequence
+from collections.abc import Awaitable, Callable, Container, Mapping, Sequence
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -1565,7 +1565,7 @@ class PermissionCard(QFrame):
     ends), always, or deny; never allow is on Deny's menu, a step away from always."""
 
     def __init__(self, request: Prompt, resolve: Callable[[str, Any], None], *,
-                 per_conversation: bool = True) -> None:
+                 per_conversation: bool = True, titles: Mapping[str, str] = {}) -> None:
         super().__init__()
         self.setObjectName("prompt")
         layout = QVBoxLayout(self)
@@ -1573,7 +1573,7 @@ class PermissionCard(QFrame):
         call = request.call
         assert call is not None
         headline, detail = call_parts(call.arguments)
-        headline = headline or tool_sentence(call.name, call.arguments)
+        headline = headline or tool_sentence(call.name, call.arguments, titles.get(call.name))
         layout.addWidget(_label(f"Kaden wants to: {headline}", role="strong"))
         layout.addWidget(_label(request_note(request), tone="muted"))
         if detail:
@@ -1727,12 +1727,13 @@ class PlanApprovalCard(QFrame):
 class ProposalCard(QFrame):
     """A call the agent proposed: it runs only if the user approves it."""
 
-    def __init__(self, proposal: Prompt, resolve: Callable[[str, Any], None]) -> None:
+    def __init__(self, proposal: Prompt, resolve: Callable[[str, Any], None], *,
+                 titles: Mapping[str, str] = {}) -> None:
         super().__init__()
         self.setObjectName("prompt")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 10, 12, 10)
-        headline, detail = proposal_parts(proposal)
+        headline, detail = proposal_parts(proposal, titles)
         layout.addWidget(_label(headline, role="strong"))
         layout.addWidget(_label(str(proposal.details.get("reason", "")), tone="muted"))
         if detail:
@@ -2338,9 +2339,12 @@ class ConversationView(QScrollArea):
             if child.widget() is not None:
                 _discard(child.widget())
         respond = self.controller.respond
-        permission = partial(PermissionCard, per_conversation=self.per_conversation)
+        titles = self.model.titles
+        permission = partial(PermissionCard, per_conversation=self.per_conversation,
+                             titles=titles)
         cards = {PromptKind.QUESTION: QuestionCard, PromptKind.PLAN: PlanApprovalCard,
-                 PromptKind.PERMISSION: permission, PromptKind.PROPOSAL: ProposalCard}
+                 PromptKind.PERMISSION: permission,
+                 PromptKind.PROPOSAL: partial(ProposalCard, titles=titles)}
         for prompt in self.model.prompts.values():
             if prompt.kind == PromptKind.PROPOSAL and prompt.details.get("card"):
                 continue  # shown on its wrap-up card
@@ -3481,15 +3485,17 @@ class MainWindow(QMainWindow):
         self._prompts_seen = set(prompts)
         for prompt in new:
             if prompt.kind != PromptKind.PROPOSAL:
-                self._notify("Kaden", prompt, life=False)
+                self._notify("Kaden", prompt, life=False, titles=self.home.model.titles)
 
-    def _notify(self, who: str, prompt: Prompt, *, life: bool) -> None:
+    def _notify(self, who: str, prompt: Prompt, *, life: bool,
+                titles: Mapping[str, str] = {}) -> None:
         """A desktop notification that `who` waits on the user, when the window is not in
-        front: otherwise nothing would tell them, and the work waits."""
+        front: otherwise nothing would tell them, and the work waits. `titles`: the tools'
+        titles by name, where the view that knows them is open."""
         if self.tray is None or (self.isActiveWindow() and not self.isMinimized()):
             return
         self._notified_life = life
-        self.tray.showMessage(f"{who} needs your answer", prompt_summary(prompt),
+        self.tray.showMessage(f"{who} needs your answer", prompt_summary(prompt, titles),
                               QIcon(str(app_menu.ICON)), 10_000)
 
     def notification_clicked(self) -> None:
@@ -3505,7 +3511,9 @@ class MainWindow(QMainWindow):
         if self.life is None:
             return
         for prompt in self.life.take_questions():
-            self._notify(self.life.name, prompt, life=True)
+            self._notify(self.life.name, prompt, life=True, titles=(
+                self._viewing.controller.model.titles if self.showing_life
+                and self._viewing is not None else {}))
         if self.showing_life:
             return
         for text in self.life.take_messages():

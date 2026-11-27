@@ -494,7 +494,9 @@ async def test_the_tools_take_claude_codes_parameters(tools):
               if spec.name not in bilibili.NAMES}  # Kaden's own (test_bilibili)
     params.pop("screenshot", None)
     assert params == {
-        "Bash": {"command", "timeout", "run_in_background", "dangerouslyDisableSandbox"},
+        # Claude Code's `description` is Kaden's step sentence (api.DESCRIPTION_ARG).
+        "Bash": {"command", "timeout", "run_in_background", "dangerouslyDisableSandbox",
+                 "step_summary"},
         "Read": {"file_path", "offset", "limit", "pages", "view"},
         "Write": {"file_path", "content"},
         "Edit": {"file_path", "old_string", "new_string", "replace_all"},
@@ -600,12 +602,20 @@ async def test_a_sandboxed_command_cannot_read_keys_from_the_environment(
     assert "key=sk-secret" in out.content  # asked for first, so it runs as the user would
 
 
-async def test_no_tool_declares_its_own_description(tools):
-    """The runtime adds the description to every tool (api.DESCRIPTION_ARG)."""
+async def test_bash_and_bilibili_declare_a_step_description(tools, tmp_path):
+    """A command, or a Bilibili tool's name, says little to the user, so those tools ask
+    for a sentence (api.DESCRIPTION_ARG) and ignore it when they run; the other tools have
+    a phrase of their own in the frontends."""
     from kaden.api import DESCRIPTION_ARG
+    from kaden.tools.shell_files import bili_account, bilibili
 
-    for spec in await tools.list_tools():
-        assert DESCRIPTION_ARG not in spec.parameters["properties"], spec.name
+    offered = await tools.list_tools()
+    declaring = {s.name for s in offered if DESCRIPTION_ARG in s.parameters["properties"]}
+    bili = {s.name for s in offered} & (bilibili.NAMES | bili_account.NAMES)
+    assert bili and declaring == {"Bash"} | bili
+    out = await run(tools, tmp_path, "Bash", command="echo hi",
+                    **{DESCRIPTION_ARG: "Say hi"})
+    assert out.content.startswith("hi") and not out.is_error
 
 
 async def test_judging_a_call_leaves_nothing_behind(tools, workspace):

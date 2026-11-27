@@ -107,9 +107,10 @@ def notice_of(message: Message | MessageQueued) -> str | None:
     return "".join(b.text for b in message.blocks if isinstance(b, Text)).strip()
 
 
-def proposal_parts(proposal: Prompt) -> tuple[str, str]:
+def proposal_parts(proposal: Prompt,
+                   titles: Mapping[str, str] = {}) -> tuple[str, str]:
     """A PROPOSAL prompt for its card: the headline ("Kaden proposes: …") and the call's
-    other arguments."""
+    other arguments. `titles`: the tools' titles by name (ToolSpec.title)."""
     call = proposal.call
     if call is None:
         return f"Kaden proposes: {proposal.text}", ""
@@ -118,7 +119,7 @@ def proposal_parts(proposal: Prompt) -> tuple[str, str]:
         headline = headline or (
             f"Start a subagent: {call.arguments.get('description') or call.arguments.get('prompt')}")
         detail = ""
-    headline = headline or tool_sentence(call.name, call.arguments)
+    headline = headline or tool_sentence(call.name, call.arguments, titles.get(call.name))
     return f"Kaden proposes: {headline}", detail
 
 
@@ -275,26 +276,32 @@ _PHRASES: dict[str, tuple[str, Callable[[Mapping[str, Any]], str]]] = {
 }
 
 
-def tool_sentence(name: str, arguments: Mapping[str, Any] | None) -> str:
+def tool_sentence(name: str, arguments: Mapping[str, Any] | None,
+                  title: str | None = None) -> str:
     """What a call does, in words, as Claude shows a step: from its arguments, or from its
-    name alone while they still arrive (None). A tool server's tool is its server and name
-    ("Github: create issue"); any other tool is "Use <name>"."""
+    name alone while they still arrive (None). A tool without a phrase here is its
+    `title` (ToolSpec.title) where it has one; else a tool server's tool is its server and
+    name ("Github: create issue"), and any other tool "Use <name>"."""
     if name in _PHRASES:
         arriving, done = _PHRASES[name]
         return arriving if arguments is None else done(arguments)
+    if title:
+        return title
     if name.startswith("mcp__") and name.count("__") >= 2:
         _, server, tool = name.split("__", 2)
         return f"{server.replace('_', ' ').capitalize()}: {tool.replace('_', ' ')}"
     return f"Use {name}"
 
 
-def prompt_summary(prompt: Prompt) -> str:
+def prompt_summary(prompt: Prompt, titles: Mapping[str, str] = {}) -> str:
     """What a waiting prompt asks, in one line, for a notification: a call as its card
-    names it, with its one argument where it has one (a command)."""
+    names it, with its one argument where it has one (a command). `titles`: the tools'
+    titles by name (ToolSpec.title)."""
     if prompt.call is None:
         return (prompt.text.strip().splitlines() or [""])[0][:120]
     headline, detail = call_parts(prompt.call.arguments)
-    headline = headline or tool_sentence(prompt.call.name, prompt.call.arguments)
+    headline = headline or tool_sentence(prompt.call.name, prompt.call.arguments,
+                                         titles.get(prompt.call.name))
     if detail and "\n" not in detail:
         return f"{headline}: {detail[:80]}"
     return headline

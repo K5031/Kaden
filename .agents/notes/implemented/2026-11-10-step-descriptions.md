@@ -1,6 +1,6 @@
 # Agent Note: Step descriptions
 
-Status: implemented — every tool call can carry a plain-language sentence the model writes, shown in place of the tool and its input
+Status: implemented — a tool call can carry a plain-language sentence the model writes, shown in place of the tool and its input
 
 ## Problem
 
@@ -10,19 +10,10 @@ prompt they cannot read gets clicked away. Claude Code shows a short line per st
 
 ## Decision
 
-- The runtime adds an optional argument, `api.DESCRIPTION_ARG` (`"step_summary"`), to the
-  schema of every tool it offers, built-ins included: "What this step does, in a few plain
-  words the user understands without knowing the tool". The module's own spec is not
-  changed. The description also tells the model to leave it out of tools that do not
-  list it: a provider's own tools (Anthropic's `web_search`) refuse an argument they do
-  not declare (`invalid_tool_input`), and a model used to adding it everywhere adds it
-  there too. Its example is therefore not a web search.
-- Before the Tools module sees a call (`confined`, `execute`) the runtime removes it
-  (`Runtime._bare`). Events, snapshots and the transcript keep it, so frontends show it
-  live and in history. The name is one no tool needs: frontends cannot tell an added
-  argument from a tool's own, so a common name such as `description` would show an issue
-  body or a commit message as the step's sentence. A tool whose own schema declares
-  `step_summary` anyway keeps it as an ordinary argument.
+- A call carries its sentence in an optional argument, `api.DESCRIPTION_ARG`
+  (`"step_summary"`), which the tools that want one declare in their own schema: see
+  [tools declare their own step summary](2026-11-27-tools-declare-their-step-summary.md).
+  Events, snapshots and the transcript keep it, so frontends show it live and in history.
 - Frontends show the description as the step's title and a permission prompt's headline,
   with the exact input below it or in a tooltip (`frontends.common.call_parts`). Once a
   step succeeds its first word is put in the past tense ("Searched the web for …",
@@ -53,15 +44,14 @@ prompt they cannot read gets clicked away. Claude Code shows a short line per st
 - **A sentence pattern declared in each ToolSpec.** Keeps frontends generic, but every
   module has to write patterns, and patterns still cannot describe complex calls; the
   shell needed a model-written description anyway.
-- **A description argument declared by each tool.** How the shell did it at first; every
-  module would repeat it, and the module would receive an argument it does not use.
 - **A required description.** More consistent titles, but a call without one would fail
   validation and cost a retry; the fallback (name and input) is good enough.
 
 ## Consequences
 
-- One mechanism for every tool, present and future, with no tool names in frontends.
-- About 10–20 more output tokens per call.
+- One way to show a step for every tool that declares a sentence, with a fixed phrase
+  (`common.tool_sentence`) for the rest.
+- About 10–20 more output tokens per call of a tool that declares it.
 - Models sometimes leave it out, smaller ones more often; those steps show the tool and
   its input.
 - Simple steps read wordier ("Read your notes" rather than "Read notes.md"); the exact

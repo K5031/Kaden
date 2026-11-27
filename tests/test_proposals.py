@@ -66,7 +66,7 @@ async def test_approving_runs_exactly_that_call_without_a_prompt(make):
     result = await eventually(lambda: outcomes(h).get("p"))
     assert result.status == ToolStatus.OK and "written" in result.content
     [received] = h.tools.received
-    assert received.arguments == {"path": "notes.md"}  # the step sentence removed
+    assert received.arguments == WRITE["arguments"]  # exactly what was proposed
     assert asked(h.rec) == []  # the click was the permission
     assert h.rec.of(PromptClosed)[-1] == PromptClosed("p", True)
     await eventually(lambda: len(h.core.requests) == 3)  # the outcome woke the agent

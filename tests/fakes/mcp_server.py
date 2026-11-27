@@ -11,7 +11,7 @@ from mcp_types import ToolAnnotations
 def build() -> MCPServer:
     server = MCPServer("notes")
 
-    @server.tool(description="Add two numbers.",
+    @server.tool(title="Add numbers", description="Add two numbers.",
                  annotations=ToolAnnotations(read_only_hint=True))
     def add(a: int, b: int) -> str:
         return str(a + b)

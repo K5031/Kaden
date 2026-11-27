@@ -282,3 +282,17 @@ def test_a_step_in_progress_is_shown_as_it_is_being_done():
         {"content": "Odd", "activeForm": "Odd", "status": "todo"}]})  # not TodoWrite's
     assert [(s.text, s.status) for s in steps] == [
         ("Running the tests", PlanStatus.DOING), ("Ship it", PlanStatus.TODO)]
+
+
+def test_a_tools_title_stands_in_for_its_name_in_prompts():
+    from kaden.api import Prompt, PromptKind, ToolCall
+    from kaden.frontends.common import prompt_summary, proposal_parts, tool_sentence
+
+    titles = {"mcp__notes__add": "Add numbers"}
+    add = ToolCall("c", "mcp__notes__add", {"a": 1, "b": 2})
+    assert tool_sentence(add.name, add.arguments, "Add numbers") == "Add numbers"
+    assert tool_sentence(add.name, add.arguments) == "Notes: add"
+    asking = Prompt("p", PromptKind.PERMISSION, add.name, add, {})
+    assert prompt_summary(asking, titles).startswith("Add numbers")
+    proposed = Prompt("q", PromptKind.PROPOSAL, add.name, add, {})
+    assert proposal_parts(proposed, titles)[0] == "Kaden proposes: Add numbers"

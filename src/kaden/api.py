@@ -361,6 +361,9 @@ class ToolSpec:
     answers_prompt: bool = False  # True: a call with a `prompt` argument (Claude Code's
     #   WebFetch) gets, in place of a successful output, the model's answer to the prompt
     #   from that output, from the maintenance model.
+    title: str | None = None  # a short name for people ("Add numbers"), which frontends
+    #   show for a call that has no sentence of its own (DESCRIPTION_ARG): a tool
+    #   server's own title for its tool. Never sent to the model.
 
 
 FOREGROUND_TIMEOUT_S = 120.0  # a foreground call's limit unless its `timeout` says
@@ -1152,13 +1155,19 @@ PLAN_MODE_TOOLS = frozenset({"EnterPlanMode", "ExitPlanMode", "AskUserQuestion",
 RESERVED_TOOL_NAMES = (frozenset(BUILTIN_TOOLS) | frozenset(DUTY_TOOLS)
                        | {SKILL_TOOL.name, TOOL_SEARCH.name})
 
-# Every tool the runtime offers takes an optional argument under this name: a few plain
-# words the model writes about what the call does, which frontends show in place of the
-# tool and its input. The runtime adds it to each offered schema and removes it from the
-# call before the Tools module sees it (confined, execute); events, snapshots and the
-# transcript keep it. The name is one no tool needs; a tool whose own schema declares it
-# anyway gets it like any argument, and frontends show it as the step's sentence.
+# A tool whose input says little to the user declares this optional argument in its own
+# schema (DESCRIPTION_SCHEMA): a few plain words the model writes about what the call
+# does, which frontends show in place of the tool and its input. The runtime adds it to no
+# tool and passes it on as any argument; the tool ignores it. The permission review and
+# permission rules judge the call without it. The name is one no tool needs for anything
+# else, so frontends can show it as the step's sentence wherever it appears.
 DESCRIPTION_ARG = "step_summary"
+DESCRIPTION_SCHEMA: JSON = {
+    "type": "string",
+    "description": "What this step does, in a few plain words the user understands without "
+                   "knowing the tool, e.g. \"Read your trip notes\". The user sees this "
+                   "instead of the tool and its input.",
+}
 
 
 class ToolContext(Protocol):

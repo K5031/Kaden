@@ -25,7 +25,15 @@ import keyring
 import keyring.errors
 import segno
 
-from kaden.api import KEYCHAIN_SERVICE, Image, StandingWatch, ToolOutput, ToolSpec
+from kaden.api import (
+    DESCRIPTION_ARG,
+    DESCRIPTION_SCHEMA,
+    KEYCHAIN_SERVICE,
+    Image,
+    StandingWatch,
+    ToolOutput,
+    ToolSpec,
+)
 from kaden.tools.shell_files.bilibili import API, HEADERS, TIMEOUT, BiliError
 
 PASSPORT = "https://passport.bilibili.com/x/passport-login/web/qrcode"
@@ -69,9 +77,11 @@ LOGIN = ToolSpec(
         "to scan with the Bilibili app on the account's phone; call it again to see whether "
         "it worked. With one it says which account it is. log_out forgets the login. Once "
         "logged in, you can follow channels and read their new videos."),
-    parameters={"type": "object", "properties": {"log_out": {"type": "boolean"}},
+    parameters={"type": "object", "properties": {
+        "log_out": {"type": "boolean"}, DESCRIPTION_ARG: DESCRIPTION_SCHEMA},
                 "additionalProperties": False},
     read_only=False, deferred=True)  # a one-off: named, and described once it is wanted
+_SENTENCE_ONLY = {DESCRIPTION_ARG: DESCRIPTION_SCHEMA}
 _CHANNEL_ARG = {"type": "string", "description": (
     "The channel: its uploader id (BiliVideo shows it), or a link to its space page")}
 ACCOUNT_SPECS: tuple[ToolSpec, ...] = (
@@ -80,26 +90,27 @@ ACCOUNT_SPECS: tuple[ToolSpec, ...] = (
         description=("Follow a Bilibili channel with your account, or with follow false, "
                      "stop following it. Others can see whom an account follows."),
         parameters={"type": "object", "properties": {
-            "channel": _CHANNEL_ARG, "follow": {"type": "boolean"}},
+            "channel": _CHANNEL_ARG, "follow": {"type": "boolean"},
+            DESCRIPTION_ARG: DESCRIPTION_SCHEMA},
             "required": ["channel"], "additionalProperties": False},
         read_only=False, deferred=True),
     ToolSpec(
         name="BiliFollowing",
         description="The Bilibili channels your account follows.",
-        parameters={"type": "object", "properties": {}, "additionalProperties": False},
+        parameters={"type": "object", "properties": _SENTENCE_ONLY, "additionalProperties": False},
         read_only=True, deferred=True),
     ToolSpec(
         name="BiliFeed",
         description=("New videos from the channels your account follows, since you last "
                      "looked (the first time, the latest few)."),
-        parameters={"type": "object", "properties": {}, "additionalProperties": False},
+        parameters={"type": "object", "properties": _SENTENCE_ONLY, "additionalProperties": False},
         read_only=True),
     ToolSpec(
         name="BiliWatchFeed",
         description=(
             "Watch the channels your account follows: each time they post, you are told what "
             "is new (a burst of posts together), until you stop it."),
-        parameters={"type": "object", "properties": {}, "additionalProperties": False},
+        parameters={"type": "object", "properties": _SENTENCE_ONLY, "additionalProperties": False},
         read_only=True, timeout=math.inf, watch=True),
 )
 ACCOUNT_NAMES = frozenset(s.name for s in ACCOUNT_SPECS)
@@ -112,20 +123,21 @@ MESSAGE_SPECS: tuple[ToolSpec, ...] = (
                      "to its space page."),
         parameters={"type": "object", "properties": {
             "to": {"type": "string", "description": "Their UID, or a link to their space page"},
-            "text": {"type": "string", "minLength": 1, "maxLength": 1000}},
+            "text": {"type": "string", "minLength": 1, "maxLength": 1000},
+            DESCRIPTION_ARG: DESCRIPTION_SCHEMA},
             "required": ["to", "text"], "additionalProperties": False},
         read_only=False),
     ToolSpec(
         name="BiliMessages",
         description=("Private messages to your Bilibili account since you last looked, with "
                      "who sent them (the first time, the latest few)."),
-        parameters={"type": "object", "properties": {}, "additionalProperties": False},
+        parameters={"type": "object", "properties": _SENTENCE_ONLY, "additionalProperties": False},
         read_only=True),
     ToolSpec(
         name="BiliWatchMessages",
         description=("Watch your Bilibili account's private messages. It is kept running "
                      "while you are logged in: you are told when someone writes."),
-        parameters={"type": "object", "properties": {}, "additionalProperties": False},
+        parameters={"type": "object", "properties": _SENTENCE_ONLY, "additionalProperties": False},
         read_only=True, timeout=math.inf, watch=True),
 )
 MESSAGE_NAMES = frozenset(s.name for s in MESSAGE_SPECS)

@@ -36,8 +36,8 @@ The shell, files and web module offers:
   the first entries of the result.
 - The Anthropic Core offers its own search as `WebSearch` too, sent to the API under
   Anthropic's name `web_search`, so it still takes the module's place.
-- Claude Code's per-call `description` is Kaden's `step_summary`, which the runtime adds
-  to every tool.
+- Claude Code's per-call `description` on `Bash` is Kaden's `step_summary`, declared in
+  its schema: see [tools declare their own step summary](2026-11-27-tools-declare-their-step-summary.md).
 - `Bash` runs a command until it ends or its `timeout`, or in the background when asked:
   see [Bash chooses its background](2026-11-22-bash-chooses-its-background.md).
 - The rest of Claude Code's tools and parameters (`WebFetch`'s `prompt`, `Grep`'s `type`

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import json
+import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -102,6 +103,8 @@ from kaden.frontends.common import (
 )
 from kaden.frontends.sessions import SubSessions
 
+logger = logging.getLogger(__name__)
+
 HISTORY_PAGE = 100
 MAX_ARGS_CHARS = 120
 LABEL_CHARS = 60  # a conversation's label in the sidebar
@@ -171,6 +174,9 @@ class ToolItem:
     content: str = ""
     duration_s: float | None = None
     pictures: tuple[Image, ...] = ()  # what the tool returned to be looked at
+    # The tools' titles by name (ToolSpec.title): the model's, shared, so titles learned
+    # later name the steps already shown.
+    titles: Mapping[str, str] = field(default_factory=dict, repr=False)
 
     @property
     def sentence(self) -> str:
@@ -183,7 +189,7 @@ class ToolItem:
             except ValueError:  # still arriving
                 arguments = None
             headline = tool_sentence(self.name, arguments if isinstance(arguments, dict)
-                                     else None)
+                                     else None, self.titles.get(self.name))
         return clip(headline, MAX_ARGS_CHARS)
 
     @property
@@ -357,6 +363,7 @@ class ConversationModel:
         self.failure: Failure | None = None  # shown as a banner until the next cycle
         self.has_earlier = False
         self.closed = False
+        self.titles: dict[str, str] = {}  # the tools' titles by name (ToolSpec.title)
         self._tools: dict[str, ToolItem] = {}
         self._cards: set[str] = set()  # calls shown as the card or the checklist, not as steps
         self._stream: list[AssistantItem | ToolItem] = []  # not yet committed
@@ -649,9 +656,22 @@ class ConversationModel:
             self._cards.add(call.id)
         return call.id not in self._cards
 
+    def learn_titles(self, titles: Mapping[str, str]) -> None:
+        """Tools' titles (ToolSpec.title), for the steps shown and to come."""
+        new = {name: title for name, title in titles.items() if self.titles.get(name) != title}
+        if not new:
+            return
+        self.titles.update(new)
+        for item in self._tools.values():
+            if item.name in new:
+                self.on_change(Updated(item))
+        if any(p.call is not None and p.call.name in new for p in self.prompts.values()):
+            self.on_change(PromptsChanged())
+
     def _add_tool(self, call: ToolCall, *, streaming: bool = False) -> ToolItem:
         arguments = "" if streaming else json.dumps(call.arguments, ensure_ascii=False)
-        item = self._tools[call.id] = self._add(ToolItem(call.id, call.name, arguments))
+        item = self._tools[call.id] = self._add(
+            ToolItem(call.id, call.name, arguments, titles=self.titles))
         return item
 
     def _set_card(self, card: Card | None) -> None:
@@ -987,6 +1007,18 @@ def user_message(error: Exception) -> str:
     return text
 
 
+def _tool_name(event: object) -> str | None:
+    """The tool an event is about, if any: a call arriving, starting, or asking."""
+    match event:
+        case ToolCallDelta(name=name):
+            return name
+        case ToolStarted(call=call):
+            return call.name
+        case PromptOpened(prompt=prompt) if prompt.call is not None:
+            return prompt.call.name
+    return None
+
+
 class Controller:
     """Runs the event pump for one ConversationModel and issues runtime commands."""
 
@@ -998,6 +1030,7 @@ class Controller:
             asyncio.Queue())
         self._tasks: set[asyncio.Task[Any]] = set()
         self._switching = asyncio.Lock()  # conversation switches, one after another
+        self._listed: set[str] = set()  # tools whose titles were looked up
         self._wanted: StartOptions | None = None  # the newest switch asked for
         self.folder_picked = False  # the open chat is in a folder the user chose for it
         # A new chat here works nowhere until the user picks it a folder (the window's own
@@ -1028,6 +1061,7 @@ class Controller:
                     if item.seq <= self.model.last_seq:
                         continue
                 self.model.last_seq = item.seq
+                await self._learn_titles(item.event)
                 self.model.apply(item.event)
                 for listener in self.listeners:
                     listener(item.event)
@@ -1048,7 +1082,23 @@ class Controller:
         finally:
             await self._inbox.put(None)
 
+    async def _learn_titles(self, event: object = None) -> None:
+        """The tools' titles, from the runtime: at the start, and again for a tool not
+        listed then (one a tool server offers since)."""
+        if event is not None and ((name := _tool_name(event)) is None or name in self._listed):
+            return
+        if event is not None:
+            self._listed.add(name)  # asked once, whether or not it has a title
+        try:
+            specs = await self.runtime.list_tools()
+        except Exception:  # steps keep their other names
+            logger.warning("Could not list the tools for their titles", exc_info=True)
+            return
+        self._listed |= {spec.name for spec in specs}
+        self.model.learn_titles({spec.name: spec.title for spec in specs if spec.title})
+
     async def recover(self) -> None:
+        await self._learn_titles()
         snapshot = self.runtime.snapshot()
         history = (await self.runtime.history(snapshot.conversation.id, limit=HISTORY_PAGE)
                    if snapshot.conversation else ())

@@ -160,7 +160,7 @@ class McpTools(Tools):
                     # program of its own, so the runtime reviews or asks.
                     server.tools[name] = ToolSpec(
                         name, _describe(server.name, tool), tool.input_schema or {"type": "object"},
-                        deferrable=True)
+                        deferrable=True, title=_title(tool))
                 server.client = client
                 server.ready.set()
                 await server.stop.wait()
@@ -174,6 +174,12 @@ class McpTools(Tools):
 
 def _name(server: str, tool: str) -> str:
     return _UNSAFE.sub("_", f"mcp__{server}__{tool}")[:MAX_NAME]
+
+
+def _title(tool: Any) -> str | None:
+    """The tool's name for people: its own title, else its annotations' (MCP has both)."""
+    annotations = getattr(tool, "annotations", None)
+    return tool.title or getattr(annotations, "title", None) or None
 
 
 def _describe(server: str, tool: Any) -> str:

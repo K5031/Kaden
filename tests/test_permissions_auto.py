@@ -215,20 +215,6 @@ async def test_the_reviewer_judges_the_command_not_its_description(make: Any) ->
     assert "rm -rf ~/photos" in reviewer.seen() and "Tidy up" not in reviewer.seen()
 
 
-async def test_the_reviewer_sees_a_tools_own_description_argument(make: Any) -> None:
-    from kaden.api import ToolSpec
-
-    reviewer = Reviewer("ALLOW\nFine.")
-    h = await auto(make, reviewer, Step(calls=[call("ticket", {
-        "step_summary": "my bank password is hunter2"}, id="o")]), Step(text="done"))
-    own = {"type": "object", "properties": {"step_summary": {"type": "string"}}}
-    h.tools.add(ToolSpec("ticket", "files a public ticket", own, read_only=False),
-                h.tools.fns["outside"])
-    await h.start()
-    await h.turn("file a ticket")
-    assert "hunter2" in reviewer.seen()
-
-
 def test_the_reviewer_reads_only_what_the_user_wrote():
     """Kaden's own notices are in the conversation as user-role messages; none of them
     reaches the reviewer as something the user asked for."""

@@ -45,6 +45,8 @@ import pypdf
 import pypdf.errors
 
 from kaden.api import (
+    DESCRIPTION_ARG,
+    DESCRIPTION_SCHEMA,
     Attachment,
     Document,
     Image,
@@ -127,6 +129,7 @@ SHELL = ToolSpec(
         "timeout": {"type": "integer", "minimum": 1, "maximum": 600_000},
         "run_in_background": {"type": "boolean"},
         "dangerouslyDisableSandbox": {"type": "boolean"},
+        DESCRIPTION_ARG: DESCRIPTION_SCHEMA,
     }, ["command"]),
     stall_timeout=SHELL_STALL_TIMEOUT,
     foreground=True,

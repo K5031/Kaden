@@ -159,14 +159,6 @@ logger = logging.getLogger(__name__)
 
 _RUNNING = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION,
             AgentState.FINISHING)
-# The description every offered tool takes (api.DESCRIPTION_ARG).
-_DESCRIPTION_SCHEMA = {
-    "type": "string",
-    "description": "What this step does, in a few plain words the user understands without "
-                   "knowing the tool, e.g. \"Read your trip notes\". The user sees this "
-                   "instead of the tool and its input. Leave it out of tools that do not "
-                   "list it, such as a provider's own web search: they refuse the call.",
-}
 REVIEW_HISTORY = 200  # newest messages searched for the user's words in a permission review
 USAGE_FILE = "usage.json"
 EVENT_LOG_FILE = "events.jsonl"
@@ -477,7 +469,6 @@ class Runtime:
         self._plan_call: CallId | None = None
         self._skill_problems: list[str] = []
         self._tool_owner: dict[str, Tools] = {}  # the Tools module that offered each name
-        self._own_description: set[str] = set()  # tools whose schema declares DESCRIPTION_ARG
         self._wake_set: set[CallId] | None = None
         self._immediate_wake = False
         self._unseen = False
@@ -1315,7 +1306,7 @@ class Runtime:
             loaded = self._loaded.setdefault(conversation.id, set()) if conversation else set()
             self._deferred = {s.name: s for s in searchable if s.name not in loaded}
             specs[TOOL_SEARCH.name] = TOOL_SEARCH
-        return {name: self._describable(spec) for name, spec in specs.items()}
+        return specs
 
     def _shown(self, specs: dict[str, ToolSpec]) -> list[ToolSpec]:
         """The tools a request carries: all but the deferred ones."""
@@ -1347,19 +1338,12 @@ class Runtime:
                 scored.append((-score, spec.name, spec))
         return [spec for _, _, spec in sorted(scored)[:limit]]
 
-    def _describable(self, spec: ToolSpec) -> ToolSpec:
-        """The spec with the optional description (api.DESCRIPTION_ARG) added."""
-        properties = spec.parameters.get("properties", {})
-        if DESCRIPTION_ARG in properties:
-            self._own_description.add(spec.name)
-            return spec
-        self._own_description.discard(spec.name)
-        return replace(spec, parameters={
-            **spec.parameters, "properties": {**properties, DESCRIPTION_ARG: _DESCRIPTION_SCHEMA}})
-
-    def _bare(self, call: ToolCall) -> ToolCall:
-        """The call as the Tools module gets it: without the description the runtime added."""
-        if call.name in self._own_description or DESCRIPTION_ARG not in call.arguments:
+    @staticmethod
+    def _bare(call: ToolCall) -> ToolCall:
+        """The call as permissions, the review, hooks and watches judge it: without the
+        model's sentence about it (api.DESCRIPTION_ARG), which says nothing about what it
+        does and could make it look harmless."""
+        if DESCRIPTION_ARG not in call.arguments:
             return call
         return replace(call, arguments={k: v for k, v in call.arguments.items()
                                         if k != DESCRIPTION_ARG})
@@ -2132,7 +2116,7 @@ class Runtime:
             return ToolResult(call.id, ToolStatus.REFUSED, f"Refused by a hook: {said}"), False
         try:
             owner = self._tool_owner.get(call.name)
-            confined = owner is not None and await owner.confined(self._bare(call))
+            confined = owner is not None and await owner.confined(call)
         except Exception:  # module calls are wrapped; not knowing means asking
             logger.exception("Tools.confined failed for %s", call.name)
             confined = False
@@ -2156,7 +2140,7 @@ class Runtime:
         wait: float | None = self._config.initial_wait_s
         asked_background = False
         if spec.foreground:
-            arguments = self._bare(call).arguments
+            arguments = call.arguments
             asked_background = arguments.get("run_in_background") is True
             if asked_background:
                 wait = 0
@@ -2587,7 +2571,7 @@ class Runtime:
         timeout = spec.timeout or self._config.default_tool_timeout_s
         try:
             async with asyncio.timeout(None if math.isinf(timeout) else timeout):
-                return await owner.execute(self._bare(call), ctx)
+                return await owner.execute(call, ctx)
         except TimeoutError:
             return ToolOutput(f"Approved, but it timed out after {timeout:g} s.",
                               is_error=True)
@@ -2632,7 +2616,7 @@ class Runtime:
                 owner = self._tool_owner[op.call.name]
 
                 async def run() -> ToolOutput:
-                    output = await owner.execute(self._bare(op.call), ctx)
+                    output = await owner.execute(op.call, ctx)
                     prompt = op.call.arguments.get("prompt")
                     if (op.spec.answers_prompt and not output.is_error
                             and isinstance(prompt, str) and prompt.strip()):
@@ -2769,7 +2753,7 @@ class Runtime:
 
     async def _memory_call(self, call: ToolCall) -> tuple[ToolStatus, str]:
         assert self._conversation is not None
-        output = await self._memory.execute(self._bare(call),
+        output = await self._memory.execute(call,
                                             _MemoryContext(call.id, self._conversation.id))
         return (ToolStatus.ERROR if output.is_error else ToolStatus.OK), output.content
 
@@ -2870,7 +2854,7 @@ class Runtime:
                                            f"{', '.join(sorted(self._deferred)) or 'none'}.")
                 self._load([s.name for s in found])
                 definitions = "\n".join(
-                    f"<function>{json.dumps(_definition(self._describable(s)))}</function>"
+                    f"<function>{json.dumps(_definition(s))}</function>"
                     for s in found)
                 return ToolStatus.OK, (f"<functions>\n{definitions}\n</functions>\nThese "
                                        "tools are loaded: call them as any other.")
