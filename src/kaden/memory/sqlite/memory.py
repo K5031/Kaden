@@ -76,7 +76,7 @@ from . import codec
 
 logger = logging.getLogger(__name__)
 # A store of another version is refused.
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 # Output headroom on top of the summary budget, for its tags.
 _SUMMARY_TAG_TOKENS = 64  # the summary and topics tags
 _SAVE_OUTPUT_TOKENS = 1024  # the pass after an answer: the changes it writes
@@ -176,7 +176,6 @@ CREATE TABLE messages (
     id TEXT NOT NULL,
     role TEXT NOT NULL,
     created_at REAL NOT NULL,
-    format INTEGER NOT NULL,
     blocks TEXT NOT NULL,
     archived_at REAL NOT NULL,
     author TEXT NOT NULL,
@@ -318,7 +317,7 @@ class SqliteArchive(Memory):
     upkeep after an answer, what it erases with a conversation, and its tools."""
 
     SCHEMA = _ARCHIVE_SCHEMA  # a subclass adds its own tables
-    SCHEMA_VERSION = 3
+    SCHEMA_VERSION = 4
 
     def __init__(
         self, path: str | PathLike[str], config: CompactionConfig = CUT_HALF
@@ -467,11 +466,11 @@ class SqliteArchive(Memory):
                             )
                         continue
                     cursor = conn.execute(
-                        "INSERT INTO messages (conversation_id, id, role, created_at, format,"
+                        "INSERT INTO messages (conversation_id, id, role, created_at,"
                         " blocks, archived_at, author, hidden, spoken)"
-                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (conversation_id, message.id, role, created_at,
-                         codec.FORMAT_VERSION, blocks, now, message.author.value,
+                         blocks, now, message.author.value,
                          message.hidden, message.spoken),
                     )
                     conn.execute(

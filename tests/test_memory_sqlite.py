@@ -462,6 +462,8 @@ async def test_archive_is_append_only(open_store, db: Path):
     await fill(memory, conv.id, tokens(0, 2))
     with sqlite3.connect(db) as conn:
         assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(messages)")]
+        assert "format" not in columns  # never read: blocks carry their own tags
         with pytest.raises(sqlite3.IntegrityError, match="append-only"):
             conn.execute("UPDATE messages SET blocks = '[]'")
         with pytest.raises(sqlite3.IntegrityError, match="append-only"):
