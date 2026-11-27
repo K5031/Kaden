@@ -8,7 +8,7 @@ from collections.abc import Callable
 
 import numpy as np
 from PySide6.QtCore import QIODevice, QObject, QTimer
-from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QAudioSource, QMediaDevices
+from PySide6.QtMultimedia import QAudioDevice, QAudioFormat, QAudioSink, QAudioSource, QMediaDevices
 
 from kaden.frontends.desktop.voice.engine import RATE
 
@@ -99,7 +99,8 @@ class Speaker(QObject):
     """turns.Player on the default sound output: one stream, open from the first sound
     until `close`, with silence between sounds. A stream opened for each sound would
     start each one cold, and the sound chip, asleep after a pause, loses its first
-    syllable while it wakes."""
+    syllable while it wakes. A stream stays on the device it was opened on, so a sound
+    that starts after the system's default output changed opens a new one there."""
 
     TICK_MS = 10
     AHEAD_S = 0.05  # silence kept queued so the stream never runs dry
@@ -109,6 +110,7 @@ class Speaker(QObject):
         self._sink: QAudioSink | None = None
         self._out: QIODevice | None = None
         self._format: QAudioFormat | None = None
+        self._device: QAudioDevice | None = None
         self._pending = bytearray()  # of the sound being played, not yet handed to Qt
         self._written = 0  # bytes handed to Qt since the stream (re)started
         self._ends_at = 0  # where the sound being played ends, in those bytes
@@ -144,14 +146,15 @@ class Speaker(QObject):
         if self._sink is not None:
             self._sink.stop()
             self._sink.deleteLater()
-        self._sink = self._out = self._format = None
+        self._sink = self._out = self._format = self._device = None
 
     def _open(self, sound: QAudioFormat) -> None:
-        if self._format == sound and self._sink is not None:
+        device = QMediaDevices.defaultAudioOutput()
+        if self._sink is not None and self._format == sound and self._device == device:
             return
         self.close()
-        self._format = sound
-        self._sink = QAudioSink(QMediaDevices.defaultAudioOutput(), sound, self)
+        self._format, self._device = sound, device
+        self._sink = QAudioSink(device, sound, self)
         self._out, self._written = self._sink.start(), 0
         self._timer.start()
 

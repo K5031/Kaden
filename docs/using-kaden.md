@@ -43,6 +43,8 @@ message box has a button for each; use either alone or both:
 - **Only words are read.** Code, tables, links and symbols stay on screen.
 - **Esc stops the reading** of that reply, and Kaden listens again if the microphone is
   on. You cannot talk over it: while it speaks, it does not listen.
+- **It plays on your system's default sound output.** Switch it (say, from speakers to
+  headphones) and the next sentence plays on the new one.
 - **The agent knows its replies are read aloud**, so it answers briefly, in plain
   sentences, without emoji, kaomoji or symbols, until you turn the speaker off.
 - **Speech runs on your computer.** What you say is not sent to a speech service; only

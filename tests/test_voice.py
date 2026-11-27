@@ -677,6 +677,63 @@ def test_speech_is_played_on_both_channels():
     assert np.frombuffer(pcm, np.int16).tolist() == [16383, 16383, -8191, -8191]
 
 
+async def test_speech_follows_the_default_sound_output(qapp, monkeypatch):
+    """The stream stays open between sounds, but a sound starts on the system's default
+    output as it is then: switched from speakers to headphones, the next sound plays there."""
+    from PySide6.QtCore import QBuffer, QIODevice
+
+    from kaden.frontends.desktop.voice import audio
+
+    class State:
+        name = "ActiveState"
+
+    class Error:
+        name = "NoError"
+
+    class Sink:
+        def __init__(self, device: str, *_args: object) -> None:
+            self.device, self.stopped = device, False
+            sinks.append(self)
+
+        def start(self) -> QBuffer:
+            self.buffer = QBuffer()
+            self.buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+            return self.buffer
+
+        def state(self) -> State:
+            return State()
+
+        def error(self) -> Error:
+            return Error()
+
+        def bytesFree(self) -> int:
+            return 1 << 20
+
+        def processedUSecs(self) -> int:
+            return 10_000_000  # everything written is heard at once
+
+        def reset(self) -> None: ...
+
+        def stop(self) -> None:
+            self.stopped = True
+
+        def deleteLater(self) -> None: ...
+
+    sinks: list[Sink] = []
+    default = ["speakers"]
+    monkeypatch.setattr(audio.QMediaDevices, "defaultAudioOutput", staticmethod(lambda: default[0]))
+    monkeypatch.setattr(audio, "QAudioSink", Sink)
+    speaker = audio.Speaker()
+    sound = np.zeros(100, np.float32)
+    await speaker.play(sound, 22050)
+    await speaker.play(sound, 22050)
+    assert [s.device for s in sinks] == ["speakers"]  # one stream while the output stays
+    default[0] = "headphones"
+    await speaker.play(sound, 22050)
+    assert [s.device for s in sinks] == ["speakers", "headphones"] and sinks[0].stopped
+    speaker.close()
+
+
 async def test_the_voice_is_chosen_heard_and_used(tmp_path):
     """As in Claude's voice mode: a few named voices; Play speaks a sample in one; voice
     mode speaks in the one chosen."""
