@@ -21,6 +21,15 @@ Agent Note (`notes/proposed/`) and leaves this list.
   messages to the user, forced topic switches, drives and injected random memories (they
   steer what it thinks). Maybe: an ability to give one thought to the main model when it
   seems worth it.
+- **A demo for the README** (2026-11-27), paused by the user. A scripted demo recorded by
+  a script in the repo, so it can be redone when the UI changes: the real app drawn off
+  screen (no Xvfb here; frames copied from the window, joined by ffmpeg), its own empty
+  data folder, a stand-in model replaying a script (`tests/fakes/core.py`, with streaming
+  delays) and real tools in a temporary folder, so it costs nothing and shows none of the
+  user's data. Scene, about 40 s: ask for a little lighthouse game, the steps fold as
+  Kaden works, a permission card answered with Always allow, the summary; maybe the
+  Continuous switch. Out: a GIF for the README (GitHub plays those inline) and an MP4 to
+  upload. The README says the replies are scripted.
 - **Finding and installing tools** (2026-11-27), as Claude Desktop's directory of
   extensions and connectors: a Browse on Settings → Tool servers listing MCP servers (from
   the official MCP Registry, not a catalogue of Kaden's own), what each does and who
