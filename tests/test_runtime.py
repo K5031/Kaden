@@ -1005,3 +1005,47 @@ async def test_the_notes_saved_after_an_answer_are_named(make: Any) -> None:
     log = h.data_dir / "events.jsonl"  # written off the loop: wait for it
     await eventually(lambda: log.exists() and '"saved": 1' in log.read_text())
     assert "Trip" not in log.read_text()  # how many notes, not their titles
+
+
+async def test_the_context_is_sized_after_the_whole_system_prompt(make: Any) -> None:
+    """The deferred tools' names and a plan go in the system prompt: the context Memory
+    assembles is that much smaller, so the request still fits the window."""
+    from kaden.api import ToolSpec
+    from kaden.runtime.budget import estimate_tokens
+    from tests.fakes.tools import FakeTools
+
+    names = [f"mcp__server__a_rather_long_tool_name_{i}" for i in range(300)]
+
+    async def budget(deferred: bool) -> int:
+        tools = FakeTools()
+        tools.instant("look")
+        for name in names if deferred else names[:1]:
+            tools.add(ToolSpec(name, "a tool", {"type": "object"}, deferred=True),
+                      tools.fns["look"])
+        h: Harness = await make(core=ScriptedCore(default=Step(text="ok")), tools=tools)
+        await h.start()
+        await h.turn("hi")
+        given = h.memory.assemble_budgets[-1]
+        await h.close()
+        return given
+
+    assert await budget(False) - await budget(True) >= estimate_tokens("\n".join(names[1:]))
+
+
+async def test_the_context_is_sized_after_the_duty_in_the_system_prompt(make: Any) -> None:
+    from kaden.api import Duty
+    from kaden.runtime.budget import estimate_tokens
+
+    text = "Keep the shop's stock list in order. " * 200
+
+    async def budget(duty: str | None) -> int:
+        h: Harness = await make(core=ScriptedCore(default=Step(text="ok")))
+        await h.start()
+        if duty is not None:
+            await h.runtime.set_duty(Duty(duty, min_interval_s=30, max_interval_s=60))
+        await h.turn("hi")
+        given = h.memory.assemble_budgets[-1]
+        await h.close()
+        return given
+
+    assert await budget(None) - await budget(text) >= estimate_tokens(text)

@@ -117,7 +117,8 @@ them: "Always allow “cp” and “ls”"), and such a chain runs without askin
 part is allowed. Writing into a file with `>`, and commands with `$(…)`, a newline or a
 `#`, are never covered: they are checked each time. Settings → Permissions
 lists what you saved, and **Remove** takes one back. An "always" never covers keys,
-passwords or Kaden's own data folder: those still ask.
+passwords or Kaden's own data folder: those still ask. A "never" also refuses a call you
+approve from a proposal or a wrap-up card.
 
 **How "in the work folder" is enforced.** A file action counts as inside when its path is
 in the work folder; a link that leads out of it counts as outside. Commands run in a
@@ -226,8 +227,9 @@ A hook gets the call as JSON on its input (`tool`, `arguments`, `folder`, and af
 call its `result`) and runs in the conversation's folder, as you, outside the sandbox.
 When it exits with code **2**, what it wrote to standard error goes to the agent: before a
 call, the call is refused with that reason; after one, it is added to the result. Any
-other exit code, or a hook still running after a minute, changes nothing. Kaden's own
-tools (the plan, background work) run no hooks.
+other exit code, or a hook still running after a minute, changes nothing. Hooks also run
+for a call you approve from a proposal or a wrap-up card. Kaden's own tools (the plan,
+background work) run no hooks.
 
 With Claude models that always think (Opus 5.x, Sonnet 5.x, Haiku 5.x), Kaden asks for a
 summary of the thinking to be streamed, so you see it under **Thinking…** as it happens.

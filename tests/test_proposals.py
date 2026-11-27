@@ -152,3 +152,55 @@ async def test_the_desktop_shows_a_card_that_approves(make):
     approve.click()
     await eventually(lambda: outcomes(h).get("p"))
     await eventually(lambda: all(c.isHidden() for c in window.findChildren(ProposalCard)))
+
+
+async def test_an_approved_proposal_still_goes_through_the_users_hooks(make, tmp_path):
+    """The click stands in for the permission prompt, not for the hooks: they are the
+    user's own rules, and run before and after the call as for any other."""
+    import sys
+
+    from kaden.runtime.hooks import Hook
+
+    guard = tmp_path / "guard.py"
+    guard.write_text("import sys\nprint('not on Fridays', file=sys.stderr)\nsys.exit(2)\n")
+    h = await harness(make, [
+        Step(calls=[call("propose", {"call": WRITE, "reason": "Messy"}, id="p")]),
+        Step(text="Proposed."), Step(text="Fine.")],
+        hooks=(Hook("before", f"{sys.executable} {guard}", tool="write"),))
+    await h.turn("hi")
+    await h.runtime.respond("p", True)
+    result = await eventually(lambda: outcomes(h).get("p"))
+    assert "not on Fridays" in result.content and result.status != ToolStatus.OK
+    assert h.tools.received == []
+
+
+async def test_a_hook_after_an_approved_proposal_adds_to_its_result(make, tmp_path):
+    import sys
+
+    from kaden.runtime.hooks import Hook
+
+    lint = tmp_path / "lint.py"
+    lint.write_text("import sys\nprint('1 problem', file=sys.stderr)\nsys.exit(2)\n")
+    h = await harness(make, [
+        Step(calls=[call("propose", {"call": WRITE, "reason": "Messy"}, id="p")]),
+        Step(text="Proposed."), Step(text="Fine.")],
+        hooks=(Hook("after", f"{sys.executable} {lint}", tool="write"),))
+    await h.turn("hi")
+    await h.runtime.respond("p", True)
+    result = await eventually(lambda: outcomes(h).get("p"))
+    assert result.content.startswith("written") and "[hook] 1 problem" in result.content
+
+
+async def test_never_allow_refuses_an_approved_proposal(make):
+    """"Never" is never: a saved refusal holds even against the user's click."""
+    from kaden.api import PermissionRule
+
+    h = await harness(make, [
+        Step(calls=[call("propose", {"call": WRITE, "reason": "Messy"}, id="p")]),
+        Step(text="Proposed."), Step(text="Fine.")],
+        permission_rules=(PermissionRule("write", allow=False),))
+    await h.turn("hi")
+    await h.runtime.respond("p", True)
+    result = await eventually(lambda: outcomes(h).get("p"))
+    assert "never" in result.content.lower() and result.status != ToolStatus.OK
+    assert h.tools.received == []

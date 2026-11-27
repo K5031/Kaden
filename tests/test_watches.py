@@ -13,11 +13,13 @@ from kaden.api import (
     Budget,
     Duty,
     DutyKind,
+    SettingsUpdate,
     StandingWatch,
     Text,
     ToolOutput,
     ToolSpec,
     ToolStatus,
+    Usage,
     UsageUpdated,
 )
 from tests.conftest import Harness, eventually
@@ -234,6 +236,34 @@ async def test_a_watch_kept_as_its_own_time_waits_for_the_next_day(make):
     assert inbox.calls == 1  # and it looks again only once that is delivered
     assert inbox.confirmed == []
 
+
+
+async def test_a_firing_past_the_budget_waits_without_starting_a_turn(make):
+    """Once a turn failed on the spent budget, a firing waits in the queue: no turn starts
+    that could only fail again, and it is delivered once the agent goes on."""
+    source, tools = Source(), FakeTools()
+    watching(tools, source)
+    core = ScriptedCore([Step(calls=[call("news", {}, id="w")], usage=Usage(3000, 10)),
+                         Step(text="Watching.", usage=Usage(6990, 0))])
+    h: Harness = await make(core=core, tools=tools, budget=Budget(max_tokens=10_000),
+                            **FAST_WATCH)
+    await h.start()
+    await h.runtime.send("watch the news")
+    await eventually(lambda: source.calls == 1)
+    await idle(h)  # with the budget spent
+    await source.items.put("first")  # as a message would: one turn, which fails
+    await eventually(lambda: h.runtime.snapshot().state == AgentState.FAILED
+                     and source.calls == 2)
+    asked, upkeep = len(h.core.requests), h.memory.maintain_calls
+    await source.items.put("second")
+    await eventually(lambda: h.runtime.snapshot().queued_messages)
+    await asyncio.sleep(0.15)
+    assert len(h.core.requests) == asked and h.memory.maintain_calls == upkeep
+    assert h.runtime.snapshot().state == AgentState.FAILED
+    assert source.confirmed == ["first"]  # the second waits to be delivered
+    await h.runtime.update_settings(SettingsUpdate(budget=Budget(max_tokens=1_000_000)))
+    await eventually(lambda: source.confirmed == ["first", "second"])  # the agent goes on
+    assert seen(h, "second")
 
 
 async def test_a_watch_looks_again_only_once_its_news_is_in_the_conversation(make):

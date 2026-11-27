@@ -30,7 +30,9 @@ waits on it.
 - The call returns at once with a placeholder, like a backgrounded call: the proposal is an
   operation with the `propose` call's id. The agent carries on or ends its turn.
 - On **Approve**, Kaden runs exactly the proposed call: the user's click is its
-  permission, so it is not gated again; budgets apply. Its result becomes the operation's
+  permission, so it is not asked about again; budgets apply. The user's standing
+  refusals ("never allow") and hooks still hold: a refusal is the user's own answer given
+  ahead, and a hook their own rule, which a click on one call does not set aside. Its result becomes the operation's
   outcome. On **Dismiss**, the outcome is "dismissed". Either wakes the agent.
 - A pending proposal does not hold back other wake-ups: it is left out of the wake set,
   and its outcome wakes the agent by itself.

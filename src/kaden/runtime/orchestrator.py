@@ -723,7 +723,10 @@ class Runtime:
     def _queue(self, queued: MessageQueued, reason: str) -> None:
         state = self._state()
         self._inbox.append(queued)
-        if state in _RUNNING or state == AgentState.STOPPING:
+        # Failed on the spent budget, a turn could only fail again: it waits, as the user's
+        # own message is refused (_sendable), until the agent goes on.
+        spent = state == AgentState.FAILED and self._budget.exhausted() is not None
+        if state in _RUNNING or state == AgentState.STOPPING or spent:
             self._emit(queued)
         else:
             self._request_cycle(reason)
@@ -1155,6 +1158,7 @@ class Runtime:
             permissions = _effective_policy(u.permissions, self._ceiling)
             os.environ[PERMISSION_CEILING_ENV] = permissions.value
         self._permissions = permissions
+        was_spent = self._budget.exhausted() is not None
         self._budget.budget = budget
         self._config = replace(
             cfg, maintenance_model=light, budget=budget,
@@ -1174,6 +1178,12 @@ class Runtime:
         settings = await self.settings()
         self._emit(SettingsChanged(settings))
         self._watch_duration()
+        # What waited on the spent budget (_queue) goes in once it is raised; a duty waits
+        # for the user, as after any budget stop.
+        if (was_spent and self._budget.exhausted() is None and self._inbox
+                and self._state() == AgentState.FAILED and self._conversation is not None
+                and self._conversation.duty is None):
+            self._request_cycle("budget raised")
         return settings
 
     def _loosened(self, u: SettingsUpdate) -> list[str]:
@@ -1238,7 +1248,10 @@ class Runtime:
                       window // 4)
         count = self._counter(info.id)
         tool_json = json.dumps([[t.name, t.description, t.parameters] for t in tools])
-        budget = window - reserve - count(self._system()) - count(tool_json)
+        # The system prompt as sent, but for Memory's addendum, which comes of assembling:
+        # its plan counted in full (in view, it is left out).
+        system = "\n\n".join([self._system(), *self._prompt_sections(in_view=False)])
+        budget = window - reserve - count(system) - count(tool_json)
         return ContextRequest(self._conversation.id, max(0, int(budget * factor)), count), reserve
 
     async def _send_back(self) -> bool:
@@ -1876,20 +1889,27 @@ class Runtime:
         system = self._system()
         if assembled.system_addendum:
             system = f"{system}\n\n{assembled.system_addendum}"
-        assert self._conversation is not None
         in_view = self._plan_call is not None and any(
             isinstance(b, ToolCall) and b.id == self._plan_call
             for m in assembled.messages for b in m.blocks)
-        if section := duties.prompt(self._conversation.duty, self._conversation.plan,
-                                    in_view=in_view):
-            system = f"{system}\n\n{section}"
-        if self._deferred:
-            system = (f"{system}\n\n## Deferred tools\nThese tools are available but not "
-                      "loaded: call ToolSearch to load one before you use it.\n"
-                      + "\n".join(sorted(self._deferred)))
+        system = "\n\n".join([system, *self._prompt_sections(in_view=in_view)])
         self._unseen = self._proposal_done = False
         messages = [_stamped(m) for m in assembled.messages]
         return InferenceRequest(info.id, system, messages, tools, reserve)
+
+    def _prompt_sections(self, *, in_view: bool) -> list[str]:
+        """What follows the system prompt and Memory's addendum: the duty and plan, and the
+        deferred tools' names."""
+        assert self._conversation is not None
+        sections = []
+        if section := duties.prompt(self._conversation.duty, self._conversation.plan,
+                                    in_view=in_view):
+            sections.append(section)
+        if self._deferred:
+            sections.append("## Deferred tools\nThese tools are available but not loaded: "
+                            "call ToolSearch to load one before you use it.\n"
+                            + "\n".join(sorted(self._deferred)))
+        return sections
 
     async def _calibrate(self, request: InferenceRequest) -> None:
         if request.model in self._calibration:
@@ -1981,7 +2001,7 @@ class Runtime:
             return stream.completed
         if stream.started or exc is None:  # a failure before the first event is unbilled
             self._charge(stream.estimate(), info)
-        if isinstance(exc, _BudgetHit):
+        if foreground and isinstance(exc, _BudgetHit):  # a background call's text is not an answer
             await self._commit_partial(stream)
         if exc is None:
             raise CoreError("inference was cancelled")
@@ -2587,6 +2607,15 @@ class Runtime:
             raise
         if not accepted:
             return ToolOutput("The user dismissed the proposal; it did not run.")
+        # The click stands in for the permission prompt; the user's standing refusals and
+        # hooks hold as for any other call.
+        if any(not rule.allow and rule.matches(self._bare(call))
+               for rule in self._config.permission_rules):
+            self._log.decision("permission", call_id=call.id, outcome=Decision.DENY, by="rule")
+            return ToolOutput("Approved, but refused: the user said never to allow calls "
+                              "like this.", is_error=True)
+        if said := await self._hooked("before", call):
+            return ToolOutput(f"Approved, but refused by a hook: {said}", is_error=True)
         if reason := self._budget.reserve_tool_call():
             return ToolOutput(f"Approved, but refused: budget {reason}.", is_error=True)
         self._uncounted.discard(proposal_id)
@@ -2599,10 +2628,15 @@ class Runtime:
         timeout = spec.timeout or self._config.default_tool_timeout_s
         try:
             async with asyncio.timeout(None if math.isinf(timeout) else timeout):
-                return await owner.execute(call, ctx)
+                output = await owner.execute(call, ctx)
         except TimeoutError:
             return ToolOutput(f"Approved, but it timed out after {timeout:g} s.",
                               is_error=True)
+        ran = ToolResult(call.id, ToolStatus.ERROR if output.is_error else ToolStatus.OK,
+                         output.content)
+        if said := await self._hooked("after", call, ran):
+            output = replace(output, content=f"{output.content}\n[hook] {said}")
+        return output
 
     async def _withdraw_proposals(self, cards_only: bool = False) -> None:
         pending = [self._ops[i] for i, o in self._proposals().items()

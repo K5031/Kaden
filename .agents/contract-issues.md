@@ -937,3 +937,26 @@ was used.
   beside `user_config`); the launcher reads it through the factory, as it reads
   `user_config`, and drops the id and option names. Needs the change in
   `tools/shell_files` and the launcher in one change.
+
+## 17. Found in the runtime review of 2026-11-27
+
+### P9 (C) "Always asks" is promised more widely than it is checked, and its matcher reads words
+- **Status:** Open: needs the user's decision.
+- **Where:** SPEC.md 16.4 (permissions: confined calls run without a prompt; a conversation
+  grant for a call that can reach outside covers all of its calls); `docs/settings.md`
+  ("Anything that touches keys and passwords … always asks you"); `review.always_ask`;
+  `Runtime._gate`.
+- **Problem:** `always_ask` is checked only before a saved "always" and before the
+  automatic review. A call confined to the work folder (reading the project's `.env`), a
+  read-only call under "Read freely", and a call covered by a conversation grant run
+  without it, though the docs read as if keys and Kaden's data always ask. Checking it on
+  those paths too was tried and taken back: `always_ask` matches words anywhere in the
+  arguments (file contents, search queries) and the data folder by its bare name, so
+  Continuous, whose data folder is `life`, would ask before writing "my life" in its own
+  diary or searching "meaning of life", and a README that mentions `.env` would ask.
+- **Assumed:** Kaden does what SPEC.md says (confined and granted calls run unasked); the
+  docs' "always asks" holds for calls that would otherwise be reviewed or saved-allowed.
+- **Proposed fix:** First make `always_ask` look only at what a call touches (paths and
+  commands, not file contents or search text), and drop the bare-name match for a data
+  folder with a common name. Then decide whether keys and Kaden's data ask on every path
+  (SPEC.md and the docs updated to say so) or only where they do now (the docs narrowed).

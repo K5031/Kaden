@@ -191,6 +191,27 @@ async def test_completion_budget_exhausted(make: Any) -> None:
     assert h.rec.of(Failure)[-1].kind == FailureKind.BUDGET
 
 
+async def test_a_budget_hit_while_memory_streams_does_not_hang_or_write(make: Any) -> None:
+    """Memory's own requests run in the background, under the memory lock: their text is
+    Memory's, so one cut short by the budget is not saved as an answer (which would wait
+    for that lock forever)."""
+    core = ScriptedCore(maintenance=Step(text="summary " * 2000, chunks=100))
+    h: Harness = await make(core=core, budget=Budget(max_tokens=2000))
+
+    async def maintain(complete: Completion) -> bool:
+        await complete("Summarize.", [Message("m", Role.USER, (Text("x"),), 0.0)],
+                       max_tokens=4000, light=True)
+        return True
+
+    h.memory.maintain_override = maintain
+    await h.start()
+    await h.runtime.send("go")
+    await asyncio.wait_for(h.rec.wait_state(AgentState.FAILED), 5)
+    assert h.rec.of(Failure)[-1].kind == FailureKind.BUDGET
+    assert not any("summary" in b.text for m in await h.transcript()
+                   for b in m.blocks if isinstance(b, Text))
+
+
 # ── Resume repair ──
 
 
