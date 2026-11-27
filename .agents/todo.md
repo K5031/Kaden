@@ -27,6 +27,14 @@ Agent Note (`notes/proposed/`) and leaves this list.
   published it; one-click install (asking for its keys, kept in the keychain as today) and
   remove. Open, for an Agent Note first: what "certified" means, since a server runs with
   the user's permissions (verified publishers only, or a short list Kaden vouches for).
+- **Panels a Tools module declares** (2026-11-27), as VS Code's tree views and Claude's
+  side view of its workers: a module describes a panel as data (title; a list, table,
+  progress, Markdown, buttons that call its tools) and updates it through runtime events;
+  each frontend draws it its own way (the desktop app in a side pane, natively). Uses: the
+  Bilibili account (followed channels, inbox), sub-sessions' workers, a KFM fleet's tree.
+  Not webviews (a browser engine, desktop only); MCP servers shipping their own HTML could
+  be a later layer if that becomes a standard. Needs an Agent Note first: a contract
+  change.
 - **macOS, the rest** (2026-11-25). Done: file tools, the Seatbelt sandbox, screenshots,
   a macOS test job. Left: at window startup, reading the saved voice name on a worker
   thread never returns on the Mac job (`test_the_zoom_and_theme_are_written_once_when_the_
