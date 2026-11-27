@@ -941,7 +941,7 @@ was used.
 ## 17. Found in the runtime review of 2026-11-27
 
 ### P9 (C) "Always asks" is promised more widely than it is checked, and its matcher reads words
-- **Status:** Open: needs the user's decision.
+- **Status:** Resolved (2026-11-27): Kaden matches Claude Code's protected paths, by what a call names as a place; reading secrets has no rule of its own ([protected paths](notes/implemented/2026-11-27-protected-paths.md)). SPEC.md and the docs say so.
 - **Where:** SPEC.md 16.4 (permissions: confined calls run without a prompt; a conversation
   grant for a call that can reach outside covers all of its calls); `docs/settings.md`
   ("Anything that touches keys and passwords … always asks you"); `review.always_ask`;

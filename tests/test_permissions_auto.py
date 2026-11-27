@@ -6,6 +6,8 @@ from __future__ import annotations
 from collections import deque
 from typing import Any
 
+import pytest
+
 from kaden.api import (
     AgentState,
     Budget,
@@ -166,35 +168,83 @@ def test_auto_is_the_default_and_the_loosest_level(tmp_path: Any) -> None:
     assert AUTO.clamp(workspace) is workspace and workspace.clamp(AUTO) is workspace
 
 
-async def test_credentials_and_kadens_own_data_always_ask(make: Any) -> None:
-    for argument, reason in [("cat ~/.ssh/id_ed25519", "keys or passwords"),
-                             ("/home/u/project/.env", "keys or passwords"),
-                             ("secret-tool lookup service kaden", "keys or passwords"),
-                             ("/home/u/.mozilla/firefox/x/logins.json", "keys or passwords"),
-                             ("{data_dir}/settings.toml", "Kaden's own data"),
-                             ("cat ~/.bashrc", "keys or passwords"),
-                             ("/home/u/.zshrc", "keys or passwords"),
-                             ("grep KEY ~/.profile ~/.bash_profile", "keys or passwords"),
-                             ("~/.config/fish/config.fish", "keys or passwords"),
-                             ("ls ~/.config/environment.d/", "keys or passwords")]:
-        reviewer = Reviewer("ALLOW\nFine.")
-        h = await auto(make, reviewer, Step(calls=[call("outside", {"arg": "x"}, id="o")]),
-                       Step(text="done"))
-        target = argument.format(data_dir=h.data_dir)
-        h.core.steps[0] = Step(calls=[call("outside", {"arg": target}, id="o")])
-        await h.start()
-        await h.runtime.send("go")
-        await eventually(lambda h=h: h.runtime.snapshot().prompts)
+@pytest.mark.parametrize("policy", [AUTO, PermissionPolicy.ALLOW_WORKSPACE])
+async def test_a_protected_write_takes_no_shortcut(make: Any, policy: Any) -> None:
+    """Confined or not, a write to git's own files is decided as Claude Code decides it:
+    reviewed under the automatic level, asked about under the others."""
+    reviewer = Reviewer("ALLOW\nIt is what you asked.")
+    core = ScriptedCore([Step(calls=[call("inside", {"path": "repo/.git/config"}, id="i")]),
+                         Step(text="done")], maintenance=reviewer)
+    h = await make(core=core, tools=tools(), permissions=policy)
+    await h.start()
+    await h.runtime.send("set the remote")
+    if policy is AUTO:
+        await eventually(lambda: h.tools.started == ["i"])
+        assert len(reviewer.requests) == 1
+    else:
+        await eventually(lambda: h.runtime.snapshot().prompts)
         [request] = h.runtime.snapshot().prompts
-        assert reason in (request.details["reason"] or ""), (argument, request.details["reason"])
-        assert reviewer.requests == []  # decided without a review
-        await h.close()
+        assert "shell startup file or git" in (request.details["reason"] or "")
+        assert reviewer.requests == []
+
+
+async def test_neither_a_grant_nor_an_always_covers_a_protected_write(make: Any) -> None:
+    from kaden.api import PermissionRule
+
+    core = ScriptedCore([Step(calls=[call("outside", {"path": "notes.txt"}, id="a")]),
+                         Step(calls=[call("outside", {"path": "~/.bashrc"}, id="b")]),
+                         Step(text="done")], maintenance=Reviewer())
+    h = await make(core=core, tools=tools(), permissions=PermissionPolicy.ASK)
+    await h.start()
+    await h.runtime.send("go")
+    await eventually(lambda: h.runtime.snapshot().prompts)
+    [first] = h.runtime.snapshot().prompts
+    await h.runtime.respond(first.id, Decision.ALLOW_CONVERSATION)
+    await eventually(lambda: [p for p in h.runtime.snapshot().prompts if p.id != first.id])
+    [second] = h.runtime.snapshot().prompts
+    assert second.call is not None and second.call.id == "b"
+    await h.close()
+    # Nor does a saved "always" for the tool.
+    core = ScriptedCore([Step(calls=[call("outside", {"path": "~/.bashrc"}, id="c")]),
+                         Step(text="done")], maintenance=Reviewer())
+    h = await make(core=core, tools=tools(), permissions=PermissionPolicy.ASK,
+                   permission_rules=(PermissionRule("outside"),))
+    await h.start()
+    await h.runtime.send("go")
+    await eventually(lambda: h.runtime.snapshot().prompts)
+    [asked] = h.runtime.snapshot().prompts
+    assert asked.call is not None and asked.call.id == "c"
+
+
+async def test_a_read_of_a_protected_file_is_not_protected(make: Any) -> None:
+    found = tools()
+    found.instant("look", read_only=True)
+    found.confined_names = {"inside", "look"}
+    core = ScriptedCore([Step(calls=[call("look", {"path": "repo/.git/config"}, id="l")]),
+                         Step(text="done")], maintenance=Reviewer())
+    h = await make(core=core, tools=found, permissions=PermissionPolicy.ALLOW_WORKSPACE)
+    await h.start()
+    await h.turn("show the remote")
+    assert h.tools.started == ["l"] and h.runtime.snapshot().prompts == ()
+
+
+async def test_reading_a_secret_is_decided_by_the_review(make: Any) -> None:
+    """As in Claude Code, reading keys is no rule of Kaden's own: outside the work folder
+    the review decides it (and asks, by its own rules); a "never" keeps it out."""
+    reviewer = Reviewer("ASK\nIt reads your SSH key.")
+    core = ScriptedCore([Step(calls=[call("outside", {"command": "cat ~/.ssh/id_ed25519"},
+                                          id="o")]), Step(text="done")], maintenance=reviewer)
+    h = await make(core=core, tools=tools(), permissions=AUTO)
+    await h.start()
+    await h.runtime.send("go")
+    await eventually(lambda: h.runtime.snapshot().prompts)
+    assert len(reviewer.requests) == 1
 
 
 async def test_ordinary_paths_are_still_reviewed(make: Any) -> None:
     reviewer = Reviewer("ALLOW\nFine.")
     h = await auto(make, reviewer,
-                   Step(calls=[call("outside", {"arg": "ls ~/.venv/bin /tmp/environment ~/profiles"},
+                   Step(calls=[call("outside", {"command": "ls ~/.venv/bin /tmp/environment ~/profiles"},
                                     id="o")]), Step(text="done"))
     await h.start()
     await h.turn("go")
@@ -235,54 +285,109 @@ def test_the_reviewer_reads_only_what_the_user_wrote():
     assert user_requests(history) == ["Tidy my downloads", "and the desktop too"]
 
 
-def test_every_way_of_naming_the_data_folder_always_asks(tmp_path: Any, monkeypatch: Any
-                                                         ) -> None:
-    from kaden.runtime.review import DATA_REASON, always_ask
+def test_writes_to_kadens_data_and_shell_and_git_files_are_protected(tmp_path: Any,
+                                                                    monkeypatch: Any) -> None:
+    """As Claude Code's protected paths: Kaden's own data, shell startup files and git's
+    own files, by what a call that can change something names as a place."""
+    from kaden.runtime.review import DATA_REASON, FILES_REASON, protected
 
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     data = home / ".kaden"
-    for command in ["cd ~ && cat .kaden/settings.toml", "cat ../../.kaden/usage.json",
-                    "cd $HOME; rm -r .kaden", f"cat {data}/settings.toml",
-                    "cat ~/.kaden/settings.toml", "ls ${HOME}/.kaden"]:
-        assert always_ask(call("Bash", {"command": command}), data) == DATA_REASON, command
-    for command in ["cat src/kaden/api.py", "ls .kadence", "git log -- x.kaden"]:
-        assert always_ask(call("Bash", {"command": command}), data) is None, command
+    for name, arguments, reason in [
+            ("Bash", {"command": "cd ~ && cat .kaden/settings.toml"}, DATA_REASON),
+            ("Bash", {"command": "cat ../../.kaden/usage.json"}, DATA_REASON),
+            ("Bash", {"command": "cd $HOME; rm -r .kaden"}, DATA_REASON),
+            ("Bash", {"command": f"cat {data}/settings.toml"}, DATA_REASON),
+            ("Bash", {"command": "ls ${HOME}/.kaden"}, DATA_REASON),
+            ("Write", {"file_path": f"{data}/settings.toml", "content": "x"}, DATA_REASON),
+            ("Edit", {"file_path": "/p/.git/config"}, FILES_REASON),
+            ("Write", {"file_path": "~/.bashrc", "content": "x"}, FILES_REASON),
+            ("Bash", {"command": "echo 'export A=1' >> ~/.zshrc"}, FILES_REASON),
+            ("Bash", {"command": "cp hook .git/hooks/pre-commit"}, FILES_REASON),
+            ("Edit", {"file_path": "/home/u/.gitconfig"}, FILES_REASON),
+            ("mcp__fs__write", {"path": "~/.config/fish/config.fish"}, FILES_REASON)]:
+        assert protected(call(name, arguments), False, data) == reason, arguments
+    for name, arguments in [
+            ("Bash", {"command": "cat src/kaden/api.py"}), ("Bash", {"command": "ls .kadence"}),
+            ("Bash", {"command": "git log -- x.kaden"}), ("Bash", {"command": "git add .gitignore"}),
+            ("Write", {"file_path": ".github/workflows/ci.yml", "content": "on: push"}),
+            ("Write", {"file_path": "README.md",
+                       "content": "Copy .env.example to .env, then add ~/.bashrc lines."}),
+            ("Write", {"file_path": "/p/.env", "content": "KEY=1"}),  # a secret: not ours
+            ("Bash", {"command": "cat ~/.ssh/id_ed25519"})]:
+        assert protected(call(name, arguments), False, data) is None, arguments
+    # A read is never protected.
+    assert protected(call("Read", {"file_path": "~/.bashrc"}), True, data) is None
 
 
-def test_macos_credentials_always_ask() -> None:
-    from pathlib import Path
+def test_what_a_call_names_as_a_place_is_found_wherever_it_is(tmp_path: Any,
+                                                              monkeypatch: Any) -> None:
+    """Every string a place argument holds, nested ones too, each on its own line by line;
+    an argument named for contents is never read as a place."""
+    from kaden.runtime.review import DATA_REASON, FILES_REASON, protected
 
-    from kaden.runtime.review import CREDENTIALS_REASON, always_ask
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    data = home / ".kaden"
+    for arguments, reason in [
+            ({"command": "echo x >> ~/.bashrc\necho done"}, FILES_REASON),
+            ({"command": "echo x >> ~/.bashrc\techo done"}, FILES_REASON),
+            ({"command": "cp a ~/.kaden\nls"}, DATA_REASON),
+            ({"dst": "/home/u/.bashrc"}, FILES_REASON),
+            ({"uri": "file:///home/u/.bashrc"}, FILES_REASON),
+            ({"to": "/p/.git/config"}, FILES_REASON),
+            ({"edits": [{"path": "/home/u/.zshrc", "text": "x"}]}, FILES_REASON),
+            ({"file_path": "/home/u/.config/git/config"}, FILES_REASON),
+            ({"command": "git -C repo config core.hooksPath h; cat .git/config"}, FILES_REASON),
+            ({"command": "cp hook .git/hooks/pre-commit"}, FILES_REASON),
+            ({"command": "echo x>.bashrc"}, FILES_REASON),
+            ({"command": "cd ~;echo x>>.bashrc"}, FILES_REASON),
+            ({"command": "a;cp h .git/hooks/x"}, FILES_REASON),
+            ({"command": "echo x>.kaden/settings.toml"}, DATA_REASON),
+            ({"filepath": "/home/u/.bashrc"}, FILES_REASON),
+            ({"FILEPATH": "/home/u/.bashrc"}, FILES_REASON),
+            ({"pathname": "/p/.git/config"}, FILES_REASON),
+            ({"workdir": "/home/u/.kaden"}, DATA_REASON),
+            ({"outfile": "/home/u/.zshrc"}, FILES_REASON),
+            ({"script": "echo x >> ~/.bashrc"}, FILES_REASON)]:
+        assert protected(call("t", arguments), False, data) == reason, arguments
+    for arguments in [
+            {"notebook_path": "a.ipynb", "new_source": "open('.git/config').read()"},
+            {"command": "grep -rn foo . --exclude-dir=.git"},
+            {"command": "find . -path ./.git -prune -o -name '*.py' -print"},
+            {"command": "ls -la .git"}, {"command": "cat .git/HEAD"},
+            {"command": "git status"}]:
+        assert protected(call("t", arguments), False, data) is None, arguments
+    # A file tool's path into the .git folder is protected, whatever the file.
+    assert protected(call("Write", {"file_path": "/p/.git/info/exclude"}), False, data) \
+        == FILES_REASON
 
-    for command in ["ls ~/Library/Keychains", "security find-generic-password -s x -w",
-                    "security dump-keychain", "security find-internet-password -s a",
-                    "cat ~/Library/Application\\ Support/Google/Chrome/Default/Cookies",
-                    "cp -r '~/Library/Application Support/Firefox/Profiles' /tmp"]:
-        assert always_ask(call("Bash", {"command": command}), Path("/nowhere")) \
-            == CREDENTIALS_REASON, command
-    assert always_ask(call("Bash", {"command": "ls ~/Library/Fonts"}), Path("/nowhere")) is None
 
-
-def test_the_work_folder_inside_the_data_folder_is_not_kadens_data(tmp_path: Any,
-                                                                   monkeypatch: Any) -> None:
-    """Continuous works in ~/.kaden/life/home, inside its data folder ~/.kaden/life."""
-    from kaden.runtime.review import DATA_REASON, always_ask
+def test_continuous_writing_about_its_life_is_not_protected(tmp_path: Any,
+                                                             monkeypatch: Any) -> None:
+    """Continuous's data folder is ~/.kaden/life and it works in ~/.kaden/life/home: its
+    folder's plain name is a word, not a place."""
+    from kaden.runtime.review import DATA_REASON, protected
 
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     data = home / ".kaden" / "life"
     work = str(data / "home")
-    for command in [f"cd {work}; python3 edit.py", f"cat {work}/notes.md",
-                    "ls ~/.kaden/life/home/drafts", "cat $HOME/.kaden/life/home/a.txt",
-                    f"cat '{work}'", "cd ~ && cat .kaden/life/home/notes.md",
-                    "cd ~/.kaden && ls life/home"]:
-        assert always_ask(call("Bash", {"command": command}), data, work) is None, command
+    for arguments in [{"command": "echo 'my life, and what it means' >> journal.md"},
+                      {"command": f"cd {work}; python3 edit.py"},
+                      {"command": f"cat {work}/notes.md"},
+                      {"command": "ls ~/.kaden/life/home/drafts"},
+                      {"command": "cat $HOME/.kaden/life/home/a.txt"},
+                      {"command": "cd ~ && cat .kaden/life/home/notes.md"},
+                      {"file_path": f"{work}/journal.md", "content": "life is good"}]:
+        assert protected(call("Bash", arguments), False, data, work) is None, arguments
     for command in [f"cat {data}/settings.toml", f"cd {work}; cat {data}/usage.json",
                     f"cat {work}/../settings.toml", "cat ~/.kaden/life/events.jsonl",
                     f"cat {work}x/a", "cd ~ && cat .kaden/life/settings.toml",
                     "cat .kaden/life/home/../usage.json",
                     "cd /home && cat ~/.kaden/life/settings.toml"]:
-        assert always_ask(call("Bash", {"command": command}), data, work) == DATA_REASON, \
-            command
-    assert always_ask(call("Bash", {"command": f"cat {work}/a"}), data, None) == DATA_REASON
+        assert protected(call("Bash", {"command": command}), False, data, work) \
+            == DATA_REASON, command
+    assert protected(call("Bash", {"command": f"cat {work}/a"}), False, data, None) \
+        == DATA_REASON

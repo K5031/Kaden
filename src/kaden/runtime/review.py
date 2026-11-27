@@ -5,10 +5,10 @@ The reviewer sees what the user asked (the text of the messages they wrote, neve
 Kaden's own notices) and the call, never tool results or the agent's own text, so
 content the agent read cannot argue for its own call. Anything but a clear ALLOW counts as ASK.
 
-Calls that mention credential files or Kaden's own data folder are never reviewed: they
-always ask (`always_ask`). Reading a secret sends it to the AI provider and, once in the
-conversation, a sandboxed command could send it anywhere; changing Kaden's settings or
-usage would let the agent loosen its own permissions or budget.
+A call that changes a protected path (`protected`: Kaden's own data, shell startup files,
+git's own files) takes no shortcut past this review: not the work folder's, a grant or a
+saved "always". Changing Kaden's settings or usage would let the agent loosen its own
+permissions or budget; a startup file or a git hook runs commands later.
 """
 
 from __future__ import annotations
@@ -61,47 +61,82 @@ class Verdict:
     reason: str
 
 
-# A path segment, preceded by the start, whitespace, a quote, "=", ":" or a slash.
-_START = r"""(?:^|[\s'"=:/])"""
+# A path segment, preceded by the start, whitespace, a quote, "=", ":", a slash, or a
+# shell redirect or separator (`echo x>.bashrc`, `cd ~;ls .kaden`).
+_START = r"""(?:^|[\s'"=:/<>;|&(`])"""
 _END = r"""(?:$|[\s'"/;|&)<>])"""
-CREDENTIALS = re.compile("|".join([
-    (rf"{_START}\.(?:ssh|gnupg|password-store|aws|azure|kube|netrc|pgpass|git-credentials|"
-     rf"npmrc|pypirc|mozilla){_END}"),
-    rf"{_START}\.env(?:\.[\w-]+)?{_END}",
-    # Shell startup files, where people export keys.
-    rf"{_START}\.(?:bashrc|bash_profile|bash_login|profile|zshrc|zshenv|zprofile){_END}",
-    r"\.config/fish/config\.fish|\.config/environment\.d\b",
-    r"\.docker/config\.json|\.config/(?:gcloud|gh|google-chrome|chromium|BraveSoftware)\b",
-    r"\.local/share/(?:keyrings|kwalletd)\b|\bkwallet|\bsecret-tool\b|\bid_(?:rsa|ed25519|ecdsa)",
-    # macOS: the Keychain, the command that reads it, and the browsers' profiles.
-    r"Library/Keychains\b|\bsecurity\s+(?:find-(?:generic|internet)-password|dump-keychain)\b",
-    r"Library/Application[\\ ]+Support/(?:Google/Chrome|Chromium|BraveSoftware|Firefox)\b",
-]))
-CREDENTIALS_REASON = ("It may read or change keys or passwords, which Kaden never decides on "
-                      "its own.")
-DATA_REASON = ("It reaches Kaden's own data (conversations, settings, spending), which Kaden "
-               "never decides on its own.")
+# Shell startup files and git's own files: what runs commands later (as Claude Code's
+# protected paths). A path argument into a `.git` folder is git's own file; a command only
+# counts when it names what runs commands (`ls .git`, `--exclude-dir=.git` only read).
+_SHELL_FILES = (rf"{_START}\.(?:bashrc|bash_profile|bash_login|bash_aliases|bash_logout|"
+                rf"profile|zshrc|zshenv|zprofile|zlogin|zlogout|envrc){_END}"
+                r"|\.config/fish/config\.fish|\.config/environment\.d\b")
+_GIT_CONFIG = rf"{_START}\.git(?:config|modules){_END}|\.config/git(?:/|{_END})"
+PROTECTED_PATHS = re.compile(rf"{_SHELL_FILES}|{_GIT_CONFIG}|{_START}\.git{_END}")
+PROTECTED_IN_COMMANDS = re.compile(
+    rf"{_SHELL_FILES}|{_GIT_CONFIG}|{_START}\.git/(?:config|hooks){_END}")
+DATA_REASON = ("It reaches Kaden's own data (conversations, settings, spending), which no "
+               "shortcut allows.")
+FILES_REASON = ("It reaches a shell startup file or git's own files, which can run commands "
+                "later.")
+# Words in an argument's name that say it is a place, or a command that names places.
+_PLACE_WORDS = frozenset({"path", "paths", "file", "files", "filename", "dir", "directory",
+                          "folder", "cwd", "target", "destination", "dest", "dst", "src",
+                          "uri", "to", "location", "filepath", "pathname", "dirname",
+                          "dirpath", "workdir", "outfile", "outdir"})
+_COMMAND_WORDS = frozenset({"command", "cmd", "script"})
 
 
-def always_ask(call: ToolCall, data_dir: Path, work_folder: str | None = None) -> str | None:
-    """Why this call must ask without a review, or None. Looks at every argument value.
-    The data folder is matched by its path and, since a command may reach it from
-    anywhere (`cd ~ && cat .kaden/settings.toml`, `../../.kaden`), by its name as a path
-    segment of its own. A `work_folder` inside the data folder (Continuous's home) is not
-    Kaden's data: paths named in it, by any of its forms, are left out, unless they climb
-    out with `..`."""
-    text = json.dumps(call.arguments, ensure_ascii=False)
+def _words(key: str) -> set[str]:
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", key)
+    return {w for w in re.split(r"[^a-zA-Z0-9]+", spaced.lower()) if w}
+
+
+def _places(value: object, kind: str | None = None) -> list[tuple[str, str]]:
+    """Each string a place argument holds, with "path" or "command", nested ones too.
+    Strings under other names (contents, queries, messages) are left out."""
+    if isinstance(value, str):
+        return [(kind, value)] if kind is not None else []
+    if isinstance(value, dict):
+        found = []
+        for key, inner in value.items():
+            words = _words(str(key))
+            inner_kind = ("command" if words & _COMMAND_WORDS
+                          else "path" if words & _PLACE_WORDS else None)
+            found += _places(inner, inner_kind)
+        return found
+    if isinstance(value, list | tuple):
+        return [p for item in value for p in _places(item, kind)]
+    return []
+
+
+def protected(call: ToolCall, read_only: bool, data_dir: Path,
+              work_folder: str | None = None) -> str | None:
+    """Why `call` changes a protected path, or None: Kaden's data folder, a shell startup
+    file or git's own files. A read is never protected. Only what the call names as a
+    place is looked at (the arguments whose name says so, nested ones too), each string on
+    its own, not file contents or queries. The data folder is matched by its path and,
+    since a command may reach it from anywhere (`cd ~ && cat .kaden/settings.toml`,
+    `../../.kaden`), by its path below the home folder as segments of their own. A
+    `work_folder` inside the data folder (Continuous's home) is not Kaden's data: paths
+    named in it, by any of its forms, are left out, unless they climb out with `..`."""
+    if read_only:
+        return None
     data = data_dir.expanduser().resolve()
-    if work_folder is not None:
-        text = _without_folder(text, Path(work_folder).expanduser(), data)
-    if str(data) in text or str(data_dir.expanduser().absolute()) in text:
-        return DATA_REASON
-    if data != Path.home() and data.name and re.search(
-            rf"{_START}{re.escape(data.name)}{_END}", text):
-        return DATA_REASON
-    if CREDENTIALS.search(text):
-        return CREDENTIALS_REASON
-    return None
+    home = Path.home()
+    below = (data.relative_to(home).as_posix() if data != home and data.is_relative_to(home)
+             else data.name if data.name.startswith(".") else None)
+    files = None
+    for kind, text in _places(call.arguments):
+        if work_folder is not None:
+            text = _without_folder(text, Path(work_folder).expanduser(), data)
+        if (str(data) in text or str(data_dir.expanduser().absolute()) in text
+                or below and re.search(rf"{_START}{re.escape(below)}{_END}", text)):
+            return DATA_REASON
+        pattern = PROTECTED_IN_COMMANDS if kind == "command" else PROTECTED_PATHS
+        if files is None and pattern.search(text):
+            files = FILES_REASON
+    return files
 
 
 _CLIMBS = r"""(?![^\s'";|&)<>]*/\.\.(?:[\s'"/;|&)<>]|$))"""  # no ".." later in the path
@@ -123,7 +158,8 @@ def _without_folder(text: str, folder: Path, data: Path) -> str:
     # data folder's parent, as whole segments. (Not the bare name below the data folder:
     # "home" is also a segment of /home/<user>.)
     rel = work.relative_to(data.parent).as_posix()
-    text = re.sub(rf"(?:(?<=[\s'\"=:/])|^){re.escape(rel)}(?={_END}){_CLIMBS}", " ", text)
+    text = re.sub(rf"(?:(?<=[\s'\"=:/<>;|&(`])|^){re.escape(rel)}(?={_END}){_CLIMBS}", " ",
+                  text)
     return text
 
 

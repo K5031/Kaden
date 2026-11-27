@@ -149,8 +149,8 @@ from kaden.runtime.review import MAX_OUTPUT_TOKENS as REVIEW_OUTPUT_TOKENS
 from kaden.runtime.review import (
     REVIEW_PROMPT,
     Verdict,
-    always_ask,
     parse,
+    protected,
     review_messages,
     user_requests,
 )
@@ -2448,23 +2448,25 @@ class Runtime:
         if any(not rule.allow and rule.matches(bare) for rule in self._config.permission_rules):
             auto(Decision.DENY, "rule")
             return "Refused: the user said never to allow calls like this."
-        # The user's saved yes, unless a parent Kaden set a ceiling it must not pass, or
-        # the call touches what always asks (Kaden's own data, credentials).
-        if (self._ceiling is None
-                and PermissionRule.allows(self._config.permission_rules, bare)
-                and always_ask(call, self._config.data_dir, self._project()) is None):
+        # A protected path (Kaden's own data, shell startup files, git's own files) takes
+        # no shortcut: not a saved yes, a grant or the work folder's. The review still
+        # decides it, as Claude Code's classifier decides its protected paths.
+        reason = protected(call, spec.read_only, self._config.data_dir, self._project())
+        # The user's saved yes, unless a parent Kaden set a ceiling it must not pass.
+        if (reason is None and self._ceiling is None
+                and PermissionRule.allows(self._config.permission_rules, bare)):
             auto(Decision.ALLOW_ALWAYS, "rule")
             return None
-        if call.name in self._grants and (confined or self._grants[call.name]):
+        if reason is None and call.name in self._grants and (confined or self._grants[call.name]):
             auto(Decision.ALLOW_CONVERSATION, "grant")
             return None
         if policy == PermissionPolicy.ALLOW_READ_ONLY and spec.read_only:
             auto(Decision.ALLOW_ONCE, "policy")
             return None
-        if policy in (PermissionPolicy.ALLOW_WORKSPACE, PermissionPolicy.AUTO) and confined:
+        if (reason is None and confined
+                and policy in (PermissionPolicy.ALLOW_WORKSPACE, PermissionPolicy.AUTO)):
             auto(Decision.ALLOW_ONCE, "policy")
             return None
-        reason = None
         if policy == PermissionPolicy.AUTO:
             verdict = await self._review(call, spec)
             if self._stopping:
@@ -2511,9 +2513,6 @@ class Runtime:
 
     async def _review(self, call: ToolCall, spec: ToolSpec) -> Verdict:
         """The automatic permission check (review.py). Fails closed: any problem asks."""
-        if reason := always_ask(call, self._config.data_dir, self._project()):
-            self._log.decision("permission_review", call_id=call.id, allow=False, by="rule")
-            return Verdict(False, reason)
         if reason := self._check_budget("review"):
             return Verdict(False, f"The spending limit is reached ({reason}), so Kaden "
                                   "could not check this itself.")

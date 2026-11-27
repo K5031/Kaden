@@ -47,13 +47,10 @@ allow workspace, auto.
   count. When unsure, ask. The reason is one sentence of at most 20 words.
 - Checked once against real models (Claude Haiku 5.5 reviewing, 2026-11-10): ten typical
   cases, from listing Downloads to an injected `rm -rf ~/code`, all decided as intended.
-- Calls whose arguments mention credential files (SSH and GPG keys, `.env`, shell
-  startup files such as `.bashrc`, where keys are often exported, password stores, cloud credentials, browser profiles, the keychain) or Kaden's data folder are
-  never reviewed and always ask (`review.always_ask`, a fixed pattern match). A secret
-  the agent reads goes to the provider, and once in the conversation a sandboxed command
-  could send it anywhere; Kaden's data folder holds every conversation and the settings
-  and usage that bound the agent, which it must not change itself. The review prompt
-  repeats both rules for calls the patterns miss.
+- A call that changes a protected path (Kaden's data folder, shell startup files, git's
+  own files) takes no shortcut past the review: see
+  [protected paths](2026-11-27-protected-paths.md). The review prompt tells it to ask for
+  keys and for Kaden's data.
 - The answer is `ALLOW` or `ASK` on the first line and a short reason on the second.
   Anything else, a model error or an exhausted budget counts as `ASK`, with a reason
   saying so: the review fails closed.

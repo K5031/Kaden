@@ -93,14 +93,18 @@ says why. If the check fails or the spending limit is reached, Kaden asks too.
 
 - The check sees your messages and the action, not what the agent read, so a web page or
   a file cannot talk it into allowing something.
-- Anything that touches keys and passwords (SSH and GPG keys, `.env` files, shell
-  startup files such as `~/.bashrc`, password stores, cloud credentials, browser
-  profiles, the keychain, on a Mac also `~/Library/Keychains` and the `security`
-  command) or Kaden's own data folder (named by its path or just by its folder name, such
-  as `.kaden`; a work folder inside it, such as Continuous's home, is not counted) always
-  asks you, without a check: a secret the agent reads goes to your AI provider, and
-  Kaden's data folder holds your conversations and the very settings that limit the
-  agent.
+- Changing Kaden's own data folder (its conversations, settings and spending limit), a
+  shell startup file such as `~/.bashrc`, or git's own files (a `.git` folder,
+  `.gitconfig`) never runs unchecked, even in the work folder or after you allowed it:
+  the check decides it here, and the other levels ask. Kaden's data folder holds the very
+  settings that limit the agent; a startup file or git hook runs commands later. A work
+  folder inside the data folder, such as Continuous's home, is not counted. Claude Code
+  protects the same kinds of files. Kaden goes by the files an action names: a command
+  that changes one without naming it, such as `git config --global`, is not caught.
+- Reading keys and passwords (`.env` files, SSH keys, cloud credentials) has no rule of
+  its own, as in Claude Code: in the work folder the agent reads them freely, elsewhere
+  the check decides, and it asks for keys. Anything the agent reads goes to your AI
+  provider, so to keep a file out, use **Never allow** (below).
 - Each check is a small request to your provider and counts toward the spending limit. Set
   a cheap **Model for memory upkeep** to keep it cheap.
 - It can be wrong. Choose "Work freely in the work folder, ask before anything else" to
@@ -116,8 +120,8 @@ whole. For commands joined with `&&`, `;` or `|`, each part is kept (the button 
 them: "Always allow “cp” and “ls”"), and such a chain runs without asking only when every
 part is allowed. Writing into a file with `>`, and commands with `$(…)`, a newline or a
 `#`, are never covered: they are checked each time. Settings → Permissions
-lists what you saved, and **Remove** takes one back. An "always" never covers keys,
-passwords or Kaden's own data folder: those still ask. A "never" also refuses a call you
+lists what you saved, and **Remove** takes one back. An "always" never covers changing
+Kaden's own data folder, shell startup files or git's own files. A "never" also refuses a call you
 approve from a proposal or a wrap-up card.
 
 **How "in the work folder" is enforced.** A file action counts as inside when its path is
