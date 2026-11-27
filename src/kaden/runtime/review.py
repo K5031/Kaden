@@ -119,6 +119,11 @@ def _without_folder(text: str, folder: Path, data: Path) -> str:
         forms |= {f"~/{rel}", f"$HOME/{rel}", f"${{HOME}}/{rel}"}
     for form in sorted(forms, key=len, reverse=True):
         text = re.sub(rf"{re.escape(form)}(?={_END}){_CLIMBS}", " ", text)
+    # Reached by a relative path (`cd ~ && cat .kaden/life/home/x`): its path below the
+    # data folder's parent, as whole segments. (Not the bare name below the data folder:
+    # "home" is also a segment of /home/<user>.)
+    rel = work.relative_to(data.parent).as_posix()
+    text = re.sub(rf"(?:(?<=[\s'\"=:/])|^){re.escape(rel)}(?={_END}){_CLIMBS}", " ", text)
     return text
 
 

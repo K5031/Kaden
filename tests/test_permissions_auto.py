@@ -289,11 +289,14 @@ def test_the_work_folder_inside_the_data_folder_is_not_kadens_data(tmp_path: Any
     work = str(data / "home")
     for command in [f"cd {work}; python3 edit.py", f"cat {work}/notes.md",
                     "ls ~/.kaden/life/home/drafts", "cat $HOME/.kaden/life/home/a.txt",
-                    f"cat '{work}'"]:
+                    f"cat '{work}'", "cd ~ && cat .kaden/life/home/notes.md",
+                    "cd ~/.kaden && ls life/home"]:
         assert always_ask(call("Bash", {"command": command}), data, work) is None, command
     for command in [f"cat {data}/settings.toml", f"cd {work}; cat {data}/usage.json",
                     f"cat {work}/../settings.toml", "cat ~/.kaden/life/events.jsonl",
-                    f"cat {work}x/a"]:
+                    f"cat {work}x/a", "cd ~ && cat .kaden/life/settings.toml",
+                    "cat .kaden/life/home/../usage.json",
+                    "cd /home && cat ~/.kaden/life/settings.toml"]:
         assert always_ask(call("Bash", {"command": command}), data, work) == DATA_REASON, \
             command
     assert always_ask(call("Bash", {"command": f"cat {work}/a"}), data, None) == DATA_REASON
