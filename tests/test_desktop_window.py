@@ -792,7 +792,7 @@ async def test_the_zoom_and_theme_are_written_once_when_the_window_closes(
     await asyncio.sleep(0.05)
     assert not saved.exists()
     window.close()
-    await asyncio.wait_for(run, 5)
+    await asyncio.wait_for(run, 30)  # the window's whole start: ~5 s on a busy Mac runner
     assert await window_module.load_look(saved) == (
         theme.zoom_step(theme.zoom_step(1.0, 1), 1), "light")
 

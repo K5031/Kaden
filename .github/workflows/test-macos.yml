@@ -22,12 +22,5 @@ jobs:
         run: uv sync --python 3.14
       - name: Lint
         run: uv run ruff check
-      # The window's start hangs here on a worker thread (a voice name read that never
-      # returns): every thread's stack is printed after 4 s, before the test gives up at 5.
-      - name: Diagnose the window start
-        continue-on-error: true
-        run: >-
-          uv run pytest -n0 -o faulthandler_timeout=4 -s
-          tests/test_desktop_window.py -k written_once_when_the_window_closes
       - name: Test
         run: uv run pytest

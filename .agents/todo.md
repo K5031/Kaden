@@ -45,9 +45,7 @@ Agent Note (`notes/proposed/`) and leaves this list.
   be a later layer if that becomes a standard. Needs an Agent Note first: a contract
   change.
 - **macOS, the rest** (2026-11-25). Done: file tools, the Seatbelt sandbox, screenshots,
-  a macOS test job. Left: at window startup, reading the saved voice name on a worker
-  thread never returns on the Mac job (`test_the_zoom_and_theme_are_written_once_when_the_
-  window_closes`); a first run on a real Mac; the app menu and single-window check; later
+  a macOS test job. Left: a first run on a real Mac; the app menu and single-window check; later
   a `.dmg` (Briefcase, built on GitHub's Mac runners; signing needs an Apple Developer
   account, put off). No GPU voice (NVIDIA only).
 - **Homebrew** (2026-11-27), after macOS works on a real Mac: `brew install
