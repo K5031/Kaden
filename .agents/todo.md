@@ -13,27 +13,20 @@ Agent Note (`notes/proposed/`) and leaves this list.
 - **Spectator** (2026-11-23): Kaden keeps viewing the user's desktop as they use
   it and comments when it wants to, as someone looking over their shoulder would.
 - **Desktop control** (2026-11-23): Kaden using the desktop itself.
-- **Following things** (2026-11-24), for Continuous, not started. Continuous already is
-  a train of thought (one conversation, turns, rest, memory, a cheap model for its own
-  time); what it lacks is input arriving from the world. Abilities to follow things, which
-  the life picks and drops itself: a watcher is background work that finishes, and so
-  wakes it, when the followed thing changes, with what is new. Start with one: a Bilibili
-  channel's new videos. Then read a few days of logs before the next kind (web pages,
-  feeds, repositories; Spectator for the screen). Agreed guards: a burst of changes is
-  delivered as one wake a few minutes after the first (protects the daily amount); a web
-  page watcher compares its extracted content, not its HTML. Plain facts about the world
-  (time, weather) may come with a wake; what the user is doing does not, since the life
-  knows what the user tells it. Declined: a budget for its messages to the user (a quota
-  on behaviour; too many messages are for the user to say, or for a notification
-  setting), and from the "thinking mode" idea that led here, forced topic switches, drives
-  and injected random memories (they steer what it thinks). Maybe: an ability to give one
-  thought to the main model when it seems worth it.
-- **macOS** (2026-11-25), after the first Linux release. A contained port: the shell
-  sandbox moves from bubblewrap to Seatbelt (`sandbox-exec`, as Claude Code does on a Mac);
-  screenshots, the app menu and the single-window check need Mac versions; the shell,
-  process groups and the data folder lock work as they are. Packages: Briefcase's `.dmg`,
-  built on GitHub's Mac runners, signed and notarized (an Apple Developer account,
-  US$99 a year). No GPU voice (NVIDIA only).
+- **Following more kinds of things** (2026-11-24), for Continuous. Built: standing
+  watches, a Bilibili channel's new videos (a burst delivered as one wake) and Bilibili
+  messages. Next, after a few days of logs: web pages (compare extracted content, not
+  HTML), feeds, repositories; Spectator for the screen. Plain facts about the world (time,
+  weather) may come with a wake; what the user is doing does not. Declined: a quota on its
+  messages to the user, forced topic switches, drives and injected random memories (they
+  steer what it thinks). Maybe: an ability to give one thought to the main model when it
+  seems worth it.
+- **macOS, the rest** (2026-11-25). Done: file tools, the Seatbelt sandbox, screenshots,
+  a macOS test job. Left: at window startup, reading the saved voice name on a worker
+  thread never returns on the Mac job (`test_the_zoom_and_theme_are_written_once_when_the_
+  window_closes`); a first run on a real Mac; the app menu and single-window check; later
+  a `.dmg` (Briefcase, built on GitHub's Mac runners; signing needs an Apple Developer
+  account, put off). No GPU voice (NVIDIA only).
 - **Homebrew** (2026-11-27), after macOS works on a real Mac: `brew install
   k5031/kaden/kaden` from a tap of the user's own (`K5031/homebrew-kaden`). First publish
   to PyPI (the name `kaden` is free), then a formula built from it with its Python
