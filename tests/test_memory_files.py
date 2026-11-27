@@ -46,7 +46,9 @@ async def test_factory_keeps_its_own_archive_and_a_folder_per_project(tmp_path: 
         assert (tmp_path / "memory-files.db").exists()
         assert not (tmp_path / "memory.db").exists()  # the built-in Memory's stays apart
         await memory.save_note("MEMORY.md", "", "- x\n", folder="/home/me/Code")
-        assert (tmp_path / "projects" / "-home-me-Code" / "memory" / "MEMORY.md").exists()
+        # Named after the folder as the system resolves it (/home is a link on macOS).
+        name = str(Path("/home/me/Code").resolve()).replace("/", "-")
+        assert (tmp_path / "projects" / name / "memory" / "MEMORY.md").exists()
     finally:
         await memory.aclose()
 

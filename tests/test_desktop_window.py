@@ -768,8 +768,13 @@ async def test_ctrl_plus_minus_and_zero_zoom(make, qapp, unzoomed):
 
 
 async def test_the_zoom_and_theme_are_written_once_when_the_window_closes(
-        make, qapp, unzoomed, system_theme, tmp_path):
+        make, qapp, unzoomed, system_theme, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QSystemTrayIcon
+
     from kaden.frontends import desktop
+
+    # With a tray (macOS has one), closing the window keeps Kaden running in it.
+    monkeypatch.setattr(QSystemTrayIcon, "isSystemTrayAvailable", staticmethod(lambda: False))
 
     h: Harness = await make()
     await h.start()

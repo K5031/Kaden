@@ -131,7 +131,8 @@ def pairs(command: list[str], option: str) -> list[tuple[str, str]]:
             if arg == option]
 
 
-def test_bubblewrap_covers_every_local_socket_under_run(tmp_path):
+def test_bubblewrap_covers_every_local_socket_under_run(socket_dir):
+    tmp_path = socket_dir
     run = tmp_path / "run"
     for name in ("docker.sock", "dbus/system_bus_socket", "systemd/journal/socket",
                  "user/1000/bus"):

@@ -71,7 +71,7 @@ def test_a_task_woken_as_a_run_ends_resumes_in_the_next_run() -> None:
         loop.close()
 
 
-def test_streams_work(tmp_path: Any) -> None:
+def test_streams_work(socket_dir: Any) -> None:
     """Python 3.15's transports pass `context` to the loop's _add_reader and _add_writer,
     which qasync's do not take: every socket read failed."""
     app = QApplication.instance() or QApplication([])
@@ -83,9 +83,9 @@ def test_streams_work(tmp_path: Any) -> None:
 
     async def main() -> bytes:
         async with asyncio.timeout(2):
-            server = await asyncio.start_unix_server(echo, path=tmp_path / "s.sock")
+            server = await asyncio.start_unix_server(echo, path=socket_dir / "s.sock")
             async with server:
-                reader, writer = await asyncio.open_unix_connection(tmp_path / "s.sock")
+                reader, writer = await asyncio.open_unix_connection(socket_dir / "s.sock")
                 writer.write(b"hello\n")
                 reply = await reader.readline()
                 writer.close()

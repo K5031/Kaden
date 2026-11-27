@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
-from collections.abc import Callable, Sequence
+import shutil
+import tempfile
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -268,3 +270,14 @@ async def make(tmp_path: Path, clean_env: pytest.MonkeyPatch):
 def asked(rec: Any, kind: str = "permission") -> list[Any]:
     """The prompts of `kind` a recording saw open, in order."""
     return [e.prompt for e in rec.of(PromptOpened) if e.prompt.kind == kind]
+
+
+@pytest.fixture
+def socket_dir() -> Iterator[Path]:
+    """A short folder for unix sockets: a socket's path is limited to about 100 bytes,
+    which macOS's temporary folders alone come close to."""
+    folder = Path(tempfile.mkdtemp(prefix="k", dir="/tmp"))
+    try:
+        yield folder
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
