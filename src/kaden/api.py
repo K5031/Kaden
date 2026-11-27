@@ -96,6 +96,10 @@ type CallId = str  # also the operation id of a backgrounded call
 type TokenCounter = Callable[[str | Sequence[Message]], int]  # fast local estimate
 
 PERMISSION_CEILING_ENV = "KADEN_PERMISSION_CEILING"
+# The data folders of the Kaden instances a Kaden was started under (Continuous, a
+# sub-session), joined by os.pathsep: protected as its own (review.protected). A runtime
+# exports them with its own added, for what it launches, as it does the ceiling.
+PROTECTED_FOLDERS_ENV = "KADEN_PROTECTED_FOLDERS"
 # OS keychain service under which API keys are stored, one entry per key name
 # (ModuleInfo.key_name). Cores read their key from the environment first, then from here.
 KEYCHAIN_SERVICE = "kaden"
@@ -1230,8 +1234,9 @@ class Tools(abc.ABC):
     CANCELLED, TIMED_OUT and ABANDONED results. A call that returns normally after
     cancellation was requested keeps its real OK or ERROR result: its effect happened.
 
-    Tools that launch subprocesses must pass PERMISSION_CEILING_ENV through unmodified, or
-    launched Kaden instances escape the ceiling. They may leave out other variables, such
+    Tools that launch subprocesses must pass PERMISSION_CEILING_ENV and
+    PROTECTED_FOLDERS_ENV through unmodified, or launched Kaden instances escape the
+    ceiling, or change the data folders of the instances above them. They may leave out other variables, such
     as secrets from commands that run unasked.
     """
 

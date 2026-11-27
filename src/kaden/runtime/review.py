@@ -110,10 +110,10 @@ def _places(value: object, kind: str | None = None) -> list[tuple[str, str]]:
     return []
 
 
-def protected(call: ToolCall, read_only: bool, data_dir: Path,
+def protected(call: ToolCall, read_only: bool, data_dirs: Sequence[Path],
               work_folder: str | None = None) -> str | None:
-    """Why `call` changes a protected path, or None: Kaden's data folder, a shell startup
-    file or git's own files. A read is never protected. Only what the call names as a
+    """Why `call` changes a protected path, or None: Kaden's data folders (its own and those
+    of the instances it was started under), a shell startup file or git's own files. A read is never protected. Only what the call names as a
     place is looked at (the arguments whose name says so, nested ones too), each string on
     its own, not file contents or queries. The data folder is matched by its path and,
     since a command may reach it from anywhere (`cd ~ && cat .kaden/settings.toml`,
@@ -122,21 +122,26 @@ def protected(call: ToolCall, read_only: bool, data_dir: Path,
     named in it, by any of its forms, are left out, unless they climb out with `..`."""
     if read_only:
         return None
+    places = _places(call.arguments)
+    if any(_names_data(text, kind, data_dir, work_folder)
+           for data_dir in data_dirs for kind, text in places):
+        return DATA_REASON
+    if any((PROTECTED_IN_COMMANDS if kind == "command" else PROTECTED_PATHS).search(text)
+           for kind, text in places):
+        return FILES_REASON
+    return None
+
+
+def _names_data(text: str, kind: str, data_dir: Path, work_folder: str | None) -> bool:
+    """Whether `text` names `data_dir`, a work folder inside it left out."""
     data = data_dir.expanduser().resolve()
+    if work_folder is not None:
+        text = _without_folder(text, Path(work_folder).expanduser(), data)
     home = Path.home()
     below = (data.relative_to(home).as_posix() if data != home and data.is_relative_to(home)
              else data.name if data.name.startswith(".") else None)
-    files = None
-    for kind, text in _places(call.arguments):
-        if work_folder is not None:
-            text = _without_folder(text, Path(work_folder).expanduser(), data)
-        if (str(data) in text or str(data_dir.expanduser().absolute()) in text
-                or below and re.search(rf"{_START}{re.escape(below)}{_END}", text)):
-            return DATA_REASON
-        pattern = PROTECTED_IN_COMMANDS if kind == "command" else PROTECTED_PATHS
-        if files is None and pattern.search(text):
-            files = FILES_REASON
-    return files
+    return (str(data) in text or str(data_dir.expanduser().absolute()) in text
+            or bool(below and re.search(rf"{_START}{re.escape(below)}{_END}", text)))
 
 
 _CLIMBS = r"""(?![^\s'";|&)<>]*/\.\.(?:[\s'"/;|&)<>]|$))"""  # no ".." later in the path

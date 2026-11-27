@@ -26,6 +26,7 @@ from kaden.api import (
     DUTY_TOOLS,
     PERMISSION_CEILING_ENV,
     PLAN_MODE_TOOLS,
+    PROTECTED_FOLDERS_ENV,
     SKILL_TOOL,
     TOOL_SEARCH,
     AgentConfig,
@@ -414,6 +415,13 @@ class Runtime:
         self._ceiling = PermissionPolicy.inherited_ceiling()
         self._permissions = _effective_policy(config.permissions, self._ceiling)
         os.environ[PERMISSION_CEILING_ENV] = self._permissions.value
+        # The data folders of the instances above, protected as ours; ours is added for
+        # what this one launches, and what was inherited put back at shutdown.
+        self._inherited_folders = os.environ.get(PROTECTED_FOLDERS_ENV)
+        above = [Path(p) for p in (self._inherited_folders or "").split(os.pathsep) if p]
+        self._protected_folders = (config.data_dir.expanduser().absolute(), *above)
+        os.environ[PROTECTED_FOLDERS_ENV] = os.pathsep.join(
+            str(p) for p in self._protected_folders)
         self._log = EventLog()
         self._bus = EventBus(config.subscriber_queue_size, self._log)
         self._budget = BudgetTracker(config.budget)
@@ -1069,6 +1077,10 @@ class Runtime:
             os.environ.pop(PERMISSION_CEILING_ENV, None)
         else:
             os.environ[PERMISSION_CEILING_ENV] = self._inherited
+        if self._inherited_folders is None:
+            os.environ.pop(PROTECTED_FOLDERS_ENV, None)
+        else:
+            os.environ[PROTECTED_FOLDERS_ENV] = self._inherited_folders
         self._lock.release()
         self._log.close()
 
@@ -2451,7 +2463,7 @@ class Runtime:
         # A protected path (Kaden's own data, shell startup files, git's own files) takes
         # no shortcut: not a saved yes, a grant or the work folder's. The review still
         # decides it, as Claude Code's classifier decides its protected paths.
-        reason = protected(call, spec.read_only, self._config.data_dir, self._project())
+        reason = protected(call, spec.read_only, self._protected_folders, self._project())
         # The user's saved yes, unless a parent Kaden set a ceiling it must not pass.
         if (reason is None and self._ceiling is None
                 and PermissionRule.allows(self._config.permission_rules, bare)):

@@ -17,6 +17,7 @@ import pytest
 import kaden.frontends.desktop  # noqa: F401 - before any Qt import: see its lazy-import note
 from kaden.api import (
     PERMISSION_CEILING_ENV,
+    PROTECTED_FOLDERS_ENV,
     AgentState,
     ConversationInfo,
     Decision,
@@ -216,8 +217,9 @@ def child_env(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
     # Record the variable so whatever the runtime exports is undone after the test.
-    monkeypatch.setenv(PERMISSION_CEILING_ENV, "allow_read_only")
-    monkeypatch.delenv(PERMISSION_CEILING_ENV)
+    for name in (PERMISSION_CEILING_ENV, PROTECTED_FOLDERS_ENV):
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name)
     return monkeypatch
 
 

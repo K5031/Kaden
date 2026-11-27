@@ -216,6 +216,30 @@ async def test_neither_a_grant_nor_an_always_covers_a_protected_write(make: Any)
     assert asked.call is not None and asked.call.id == "c"
 
 
+async def test_a_child_protects_the_data_folders_it_was_started_under(
+        make: Any, tmp_path: Any, clean_env: Any) -> None:
+    """Each runtime protects its own data folder and those of the Kaden instances above it
+    (PROTECTED_FOLDERS_ENV), and passes them all on to what it starts."""
+    import os
+
+    from kaden.api import PROTECTED_FOLDERS_ENV, PermissionRule
+
+    parent = tmp_path / "parent"
+    clean_env.setenv(PROTECTED_FOLDERS_ENV, str(parent))
+    core = ScriptedCore([Step(calls=[call("inside", {"path": f"{parent}/settings.toml"},
+                                          id="w")]), Step(text="done")], maintenance=Reviewer())
+    h = await make(core=core, tools=tools(), permissions=PermissionPolicy.ALLOW_WORKSPACE,
+                   permission_rules=(PermissionRule("inside"),))
+    passed_on = os.environ[PROTECTED_FOLDERS_ENV].split(os.pathsep)
+    assert str(parent) in passed_on and str(h.data_dir) in passed_on
+    await h.start()
+    await h.runtime.send("loosen the parent's limits")
+    await eventually(lambda: h.runtime.snapshot().prompts)
+    assert h.tools.started == []
+    await h.close()
+    assert os.environ[PROTECTED_FOLDERS_ENV] == str(parent)  # put back for the next
+
+
 async def test_a_read_of_a_protected_file_is_not_protected(make: Any) -> None:
     found = tools()
     found.instant("look", read_only=True)
@@ -307,7 +331,7 @@ def test_writes_to_kadens_data_and_shell_and_git_files_are_protected(tmp_path: A
             ("Bash", {"command": "cp hook .git/hooks/pre-commit"}, FILES_REASON),
             ("Edit", {"file_path": "/home/u/.gitconfig"}, FILES_REASON),
             ("mcp__fs__write", {"path": "~/.config/fish/config.fish"}, FILES_REASON)]:
-        assert protected(call(name, arguments), False, data) == reason, arguments
+        assert protected(call(name, arguments), False, (data,)) == reason, arguments
     for name, arguments in [
             ("Bash", {"command": "cat src/kaden/api.py"}), ("Bash", {"command": "ls .kadence"}),
             ("Bash", {"command": "git log -- x.kaden"}), ("Bash", {"command": "git add .gitignore"}),
@@ -316,9 +340,9 @@ def test_writes_to_kadens_data_and_shell_and_git_files_are_protected(tmp_path: A
                        "content": "Copy .env.example to .env, then add ~/.bashrc lines."}),
             ("Write", {"file_path": "/p/.env", "content": "KEY=1"}),  # a secret: not ours
             ("Bash", {"command": "cat ~/.ssh/id_ed25519"})]:
-        assert protected(call(name, arguments), False, data) is None, arguments
+        assert protected(call(name, arguments), False, (data,)) is None, arguments
     # A read is never protected.
-    assert protected(call("Read", {"file_path": "~/.bashrc"}), True, data) is None
+    assert protected(call("Read", {"file_path": "~/.bashrc"}), True, (data,)) is None
 
 
 def test_what_a_call_names_as_a_place_is_found_wherever_it_is(tmp_path: Any,
@@ -351,17 +375,37 @@ def test_what_a_call_names_as_a_place_is_found_wherever_it_is(tmp_path: Any,
             ({"workdir": "/home/u/.kaden"}, DATA_REASON),
             ({"outfile": "/home/u/.zshrc"}, FILES_REASON),
             ({"script": "echo x >> ~/.bashrc"}, FILES_REASON)]:
-        assert protected(call("t", arguments), False, data) == reason, arguments
+        assert protected(call("t", arguments), False, (data,)) == reason, arguments
     for arguments in [
             {"notebook_path": "a.ipynb", "new_source": "open('.git/config').read()"},
             {"command": "grep -rn foo . --exclude-dir=.git"},
             {"command": "find . -path ./.git -prune -o -name '*.py' -print"},
             {"command": "ls -la .git"}, {"command": "cat .git/HEAD"},
             {"command": "git status"}]:
-        assert protected(call("t", arguments), False, data) is None, arguments
+        assert protected(call("t", arguments), False, (data,)) is None, arguments
     # A file tool's path into the .git folder is protected, whatever the file.
-    assert protected(call("Write", {"file_path": "/p/.git/info/exclude"}), False, data) \
+    assert protected(call("Write", {"file_path": "/p/.git/info/exclude"}), False, (data,)) \
         == FILES_REASON
+
+
+def test_the_data_folders_above_are_protected_too(tmp_path: Any, monkeypatch: Any) -> None:
+    """Continuous and sub-sessions keep their data inside the main Kaden's: its settings,
+    spending limit and hooks are protected for them as their own are, and Continuous's
+    home stays free."""
+    from kaden.runtime.review import DATA_REASON, protected
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    main, life = home / ".kaden", home / ".kaden" / "life"
+    work = str(life / "home")
+    for arguments in [{"file_path": f"{main}/settings.toml", "content": "x"},
+                      {"file_path": "~/.kaden/config.toml", "content": "[[hooks]]"},
+                      {"command": "cd ~ && echo x > .kaden/sessions/limit.json"}]:
+        assert protected(call("Write", arguments), False, (life, main), work) == DATA_REASON
+    for arguments in [{"file_path": f"{work}/journal.md", "content": "my life"},
+                      {"command": "cd ~ && cat .kaden/life/home/notes.md"},
+                      {"command": "ls ~/.kaden/life/home/drafts"}]:
+        assert protected(call("Write", arguments), False, (life, main), work) is None
 
 
 def test_continuous_writing_about_its_life_is_not_protected(tmp_path: Any,
@@ -381,13 +425,13 @@ def test_continuous_writing_about_its_life_is_not_protected(tmp_path: Any,
                       {"command": "cat $HOME/.kaden/life/home/a.txt"},
                       {"command": "cd ~ && cat .kaden/life/home/notes.md"},
                       {"file_path": f"{work}/journal.md", "content": "life is good"}]:
-        assert protected(call("Bash", arguments), False, data, work) is None, arguments
+        assert protected(call("Bash", arguments), False, (data,), work) is None, arguments
     for command in [f"cat {data}/settings.toml", f"cd {work}; cat {data}/usage.json",
                     f"cat {work}/../settings.toml", "cat ~/.kaden/life/events.jsonl",
                     f"cat {work}x/a", "cd ~ && cat .kaden/life/settings.toml",
                     "cat .kaden/life/home/../usage.json",
                     "cd /home && cat ~/.kaden/life/settings.toml"]:
-        assert protected(call("Bash", {"command": command}), False, data, work) \
+        assert protected(call("Bash", {"command": command}), False, (data,), work) \
             == DATA_REASON, command
-    assert protected(call("Bash", {"command": f"cat {work}/a"}), False, data, None) \
+    assert protected(call("Bash", {"command": f"cat {work}/a"}), False, (data,), None) \
         == DATA_REASON

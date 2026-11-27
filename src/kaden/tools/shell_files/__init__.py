@@ -2,8 +2,9 @@
 screen (POSIX only).
 
 Relative paths resolve against the workspace root, which is also the shell's working
-directory. Commands inherit the process environment (PERMISSION_CEILING_ENV included);
-sandboxed ones without the variables that look like secrets (sandbox_environment).
+directory. Commands inherit the process environment (PERMISSION_CEILING_ENV and
+PROTECTED_FOLDERS_ENV included); sandboxed ones without the variables that look like
+secrets (sandbox_environment).
 
 The workspace is a boundary the runtime can rely on (`confined`): a file call is confined
 when its path is inside it, and a shell command when it runs in the sandbox (`sandbox.py`:

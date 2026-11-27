@@ -32,9 +32,12 @@ classifier decides them.
     `destination`, `dest`, `dst`, `src`, `uri`, `to`, `location`), or a command (`command`,
     `cmd`), nested ones too, each string on its own. File contents (`content`,
     `new_source`), queries and messages are not looked at.
-  - Protected: Kaden's data folder (by its paths, and by its path below the home folder
-    as segments: `.kaden`, `.kaden/life`; never by a plain word such as `life`), except a
-    work folder inside it (Continuous's home);
+  - Protected: Kaden's data folders, its own and those of the instances it was started
+    under (Continuous's and a sub-session's sit in the main Kaden's, whose settings,
+    spending limit and hooks they must not change), passed down in
+    `PROTECTED_FOLDERS_ENV` as the permission ceiling is; each by its paths and by its
+    path below the home folder as segments (`.kaden`, `.kaden/life`), never by a plain
+    word such as `life`, and without a work folder inside it (Continuous's home);
     shell startup files (`.bashrc`, `.bash_profile`, `.bash_login`, `.bash_aliases`,
     `.bash_logout`, `.profile`, `.zshrc`, `.zshenv`, `.zprofile`, `.zlogin`, `.zlogout`,
     `.envrc`, fish's `config.fish`, `environment.d`); git's own files: for a path, anything
@@ -68,7 +71,5 @@ classifier decides them.
 - A write to `.git`, a startup file or Kaden's data folder inside the work folder is
   reviewed or asked about.
 - A command that changes a protected file without naming it (`git commit` writing
-  `.git`, `git config --global`) is not caught, as with Claude Code's own rule. Nor, in a
-  sub-session or Continuous, is the parent Kaden's data folder: each instance protects
-  its own.
+  `.git`, `git config --global`) is not caught, as with Claude Code's own rule.
 - SPEC.md 16.4, `docs/settings.md` and `.agents/decisions.md` say the same.

@@ -97,7 +97,8 @@ says why. If the check fails or the spending limit is reached, Kaden asks too.
   shell startup file such as `~/.bashrc`, or git's own files (a `.git` folder,
   `.gitconfig`) never runs unchecked, even in the work folder or after you allowed it:
   the check decides it here, and the other levels ask. Kaden's data folder holds the very
-  settings that limit the agent; a startup file or git hook runs commands later. A work
+  settings that limit the agent; a startup file or git hook runs commands later.
+  Continuous and sub-sessions also never change the main app's data folder. A work
   folder inside the data folder, such as Continuous's home, is not counted. Claude Code
   protects the same kinds of files. Kaden goes by the files an action names: a command
   that changes one without naming it, such as `git config --global`, is not caught.

@@ -683,7 +683,7 @@ Design: [Agent Note](notes/implemented/2026-11-10-module-provided-tools.md).
 | Tool names | `mcp__<server>__<tool>`, characters outside `[A-Za-z0-9_-]` replaced by `_`, cut at 64 |
 | read_only | Never: a server's `readOnlyHint` is its own claim, so its calls are reviewed or asked about under every level (the user's decision, 2026-11-26) |
 | Confined | Never: AUTO reviews each call, stricter levels ask |
-| Environment | The SDK's safe default (HOME, LOGNAME, PATH, SHELL, USER), the server's own variables, and `PERMISSION_CEILING_ENV` |
+| Environment | The SDK's safe default (HOME, LOGNAME, PATH, SHELL, USER), the server's own variables, `PERMISSION_CEILING_ENV` and `PROTECTED_FOLDERS_ENV` |
 | Close | `aclose` stops every server, waits 5 s, cancels the rest and waits for them to end |
 | Start | At the first `list_tools` (as a conversation opens: in the background, or before the conversation is open when it has watches), all servers at once, 30 s to start and list; every listing meanwhile waits for that one start, which a cancelled listing does not end; one that fails is left out and logged |
 | Settings | `[[mcp_servers]]` in settings.toml: name, command or url, env as variable names; values in the keychain as `mcp/<server>/<NAME>`; removed variables are erased from it |

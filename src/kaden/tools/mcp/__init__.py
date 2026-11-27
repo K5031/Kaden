@@ -8,8 +8,8 @@ the others still work. Tools are named `mcp__<server>__<tool>` so their source i
 names from different servers never clash.
 
 A command gets a small environment (the SDK's safe default: PATH, HOME and the like), the
-variables configured for it, and PERMISSION_CEILING_ENV, so a Kaden it launches cannot
-escape the ceiling. No call is confined and no tool is read-only (a server's readOnlyHint
+variables configured for it, PERMISSION_CEILING_ENV and PROTECTED_FOLDERS_ENV, so a Kaden
+it launches cannot escape the ceiling or change the folders above it. No call is confined and no tool is read-only (a server's readOnlyHint
 is its own claim): what a server does is unknown, so the runtime reviews or asks.
 """
 
@@ -30,6 +30,7 @@ from mcp.client.stdio import get_default_environment
 
 from kaden.api import (
     PERMISSION_CEILING_ENV,
+    PROTECTED_FOLDERS_ENV,
     InstancePaths,
     ToolCall,
     ToolContext,
@@ -62,8 +63,9 @@ class ServerConfig:
             raise ValueError(f"MCP server {self.name!r} needs a command or a URL")
         argv = shlex.split(self.command)
         env = {**get_default_environment(), **self.env}
-        if (ceiling := os.environ.get(PERMISSION_CEILING_ENV)) is not None:
-            env[PERMISSION_CEILING_ENV] = ceiling
+        for name in (PERMISSION_CEILING_ENV, PROTECTED_FOLDERS_ENV):
+            if (value := os.environ.get(name)) is not None:
+                env[name] = value
         return StdioServerParameters(command=argv[0], args=argv[1:], env=env)
 
 
