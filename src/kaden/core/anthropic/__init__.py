@@ -442,28 +442,42 @@ class _Turn:
         self.sources_line = ""
         # Every server-side block of the turn, in the order it came: they refer to each
         # other (dynamic filtering runs code that calls the search), so they are replayed
-        # together, from the first use shown.
+        # together, from the first use shown, which is put where they begin. The thinking
+        # and text between them go with them, where they came: a thought is bound to
+        # everything before it.
         answered = {b.raw["tool_use_id"] for b in self.blocks if b.type.endswith("_tool_result")
                     and "tool_use_id" in b.raw and b.type != "tool_result"}
-        server = [b.raw for b in self.blocks
-                  if b.type == "server_tool_use" and b.id in answered
-                  or b.type.endswith("_tool_result") and b.raw.get("tool_use_id") in answered
-                  and b.type != "tool_result"]
-        for b in self.blocks:
+        at = [i for i, b in enumerate(self.blocks)
+              if b.type == "server_tool_use" and b.id in answered
+              or b.type.endswith("_tool_result") and b.raw.get("tool_use_id") in answered
+              and b.type != "tool_result"]
+        # To the last thought after them too: it saw what came between as it came (text
+        # with its citations).
+        end = max((i for i, b in enumerate(self.blocks) if b.type in _THINKING
+                   and at and i > at[0]), default=at[-1] if at else -1)
+        within = range(at[0], max(end, at[-1]) + 1) if at else range(0)
+        server = [self.blocks[i].raw for i in within
+                  if i in at or self.blocks[i].type in _THINKING
+                  or self.blocks[i].type == "text" and self.blocks[i].raw.get("text")]
+        start = texts = 0  # where they begin among the blocks; the text blocks among them
+        for n, b in enumerate(self.blocks):
             raw = b.raw
+            if at and n == at[0]:
+                start = len(blocks)
             match raw["type"]:
                 case "text":
                     blocks.append(Text(raw["text"]))
+                    texts += n in within and bool(raw["text"])
                     for citation in raw.get("citations", ()):
                         if url := citation.get("url"):
                             sources.setdefault(url, citation.get("title") or url)
                 case "thinking":
                     state = {"provider": PROVIDER, "signature": raw.get("signature", ""),
-                             "prefix": self.bound}
+                             "prefix": self.bound} | _riding(n in within)
                     blocks.append(Reasoning(raw.get("thinking", ""), state, self.model))
                 case "redacted_thinking":
                     state = {"provider": PROVIDER, "redacted": raw["data"],
-                             "prefix": self.bound}
+                             "prefix": self.bound} | _riding(n in within)
                     blocks.append(Reasoning("", state, self.model))
                 case "tool_use":
                     blocks.append(ToolCall(raw["id"], raw["name"], raw.get("input", {}), b.bad))
@@ -475,8 +489,14 @@ class _Turn:
                                                         for x in blocks):
                         blocks.append(_server_use(use, raw, self.model))
         shown = [i for i, x in enumerate(blocks) if isinstance(x, ServerToolUse)]
+        if shown:
+            blocks.insert(start, blocks.pop(shown[0]))
+            shown[0] = start
         for n, i in enumerate(shown):
-            state = {"provider": PROVIDER, "model": self.model, "blocks": server if n == 0 else []}
+            state = {"provider": PROVIDER, "model": self.model,
+                     "blocks": server if n == 0 else []}
+            if n == 0:
+                state |= {"prefix": self.bound, "texts": texts}
             blocks[i] = replace(blocks[i], state=state)
         # A turn paused more often than MAX_CONTINUATIONS ends with uses still running:
         # failed steps, without state, so they go back as text.
@@ -578,14 +598,26 @@ def to_messages(messages: Sequence[Message], model: str, system: str = "",
         bound = prefix.of(out) if role == "assistant" else None
         content: list[JSON] = []
         rewritten = False  # a tool Anthropic ran went as text: what it thought after is void
+        # Thoughts kept among the server blocks go only while the message still has them
+        # as Reasoning: Memory drops all of a message's thinking when it shortens it.
+        carried = any(isinstance(b, Reasoning) and (b.state or {}).get("with_server_blocks")
+                      for b in message.blocks)
+        covered = 0  # text blocks the server blocks just sent hold already
         for b in message.blocks:
             if rewritten and isinstance(b, Reasoning):
                 continue
-            made = _to_content(b, model, bound, search and i > latest, refused)
+            if covered and isinstance(b, Text) and b.text:
+                covered -= 1
+                continue
+            made = _to_content(b, model, bound, search and i > latest, refused,
+                               carried=carried)
             if role == "user" and isinstance(b, (Image, Document)) and b.path:
                 made.insert(0, {"type": "text", "text": attached_at(b)})  # where it is
-            rewritten = rewritten or (isinstance(b, ServerToolUse) and bool(made)
-                                      and made[0]["type"] == "text")
+            if isinstance(b, ServerToolUse) and made:
+                if made[0]["type"] == "text":
+                    rewritten = True
+                else:
+                    covered = b.state["texts"]
             content += made
         if not content:
             continue
@@ -601,11 +633,20 @@ def to_messages(messages: Sequence[Message], model: str, system: str = "",
 _USER_ORDER = {"tool_result": 0, "document": 1}
 
 
+def _riding(within: bool) -> JSON:
+    """A thought among a turn's server blocks is replayed with them, in their state, and
+    is marked so that it is not sent a second time on its own (and so that the replay can
+    tell it is still there: to_messages)."""
+    return {"with_server_blocks": True} if within else {}
+
+
 def _to_content(block: Block, model: str, bound: str | None, search: bool,
-                refused: Collection[str] = ()) -> list[JSON]:
+                refused: Collection[str] = (), *, carried: bool = False) -> list[JSON]:
     match block:
         case Text(text=text):
             return [{"type": "text", "text": text}] if text else []
+        case Reasoning(state={"with_server_blocks": True}):
+            return []  # replayed among the server blocks, or void with them
         case Reasoning(model=produced_by) if produced_by != model:
             return []  # another model's signature would be rejected
         case Reasoning(state=state) if bound is None or (state or {}).get("prefix") != bound:
@@ -617,9 +658,12 @@ def _to_content(block: Block, model: str, bound: str | None, search: bool,
         case Reasoning():
             return []  # unsigned reasoning cannot be replayed
         case ServerToolUse(state={"provider": "anthropic", "model": ran_on, "blocks": raw}) \
-                if search and ran_on == model and not any(
+                if search and ran_on == model and block.id not in refused and not any(
                     c.get("id") in refused for c in raw if c.get("type") == "server_tool_use"):
-            return list(raw)  # the turn's server blocks ride on its first shown use
+            # The turn's server blocks ride on its first shown use, with the thinking
+            # between them while what it is bound to is unchanged.
+            kept = carried and block.state.get("prefix") == bound
+            return [c for c in raw if kept or c.get("type") not in _THINKING]
         case ServerToolUse():
             return [{"type": "text", "text": server_tool_text(block)}]
         case ToolCall(id=id, name=name, arguments=arguments):

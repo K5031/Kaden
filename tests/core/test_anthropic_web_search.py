@@ -275,6 +275,213 @@ async def test_thinking_after_a_search_goes_when_the_search_goes_back_as_text(dr
     assert sent()[0] == "sig-before" and set(sent()[1:]) == {"text"}
 
 
+def filtered_in_two_steps() -> list:
+    """Thinking between two steps of filtering code, as Opus 5.5 can send it: the code
+    calls the search, the model thinks, more code reads the results."""
+    return [
+        *thought(0, "Search first.", "sig-before"),
+        *block(1, {"type": "server_tool_use", "id": "srvtoolu_code", "name": "code_execution",
+                   "input": {"code": "r = search()"}}, []),
+        *block(2, {"type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search",
+                   "input": {"query": "worlds 2026 final"},
+                   "caller": {"type": "code_execution_20260120", "tool_id": "srvtoolu_code"}},
+               []),
+        *block(3, {"type": "web_search_tool_result", "tool_use_id": "srvtoolu_1",
+                   "content": RESULT}, []),
+        *block(4, {"type": "code_execution_tool_result", "tool_use_id": "srvtoolu_code",
+                   "content": {"type": "code_execution_result", "stdout": "", "stderr": "",
+                               "return_code": 0, "content": []}}, []),
+        *thought(5, "Read the first two.", "sig-between"),
+        *block(6, {"type": "server_tool_use", "id": "srvtoolu_code2", "name": "code_execution",
+                   "input": {"code": "print(r[:2])"}}, []),
+        *block(7, {"type": "code_execution_tool_result", "tool_use_id": "srvtoolu_code2",
+                   "content": {"type": "code_execution_result", "stdout": "two",
+                               "stderr": "", "return_code": 0, "content": []}}, []),
+        *thought(8, "They agree.", "sig-after"),
+        *cited_text(9),
+    ]
+
+
+async def test_thinking_between_steps_of_a_search_is_replayed_where_it_came(driver):
+    """A thought is bound to everything before it: one written between two steps of the
+    filtering code goes back between them, once, or the API rejects it ("content before
+    this block that was not present when it was created"). It is still shown as thinking.
+    Once a later question gets the search as text, it goes with the search."""
+    from kaden.api import Reasoning
+
+    driver.stub.queue(Reply(events=[message_start(), *filtered_in_two_steps(), *searched()]))
+    answer = (await collect(driver.core, request()))[-1].message
+    assert [b.text for b in answer.blocks if isinstance(b, Reasoning)] == [
+        "Search first.", "Read the first two.", "They agree."]
+
+    def sent() -> list[str]:
+        replayed = driver.stub.bodies[-1]["messages"][1]["content"]
+        return [c.get("signature") or c.get("id") or c.get("tool_use_id") or c["type"]
+                for c in replayed]
+
+    driver.stub.queue(Reply(events=[message_start(), *text_block(0, ["ok"]), *finish("end_turn")]))
+    await collect(driver.core, request(OPUS, [user("Who plays the final?"), answer,
+                                              tool_results()]))  # the same turn: as it came
+    assert sent()[:10] == ["sig-before", "srvtoolu_code", "srvtoolu_1", "srvtoolu_1",
+                           "srvtoolu_code", "sig-between", "srvtoolu_code2", "srvtoolu_code2",
+                           "sig-after", "text"]
+    driver.stub.queue(Reply(events=[message_start(), *text_block(0, ["ok"]), *finish("end_turn")]))
+    await collect(driver.core, request(OPUS, [user("Who plays the final?"), answer,
+                                              user("And who is favoured?")]))
+    assert sent()[0] == "sig-before" and set(sent()[1:]) == {"text"}
+
+
+def two_searches_with_words_between() -> list:
+    """A reply that searches, says something, thinks and searches again."""
+    return [
+        *thought(0, "Search first.", "sig-a"),
+        *block(1, {"type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search",
+                   "input": {"query": "worlds 2026 final"}}, []),
+        *block(2, {"type": "web_search_tool_result", "tool_use_id": "srvtoolu_1",
+                   "content": RESULT}, []),
+        *text_block(3, ["Looking further."]),
+        *thought(4, "Try the bracket.", "sig-b"),
+        *block(5, {"type": "server_tool_use", "id": "srvtoolu_2", "name": "web_search",
+                   "input": {"query": "worlds 2026 bracket"}}, []),
+        *block(6, {"type": "web_search_tool_result", "tool_use_id": "srvtoolu_2",
+                   "content": RESULT}, []),
+        *thought(7, "They agree.", "sig-c"),
+        *cited_text(8),
+    ]
+
+
+async def test_words_between_searches_are_replayed_where_they_came(driver):
+    """Text between two searches goes back between them, once, so the thoughts after it
+    stay valid; it is still shown in its place among the steps."""
+    driver.stub.queue(Reply(events=[message_start(), *two_searches_with_words_between(),
+                                    *searched(searches=2)]))
+    answer = (await collect(driver.core, request()))[-1].message
+    assert "Looking further." in [b.text for b in answer.blocks if isinstance(b, Text)]
+    driver.stub.queue(Reply(events=[message_start(), *text_block(0, ["ok"]), *finish("end_turn")]))
+    await collect(driver.core, request(OPUS, [user("Who plays the final?"), answer,
+                                              tool_results()]))
+    replayed = driver.stub.bodies[-1]["messages"][1]["content"]
+    kinds = [c.get("signature") or c.get("id") or c.get("tool_use_id") or c.get("text")
+             or c["type"] for c in replayed]
+    assert kinds[:9] == ["sig-a", "srvtoolu_1", "srvtoolu_1", "Looking further.", "sig-b",
+                         "srvtoolu_2", "srvtoolu_2", "sig-c", "Gen.G meets BLG."]
+    assert kinds.count("Looking further.") == 1
+
+
+async def test_a_shortened_answer_sends_no_thought_among_its_searches(driver):
+    """Memory shortens an answer that does not fit by cutting its text and dropping its
+    thinking. A thought kept among the search blocks would then follow text it never saw,
+    so it goes too. The searches go back as they came, with the words between them in
+    full from the stored blocks; only text outside them goes cut."""
+    from dataclasses import replace
+
+    from kaden.api import Reasoning
+
+    driver.stub.queue(Reply(events=[message_start(), *two_searches_with_words_between(),
+                                    *searched(searches=2)]))
+    answer = (await collect(driver.core, request()))[-1].message
+    shortened = replace(answer, blocks=tuple(
+        Text(b.text[:4]) if isinstance(b, Text) else b
+        for b in answer.blocks if not isinstance(b, Reasoning)))
+    driver.stub.queue(Reply(events=[message_start(), *text_block(0, ["ok"]), *finish("end_turn")]))
+    await collect(driver.core, request(OPUS, [user("Who plays the final?"), shortened,
+                                              tool_results()]))
+    replayed = driver.stub.bodies[-1]["messages"][1]["content"]
+    assert not any(c["type"] == "thinking" for c in replayed)
+    assert [c.get("id") or c.get("tool_use_id") for c in replayed
+            if c["type"] != "text"][:4] == ["srvtoolu_1", "srvtoolu_1", "srvtoolu_2",
+                                             "srvtoolu_2"]
+    texts = [c["text"] for c in replayed if c["type"] == "text"]
+    assert texts.count("Looking further.") == 1
+    assert not any(t.startswith("Look") and t != "Looking further." for t in texts)
+
+
+def replayed_kinds(driver: AnthropicDriver) -> list:
+    return [c.get("signature") or c.get("id") or c.get("tool_use_id") or c.get("text")
+            or c["type"] for c in driver.stub.bodies[-1]["messages"][1]["content"]]
+
+
+async def replay_in_turn(driver: AnthropicDriver, answer: Message) -> None:
+    driver.stub.queue(Reply(events=[message_start(), *text_block(0, ["ok"]), *finish("end_turn")]))
+    await collect(driver.core, request(OPUS, [user("Who plays the final?"), answer,
+                                              tool_results()]))
+
+
+async def test_an_empty_text_between_searches_is_not_sent(driver):
+    events = two_searches_with_words_between()
+    events = [(kind, {**data, "delta": {**data["delta"], "text": ""}})
+              if data.get("delta", {}).get("text") == "Looking further." else (kind, data)
+              for kind, data in events]
+    driver.stub.queue(Reply(events=[message_start(), *events, *searched(searches=2)]))
+    answer = (await collect(driver.core, request()))[-1].message
+    await replay_in_turn(driver, answer)
+    assert "" not in replayed_kinds(driver) and "text" not in replayed_kinds(driver)[:7]
+
+
+async def test_a_thought_after_cited_words_follows_them_as_they_came(driver):
+    """The words between a search and a later thought go back as they came, with their
+    citations, as the thought saw them."""
+    driver.stub.queue(Reply(events=[
+        message_start(), *search_blocks(0), *cited_text(2), *thought(3, "Enough.", "sig-x"),
+        *text_block(4, ["Done."]), *searched()]))
+    answer = (await collect(driver.core, request()))[-1].message
+    await replay_in_turn(driver, answer)
+    replayed = driver.stub.bodies[-1]["messages"][1]["content"]
+    assert replayed_kinds(driver)[:5] == ["srvtoolu_1", "srvtoolu_1", "Gen.G meets BLG.",
+                                          "sig-x", "Done."]
+    assert replayed[2].get("citations")
+
+
+async def test_a_search_step_is_shown_where_the_search_began(driver):
+    """Whatever came between a search and its result is shown after the step, and goes
+    back between them as it came."""
+    from kaden.api import Reasoning
+
+    driver.stub.queue(Reply(events=[
+        message_start(),
+        *block(0, {"type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search",
+                   "input": {"query": "worlds 2026 final"}}, []),
+        *thought(1, "Waiting on it.", "sig-wait"),
+        *block(2, {"type": "web_search_tool_result", "tool_use_id": "srvtoolu_1",
+                   "content": RESULT}, []),
+        *cited_text(3), *searched()]))
+    answer = (await collect(driver.core, request()))[-1].message
+    assert [type(b) for b in answer.blocks[:2]] == [ServerToolUse, Reasoning]
+    await replay_in_turn(driver, answer)
+    assert replayed_kinds(driver)[:3] == ["srvtoolu_1", "sig-wait", "srvtoolu_1"]
+
+
+async def test_every_search_goes_as_text_when_the_api_will_not_take_them_back(driver):
+    driver.stub.queue(Reply(events=[message_start(), *two_searches_with_words_between(),
+                                    *searched(searches=2)]))
+    answer = (await collect(driver.core, request()))[-1].message
+    driver.stub.queue(Reply(status=400, json_body={"type": "error", "error": {
+        "type": "invalid_request_error", "message": "source tool `srvtoolu_1` not found"}}))
+    driver.stub.queue(Reply(events=[message_start(), *text_block(0, ["ok"]), *finish("end_turn")]))
+    await collect(driver.core, request(OPUS, [user("q"), answer, tool_results()]))
+    sent = json.dumps(driver.stub.bodies[-1]["messages"][1]["content"])
+    assert "worlds 2026 final" in sent and "worlds 2026 bracket" in sent
+    assert "server_tool_use" not in sent
+
+
+async def test_thinking_among_search_steps_is_left_out_once_its_binding_changed(driver):
+    """Within the same turn the search still goes back as it came, but a thought among
+    its steps is bound to the system prompt and tools too: once they changed, it is left
+    out, as any other thought would be."""
+    driver.stub.queue(Reply(events=[message_start(), *filtered_in_two_steps(), *searched()]))
+    answer = (await collect(driver.core, request()))[-1].message
+    driver.stub.queue(Reply(events=[message_start(), *text_block(0, ["ok"]), *finish("end_turn")]))
+    changed = InferenceRequest(OPUS, "A new system prompt.",
+                               [user("Who plays the final?"), answer, tool_results()],
+                               request().tools)
+    await collect(driver.core, changed)
+    replayed = driver.stub.bodies[-1]["messages"][1]["content"]
+    assert not any(c["type"] == "thinking" for c in replayed)
+    assert [c.get("id") or c.get("tool_use_id") for c in replayed[:6]] == [
+        "srvtoolu_code", "srvtoolu_1", "srvtoolu_1", "srvtoolu_code", "srvtoolu_code2",
+        "srvtoolu_code2"]
+
+
 async def test_an_answer_after_a_fallback_is_bound_to_the_request_that_was_sent(driver):
     """Its thinking goes back with the next request of the turn: it is bound to the
     body the API took, not to the one it refused."""

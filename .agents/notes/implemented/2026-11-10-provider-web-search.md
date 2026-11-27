@@ -36,8 +36,17 @@ about $10 per 1 000 searches.
   else `web_search_20250305`, at most 5 searches per request, $0.01 each.
 - Keeps every server-side block of a turn as the API sent it. With dynamic filtering the
   model runs code that calls the search, and the blocks refer to each other by id, so they
-  are kept together, in their order, on the turn's first shown use, and sent back
-  unchanged. The filtering code is not shown as a step.
+  are kept together, in their order, on the turn's first shown use, which is placed
+  where they begin, and sent back unchanged. The thinking and text the model wrote
+  between them, and up to its last thought after them, are kept among them, where they
+  came: a thought is bound to everything
+  before it, and the API refuses one replayed after content it did not see when it was
+  written. They are shown as thinking and text all the same, but sent only from there
+  while the server blocks go back as they came. A thought among them is left out once
+  what it is bound to changed (the system prompt, tools or history), or once Memory
+  shortened the answer (which drops its thinking and cuts its text). When the API will
+  not take them back, every search of the turn goes as text. The filtering code is not
+  shown as a step.
 - Sends them back only within the turn that made them (after the user's latest message):
   the results hold the pages' text, which every later request would pay for again. Earlier
   turns' searches go as text; the model searches again when it needs more.
