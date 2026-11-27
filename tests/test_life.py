@@ -54,7 +54,7 @@ async def test_it_lives_in_its_own_folder_on_a_life_of_its_own(tmp_path, child_e
 
 async def test_what_it_says_by_itself_reaches_the_user_and_a_reply_does_not(
         tmp_path, child_env):
-    data = home(tmp_path, [{"text": ""}, {"text": "I found an old map of Kyoto!"},
+    data = home(tmp_path, [{"text": "I found an old map of Kyoto!"},
                            {"text": "Hi! Good to see you."}])
     life = Life(data, pace_s=(0.05, 0.3))
     heard: list[str] = []
@@ -83,7 +83,6 @@ async def test_it_carries_on_its_life_after_the_app_restarts(tmp_path, child_env
         assert snapshot.conversation.id == first  # the same life, not a new one
         # with its pace (and model and who it is) as the app has them now
         await eventually(lambda: again.snapshot.conversation.duty.max_interval_s == 20)
-        await eventually(lambda: again.snapshot.duty_wake_at is not None)
     finally:
         await again.aclose()
 

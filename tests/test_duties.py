@@ -598,47 +598,55 @@ async def test_a_life_is_framed_as_its_own_not_as_work(make):
     [request] = h.core.requests
     assert "## Your life" in request.system and "old maps" in request.system
     assert "## Your duty" not in request.system
-    # How it comes back is a fact it is told, not a beat it is kept to: the time it
-    # chooses, the user writing, its own work finishing; the longest wait only as a net.
-    assert "you go on after" in request.system and "rest until a later time" in request.system
+    # How it comes back is a fact it is told: what wakes it, and the times it chooses.
+    assert "you rest until something wakes you" in request.system
+    assert "Rest" in request.system
     names = {t.name for t in request.tools}
     assert "TodoWrite" in names and names.isdisjoint({"ask_for_help", "finish_goal"})
     assert notices(request)[0].endswith(f"[Runtime notice] Your life: {LIFE.instruction}")
 
 
-def test_a_life_is_awake_unless_it_chose_to_rest():
-    """With nothing due it goes on after its shortest wait; a later time in its plan is
-    its rest, up to its longest wait; a duty with nothing due waits its longest."""
+def test_a_life_sleeps_until_something_wakes_it():
+    """No time of Kaden's: with nothing due it is not woken; a time in its plan wakes it
+    then, however far; a duty with nothing due waits its longest."""
     life = Duty("You are Mira.", DutyKind.LIFE, min_interval_s=60, max_interval_s=86_400)
     now = 1_000_000.0
-    assert duties.next_wake(life, [], now) == (60, duties.CHECK_IN)
+    assert duties.next_wake(life, [], now) is None
     resting = [PlanItem("Read the map book", PlanStatus.TODO, now + 3 * 3600)]
     assert duties.next_wake(life, resting, now) == (3 * 3600, duties.DUE)
     far = [PlanItem("Visit the archive", PlanStatus.TODO, now + 3 * 86_400)]
-    assert duties.next_wake(life, far, now) == (86_400, duties.CHECK_IN)
+    assert duties.next_wake(life, far, now) == (3 * 86_400, duties.DUE)
     duty = Duty("Watch the inbox", min_interval_s=60, max_interval_s=3600)
     assert duties.next_wake(duty, [], now) == (3600, duties.CHECK_IN)
 
 
-async def test_time_passing_wakes_a_life(make):
-    h = await duty_harness(make, [Step(text=""), Step(text="")])
-    await h.runtime.set_duty(LIFE)
-    await idle(h, 2)
-    assert " passed; it is " in notices(h.core.requests[1])[-1]
-
-
-async def test_a_restart_does_not_pause_a_life(make):
-    """A life goes on after Kaden restarts; a duty waits for the user."""
-    h = await duty_harness(make, [Step(text="")])
+async def test_time_passing_does_not_wake_a_life(make):
+    """No nudges: after its turn it sleeps until something wakes it."""
+    h = await duty_harness(make, [Step(text=""), Step(text="Hi!")])
     await h.runtime.set_duty(LIFE)
     await idle(h, 1)
+    await asyncio.sleep(0.5)  # past its shortest and longest waits
+    assert len(h.core.requests) == 1 and h.runtime.snapshot().duty_wake_at is None
+    await h.turn("hello")  # the user wakes it
+    assert len(h.core.requests) == 2
+
+
+async def test_a_restart_keeps_the_time_a_life_chose(make):
+    """After Kaden restarts, a life still wakes at the due time in its plan."""
+    later = time.time() + 1800
+    plan = call("TodoWrite", {"todos": [{
+        "content": "Look at the stars", "status": "pending", "activeForm": "Looking at the stars",
+        "due": datetime.fromtimestamp(later).isoformat(timespec="seconds")}]})
+    life = Duty(LIFE.instruction, DutyKind.LIFE, min_interval_s=0.05, max_interval_s=3600)
+    h = await duty_harness(make, [Step(calls=[plan]), Step(text="")])
+    await h.runtime.set_duty(life)
+    await idle(h, 2)
     conversation = h.conversation.id
     await h.close()
     again: Harness = await make(core=ScriptedCore([Step(text="")]), store=h.store, budget=LIMIT)
     await again.start(conversation)
-    assert again.runtime.snapshot().duty_wake_at is not None
-    await idle(again, 1)
-    assert "Time has passed." in notices(again.core.requests[0])[-1]
+    wake_at = again.runtime.snapshot().duty_wake_at
+    assert wake_at is not None and abs(wake_at - later) < 2
 
 
 async def test_a_life_stops_at_the_days_amount_and_still_answers_the_user(make):
@@ -733,10 +741,17 @@ async def test_a_life_can_rest_until_a_time_and_a_message_still_wakes_it(make):
     asked = len(h.core.requests)
     await h.runtime.send("hello Mira")
     await idle(h, asked + 1)
-    assert await wake_in(h) < 1  # the rest is over: it goes on as before
+    assert h.runtime.snapshot().duty_wake_at is None  # the rest is over: asleep again
 
 
-@pytest.mark.parametrize("arguments", [{}, {"minutes": 10_000_000},
+async def test_a_rest_without_a_time_lasts_until_something_wakes_it(make):
+    h = await duty_harness(make, [rest(), Step(text="")])
+    await h.runtime.set_duty(RESTFUL)
+    await idle(h, 2)
+    assert h.runtime.snapshot().duty_wake_at is None
+
+
+@pytest.mark.parametrize("arguments", [{"minutes": 10_000_000},
                                        {"until": "2999-01-01T00:00"}])
 async def test_a_rest_is_at_most_the_longest_wait(make, arguments):
     h = await duty_harness(make, [rest(**arguments), Step(text="")])

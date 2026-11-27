@@ -40,13 +40,12 @@ Journal for `home/journal.md`; its name and who it is are in its settings (the g
 - **A duty of the kind `DutyKind.LIFE`** on its one conversation, set on every start: who
   it is, its pace and its model as the app has them now. A life has neither
   `ask_for_help` nor `finish_goal`, has `Rest`, and is woken again when it is resumed.
-- **Awake by default.** With nothing due it goes on a minute after a turn. It rests by
-  calling `Rest` (until a time, for some minutes, or until something wakes it) or by
-  giving a step of its plan a due time; either way at most a day ahead. The user writing,
-  something it watches happening, or its own background work finishing, wakes it at once
-  and ends the rest. Its prompt states both ways of resting as abilities, not a rule.
-  Woken by time, it is told how long it rested and the time ("1 minute passed; it is
-  22:15.").
+- **Asleep until something wakes it.** After a turn it rests until the user writes,
+  something it watches happens, its own background work finishes, or a time it chose
+  comes: `Rest` until a time or for some minutes, or a step of its plan with a due time,
+  at most a day ahead. Kaden does not wake it because time passed. Its prompt states what
+  wakes it as a fact. Woken at a time it chose, it is told how long it rested and the time
+  ("1 minute passed; it is 22:15.").
 - **A question it puts to the user does not hold it.** A permission, question or plan
   prompt left unanswered for 3 minutes closes by itself, refused or unanswered, with a
   note that the user may be away; the user may be talking to it on Bilibili, where no
@@ -70,8 +69,14 @@ and facts (the user reads its journal), never routines, quotas, schedules or moo
   of it hidden, and a user who wants an agent wants both in one place.
 - **Its runtime in the app's process.** No wait while it starts, but two runtimes in one
   process share the exported permission ceiling and each other's failures.
-- **Asleep by default, waking at a time it sets itself.** Tried with a day as the net:
-  the model ended every turn without setting one, and slept a day.
+- **Awake by default** (going on a minute after each turn unless it chose to rest). It
+  was built after "asleep" first failed, but woken every minute it only said "(Still
+  resting.)", a full turn each time: nudges with nothing to do bought nothing. The user
+  had it removed.
+- **Asleep, waking only at a time it sets itself, before it was woken by the world.**
+  Tried with a day as the net: the model ended every turn without setting one, and
+  slept a day. Since then the user's Bilibili messages, followed channels and finished
+  work wake it, and `Rest` makes choosing a time plain.
 - **Resting only through a plan step's due time.** It kept saying it rested and was then
   woken every minute to say so again, a full turn each time: a step with a due time is
   not how it thinks of resting.
@@ -89,6 +94,6 @@ and facts (the user reads its journal), never routines, quotas, schedules or moo
 
 - One install and one window; the life runs in a second process, so its view waits for it
   to start the first time it is opened in a run.
-- A life is paid for by the call: awake by default spends the daily amount within the
-  day on a cheaper model; the amount decides how much of the day it lives.
+- A life is paid for by the call: it spends only when something wakes it or it chose a
+  time; between those it costs nothing, and does nothing.
 - A long life outgrows any context: what it is depends on compaction and its memory.

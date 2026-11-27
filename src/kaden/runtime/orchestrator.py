@@ -1708,8 +1708,11 @@ class Runtime:
             self._log.decision("duty_held", reason="the day's amount is spent")
             self._wake_in(max(0.0, next_day() - time.time()), duties.NEW_DAY)
             return
-        self._wake_in(*duties.next_wake(duty, self._conversation.plan,
-                                        rest_until=self._rest_until))
+        wake = duties.next_wake(duty, self._conversation.plan, rest_until=self._rest_until)
+        if wake is None:  # a life that chose no time: asleep until something wakes it
+            self._log.decision("duty_asleep")
+            return
+        self._wake_in(*wake)
 
     def _day_spent(self) -> bool:
         """A life has spent today's amount (Budget.max_cost_usd_per_day)."""
@@ -2822,6 +2825,12 @@ class Runtime:
                     self._rest_until = duties.rest_until(args, duty, now)
                 except ValueError as e:
                     return ToolStatus.ERROR, str(e)
+                if self._rest_until is None:
+                    self._log.decision("rest", in_s=None)
+                    return ToolStatus.OK, (
+                        "Resting until something wakes you: the user writing, something you "
+                        "watch happening, your background work finishing, or a step of your "
+                        "plan falling due. End your turn.")
                 self._log.decision("rest", in_s=round(self._rest_until - now, 3))
                 return ToolStatus.OK, (
                     f"Resting until {duties.local(self._rest_until)}. The user writing, "

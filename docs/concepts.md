@@ -87,12 +87,11 @@ closed it.
   they are: personality, interests, how they talk. Leave that empty and they find out for
   themselves. Their settings (the gear in their view) change it.
 - **They live on their own.** They do their own things with their tools (reading,
-  looking things up, writing, watching Bilibili, projects of their own), around the
-  clock. A minute after they finish something they go on, unless they chose to rest until
-  a later time (up to a day), or until something wakes them. Writing to them, something
-  they watch happening (a channel they follow posting), or something of their own
-  finishing, wakes them at once. Woken by time, they are told how long they rested and
-  what time it is.
+  looking things up, writing, watching Bilibili, projects of their own). After a turn
+  they rest until something wakes them: you writing to them, something they watch
+  happening (a channel they follow posting, a Bilibili message), their own background
+  work finishing, or a time they chose themselves (up to a day ahead). Kaden never wakes
+  them just because time passed.
 - **They don't wait long on you.** A permission or a question they put to you closes by
   itself after 3 minutes without an answer, and they go on without it.
 - **You can see what they are up to.** While they do something, the line at the top of

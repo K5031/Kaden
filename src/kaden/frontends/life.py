@@ -53,8 +53,8 @@ UNSAID = "Who you are beyond that is yours to find out."  # when the user says n
 PROMPT = ("You have a life of your own on this computer, and tools to live it: its shell, "
           f"files, the web. The user can read {JOURNAL} in your folder, as your journal, "
           "where they talk with you.\n" + TOOL_FACTS)
-# Its shortest and longest wait between turns. It goes on after the shortest unless it
-# chose to rest until a later time (a due time in its plan), held to the longest.
+# Its shortest wait between turns, and the furthest ahead a time it chooses to wake at may
+# be (Rest, a due time in its plan). Nothing else of Kaden's wakes it.
 PACE_S = (60.0, 86_400.0)
 DAILY_USD = 1.0  # what its own time may cost a day, unless the user says otherwise
 # Its settings that the app keeps when it writes the rest from the chats'.

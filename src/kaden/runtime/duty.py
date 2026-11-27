@@ -72,11 +72,11 @@ def prompt(duty: Duty | None, plan: Sequence[PlanItem], *, in_view: bool = False
             f"## Your life\n{duty.instruction}\n\n"
             "Your time is your own: no one is waiting on you, and nothing has to be done. "
             "You have your tools, a folder of your own, the web, and memory to keep what "
-            "you want to remember. When you end your turn, you go on after "
-            f"{span(duty.min_interval_s)}, unless you rest until a later time you choose "
-            "(with Rest, or a step of your plan given a due time with TodoWrite; at most "
-            f"{span(duty.max_interval_s)} ahead). The user writing, or background work of "
-            "yours finishing, wakes you sooner. When the user writes, you answer them. Text you "
+            "you want to remember. When you end your turn, you rest until something wakes "
+            "you: the user writing, something you watch happening, background work of yours "
+            "finishing, or a time you choose (with Rest, or a step of your plan given a due "
+            f"time with TodoWrite; at most {span(duty.max_interval_s)} ahead). Nothing else "
+            "wakes you. When the user writes, you answer them. Text you "
             "write in a turn the user did not start reaches them as a message; a turn that "
             "ends without text reaches no one.")
     elif duty is not None:
@@ -185,28 +185,30 @@ def parse_plan(items: Sequence[dict[str, Any]], now: float) -> list[PlanItem]:
 
 
 def next_wake(duty: Duty, plan: Sequence[PlanItem], now: float | None = None, *,
-              rest_until: float | None = None) -> tuple[float, str]:
+              rest_until: float | None = None) -> tuple[float, str] | None:
     """(seconds from now, cause): the earliest open item due, held between the duty's
-    intervals; with nothing due, the maximum interval, or for a life the minimum: it is
-    awake unless it chose to rest until a later time, a due step or `rest_until` (Rest),
-    whichever comes first."""
+    intervals; with nothing due, the maximum interval. A life is not woken by time of
+    Kaden's: only at a time it chose, a due step or `rest_until` (Rest), whichever comes
+    first, at the earliest after its shortest wait; None when it chose none."""
     now = time.time() if now is None else now
     due = [i.due for i in plan if i.due is not None and i.status in OPEN]
-    if rest_until is not None and duty.kind == DutyKind.LIFE:
-        sooner = [d for d in due if now < d < rest_until]
-        if sooner:
-            return max(duty.min_interval_s, min(sooner) - now), DUE
-        return max(duty.min_interval_s, rest_until - now), CHECK_IN
+    if duty.kind == DutyKind.LIFE:
+        # A step past its time has woken it already: only times still ahead wake it.
+        times = [(d, DUE) for d in due if d > now] + (
+            [(rest_until, CHECK_IN)] if rest_until is not None else [])
+        if not times:
+            return None
+        when, cause = min(times)
+        return max(duty.min_interval_s, when - now), cause
     if due and min(due) - now < duty.max_interval_s:
         return max(duty.min_interval_s, min(due) - now), DUE
-    if not due and duty.kind == DutyKind.LIFE:
-        return duty.min_interval_s, CHECK_IN
     return duty.max_interval_s, CHECK_IN
 
 
-def rest_until(arguments: dict[str, Any], duty: Duty, now: float) -> float:
-    """When Rest's arguments end the rest: `until`, or `minutes` from now, or with neither
-    the duty's longest wait, never later than that. ValueError for an unreadable time."""
+def rest_until(arguments: dict[str, Any], duty: Duty, now: float) -> float | None:
+    """When Rest's arguments end the rest: `until`, or `minutes` from now, never later
+    than the duty's longest wait; with neither, None: until something wakes it.
+    ValueError for an unreadable time."""
     longest = now + duty.max_interval_s
     if "until" in arguments:
         try:
@@ -218,7 +220,7 @@ def rest_until(arguments: dict[str, Any], duty: Duty, now: float) -> float:
     if "minutes" in arguments:
         minutes = float(arguments["minutes"])
         return min(longest, now + 60 * minutes) if math.isfinite(minutes) else longest
-    return longest
+    return None
 
 
 def check(duty: Duty) -> Duty:
