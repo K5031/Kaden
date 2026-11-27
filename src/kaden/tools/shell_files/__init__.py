@@ -278,6 +278,7 @@ def factory(options: dict[str, Any], paths: InstancePaths) -> ShellFilesTools:
 
 
 factory.display_name = "Shell, files and web"  # type: ignore[attr-defined]
+factory.work_folder_option = "root"  # type: ignore[attr-defined]
 factory.user_config = (  # type: ignore[attr-defined]
     ToolSetting("bilibili_wake", "Woken by Bilibili messages", "choice", "follows",
                 "Whose messages start a turn. The rest wait unread.",

@@ -90,6 +90,18 @@ def load_entry(kind: str, module_id: str, target: str) -> Installed | None:
                      getattr(factory, "kind", TERMINAL) if kind == "frontend" else None)
 
 
+def work_folder_option(target: str) -> str | None:
+    """The option a Tools factory takes its work folder in (its work_folder_option), or
+    None for one without a work folder or that does not load. Blocks (imports it)."""
+    try:
+        factory: Any = pkgutil.resolve_name(target)
+    except Exception:
+        logger.info("tools %s do not load", target, exc_info=True)
+        return None
+    option = getattr(factory, "work_folder_option", None)
+    return option if isinstance(option, str) and option else None
+
+
 def declared_settings(target: str) -> tuple[ToolSetting, ...]:
     """The settings a Tools factory declares (its user_config); none if it declares none,
     declares them wrongly, or does not load (building it says why). Blocks (imports it)."""

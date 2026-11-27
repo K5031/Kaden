@@ -906,7 +906,7 @@ was used.
   frontend never writes what a module reads directly.
 
 ### P7 (C) Cores and the runtime each read the keychain
-- **Status:** Open.
+- **Status:** Resolved: `api.read_key` (the environment, then the keychain) is the one reader; `core/_common.stored_key`, `runtime/settings.read_key` and `read_secret` are gone.
 - **Where:** `api.KEYCHAIN_SERVICE` ("Cores read their key from the environment first, then
   from here"); `core/_common.stored_key`; `runtime/settings.read_secret` and
   `get_stored_key`.
@@ -924,7 +924,7 @@ was used.
 ## 16. Found in the code review of 2026-11-26
 
 ### P8 (S) The launcher knows the built-in Tools' work-folder option by name
-- **Status:** Open.
+- **Status:** Resolved: a Tools factory names the option with `work_folder_option` (the built-in's is `root`); the launcher reads it through the factory.
 - **Where:** `src/kaden/__main__.py` `load_config` (`running["tools"] == "shell-files"`,
   `"root"`); `ModuleState.work_folder`; `Settings.work_folder`.
 - **Problem:** The launcher gives the Tools module the current directory as its `root`

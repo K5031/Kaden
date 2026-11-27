@@ -151,8 +151,12 @@ environment, the module is listed in the settings:
 dice = "my_package.dice:factory"
 ```
 
-`factory.display_name` is shown instead of the id. A module is a program that runs with
-the user's permissions, so say plainly what yours does.
+`factory.display_name` is shown instead of the id. A Tools factory may also set
+`factory.user_config` (settings the user sees on Settings → Tools, a list of
+`ToolSetting`) and `factory.work_folder_option` (the name of the option it takes its work
+folder in: Kaden fills it with the folder it was started in, or the one the user chose).
+A module is a program that runs with the user's permissions, so say plainly what yours
+does.
 
 ## Checking it
 

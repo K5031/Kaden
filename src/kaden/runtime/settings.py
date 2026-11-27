@@ -13,7 +13,7 @@ import keyring
 import keyring.errors
 import tomli_w
 
-from kaden.api import KEYCHAIN_SERVICE, Budget, PermissionRule, SettingsUpdate
+from kaden.api import KEYCHAIN_SERVICE, Budget, PermissionRule, SettingsUpdate, read_key
 
 SETTINGS_FILE = "settings.toml"
 BUDGET_INTS = ("max_tokens", "max_tool_calls")  # limits counted in whole things
@@ -62,32 +62,12 @@ def _limits(budget: Budget) -> dict[str, Any]:
     return limits
 
 
-def read_key(name: str) -> str | None:
-    """The key from the environment, else the keychain; None if neither has it. Blocks:
-    call it off the event loop."""
-    if value := os.environ.get(name):
-        return value
-    try:
-        return keyring.get_password(KEYCHAIN_SERVICE, name)
-    except keyring.errors.KeyringError:
-        return None
-
-
-def read_secret(name: str) -> str | None:
-    """A keychain entry only (no environment variable has such a name); None without
-    one. Blocks: get_stored_key reads it off the event loop."""
-    try:
-        return keyring.get_password(KEYCHAIN_SERVICE, name)
-    except keyring.errors.KeyringError:
-        return None
-
-
 async def has_key(name: str | None) -> bool:
     return name is not None and await asyncio.to_thread(read_key, name) is not None
 
 
 async def get_stored_key(name: str) -> str | None:
-    return await asyncio.to_thread(read_secret, name)
+    return await asyncio.to_thread(read_key, name)
 
 
 async def store_key(name: str, value: str | None) -> None:

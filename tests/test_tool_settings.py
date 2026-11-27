@@ -105,3 +105,21 @@ def test_they_cross_the_headless_channel_as_they_are():
     back = from_json(json.loads(json.dumps(to_json(setting))), ToolSetting)
     assert back == setting
     assert Settings.__dataclass_fields__["tool_settings"]
+
+
+def test_a_tools_module_names_its_own_work_folder_option(tmp_path, monkeypatch):
+    """The launcher gives the work folder to the option the factory declares, not to the
+    built-in module's `root` by name."""
+    data = tmp_path / "data"
+    data.mkdir()
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.chdir(tmp_path)
+    (data / "config.toml").write_text(tomli_w.dumps({"tools": {
+        "factory": "tests.fakes.tools:in_a_folder"}}))
+    config = launcher.load_config(launcher.parse_args(["--data-dir", str(data)]))
+    assert config.tools.options["folder"] == str(tmp_path)  # where Kaden was started
+    assert config.runtime.modules.work_folder == str(tmp_path)
+    (data / "settings.toml").write_text(tomli_w.dumps({"work_folder": str(work)}))
+    config = launcher.load_config(launcher.parse_args(["--data-dir", str(data)]))
+    assert config.tools.options == {"folder": str(work)}

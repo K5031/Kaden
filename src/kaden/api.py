@@ -100,6 +100,21 @@ PERMISSION_CEILING_ENV = "KADEN_PERMISSION_CEILING"
 KEYCHAIN_SERVICE = "kaden"
 
 
+def read_key(name: str) -> str | None:
+    """A key from the environment variable `name`, else from the OS keychain's entry
+    `name` under KEYCHAIN_SERVICE; None when neither has it or there is no keychain.
+    Blocks (the keychain): call it off the event loop, or at construction."""
+    if value := os.environ.get(name):
+        return value
+    import keyring
+    import keyring.errors
+
+    try:
+        return keyring.get_password(KEYCHAIN_SERVICE, name)
+    except keyring.errors.KeyringError:
+        return None
+
+
 @dataclass(frozen=True, slots=True)
 class InstancePaths:
     """Passed to every module factory: factory(options: dict, paths: InstancePaths)."""
@@ -1640,7 +1655,8 @@ class ModuleInfo:
     """An installed module: an entry point in the group kaden.cores, kaden.memories,
     kaden.tools or kaden.frontends whose package imports cleanly. The entry point's name
     is the id, its target the factory. A factory may carry display_name; a Core factory
-    key_name, a Frontend factory kind, a Tools factory user_config (ToolSetting)."""
+    key_name, a Frontend factory kind, a Tools factory user_config (ToolSetting) and
+    work_folder_option (the option it takes its work folder in)."""
 
     id: str  # e.g. "anthropic"
     name: str  # for display, e.g. "Claude"; the id without display_name

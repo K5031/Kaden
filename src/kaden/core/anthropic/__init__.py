@@ -45,6 +45,7 @@ from kaden.api import (
     UsageReport,
     attached_at,
     attachment_text,
+    read_key,
 )
 from kaden.core._common import (
     ERROR_STATUSES,
@@ -59,7 +60,6 @@ from kaden.core._common import (
     result_text,
     server_tool_text,
     status_error,
-    stored_key,
     transport_error,
 )
 
@@ -177,7 +177,7 @@ class AnthropicCore(Core):
     ) -> None:
         if client is None and not (api_key or os.environ.get("ANTHROPIC_API_KEY")
                                    or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
-            api_key = stored_key("ANTHROPIC_API_KEY")
+            api_key = read_key("ANTHROPIC_API_KEY")
             if not api_key:
                 raise ValueError("ANTHROPIC_API_KEY is not set")
         client = client or anthropic.AsyncAnthropic(api_key=api_key, base_url=base_url)

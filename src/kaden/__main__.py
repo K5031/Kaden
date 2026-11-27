@@ -29,7 +29,7 @@ from typing import Any
 
 import tomli_w
 
-from kaden.api import MODULE_KINDS, Budget, McpServer, PermissionPolicy, PermissionRule
+from kaden.api import MODULE_KINDS, Budget, McpServer, PermissionPolicy, PermissionRule, read_key
 from kaden.runtime import (
     InstanceConfig,
     ModuleLoadError,
@@ -51,13 +51,13 @@ from kaden.runtime.modules import (
     mcp_key,
     targets,
     tool_values,
+    work_folder_option,
 )
 from kaden.runtime.settings import (
     BUDGET_INTS,
     BUDGET_NUMBERS,
     SETTINGS_FILE,
     bad_limit,
-    read_secret,
 )
 
 DEFAULT_DATA_DIR = Path("~/.kaden")
@@ -362,10 +362,12 @@ def load_config(args: Launch, *, launcher: str = WINDOW,
                                                                    launcher)
 
     tools = modules["tools"]
-    if running["tools"] == "shell-files" and "root" not in tools.options:
-        tools = ModuleSpec(tools.factory, {**tools.options, "root": str(Path.cwd())})
-    if "work_folder" in saved and "root" in tools.options:
-        tools = ModuleSpec(tools.factory, {**tools.options, "root": saved["work_folder"]})
+    # The work folder: the option the Tools factory names (work_folder_option), the
+    # folder Kaden was started in until the user chooses another.
+    folder_option = work_folder_option(tools.factory)
+    if folder_option is not None:
+        folder = saved.get("work_folder") or tools.options.get(folder_option) or str(Path.cwd())
+        tools = ModuleSpec(tools.factory, {**tools.options, folder_option: folder})
     saved.pop("work_folder", None)
     declared = declared_settings(tools.factory)
     values = tool_values(declared, saved.pop("tool_settings"))
@@ -389,7 +391,8 @@ def load_config(args: Launch, *, launcher: str = WINDOW,
     if start is not None:
         frontend = modules["frontend"]
         modules["frontend"] = ModuleSpec(frontend.factory, {**frontend.options, **start})
-    state = ModuleState(running=running, chosen=chosen, work_folder=tools.options.get("root"),
+    state = ModuleState(running=running, chosen=chosen, work_folder=(tools.options.get(folder_option)
+                                     if folder_option is not None else None),
                         mcp_servers=servers, tool_settings=declared, tool_values=values)
     return InstanceConfig(
         runtime=RuntimeConfig(data_dir=data_dir, modules=state, **runtime),
@@ -402,7 +405,7 @@ def load_config(args: Launch, *, launcher: str = WINDOW,
 def mcp_options(server: McpServer) -> dict[str, Any]:
     """A server as the MCP Tools module takes it, its variables read from the keychain."""
     target = {"command": server.command} if server.command else {"url": server.url}
-    env = {v: value for v in server.env if (value := read_secret(mcp_key(server.name, v)))}
+    env = {v: value for v in server.env if (value := read_key(mcp_key(server.name, v)))}
     return {"name": server.name, **target, "env": env}
 
 

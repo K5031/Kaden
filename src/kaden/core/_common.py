@@ -10,12 +10,8 @@ from dataclasses import dataclass, field, fields, replace
 from email.utils import parsedate_to_datetime
 from typing import Any
 
-import keyring
-import keyring.errors
-
 from kaden.api import (
     JSON,
-    KEYCHAIN_SERVICE,
     Block,
     ContextOverflowError,
     CoreError,
@@ -81,15 +77,6 @@ def configured(info: ModelInfo, config: ModelConfig | None) -> ModelInfo:
 
 def request_options(options: Mapping[str, Any], config: ModelConfig | None) -> JSON:
     return {**options, **(config.options if config else {})}
-
-
-def stored_key(name: str) -> str | None:
-    """The key saved in the OS keychain under KEYCHAIN_SERVICE, or None. Blocks briefly:
-    Cores call it only at construction."""
-    try:
-        return keyring.get_password(KEYCHAIN_SERVICE, name)
-    except keyring.errors.KeyringError:
-        return None
 
 
 def retry_after(headers: Mapping[str, str] | None) -> float | None:

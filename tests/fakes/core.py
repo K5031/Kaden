@@ -31,9 +31,9 @@ from kaden.api import (
     ToolSpec,
     Usage,
     UsageReport,
+    read_key,
 )
 from kaden.runtime.orchestrator import RECALL_SYSTEM
-from kaden.runtime.settings import read_key
 
 DEFAULT_MODELS = (
     ModelInfo(

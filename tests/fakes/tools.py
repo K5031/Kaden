@@ -199,3 +199,11 @@ configurable.user_config = (  # type: ignore[attr-defined]
     ToolSetting("greet", "Greet new followers", "boolean", False),
     ToolSetting("signature", "Signature", "string", "", description="Added to each message"),
 )
+
+
+def in_a_folder(options: dict[str, Any], paths: Any) -> FakeTools:
+    """A Tools module with a work folder, named by its own option."""
+    return factory(options, paths)
+
+
+in_a_folder.work_folder_option = "folder"  # type: ignore[attr-defined]

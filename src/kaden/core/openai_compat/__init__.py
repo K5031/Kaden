@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -44,6 +43,7 @@ from kaden.api import (
     UsageReport,
     attached_at,
     attachment_text,
+    read_key,
 )
 from kaden.core._common import (
     ModelConfig,
@@ -57,7 +57,6 @@ from kaden.core._common import (
     result_text,
     server_tool_text,
     status_error,
-    stored_key,
     transport_error,
 )
 
@@ -219,7 +218,7 @@ class OpenAICompatCore(Core):
 
 
 def _client(profile: Profile, api_key: str | None, base_url: str | None) -> openai.AsyncOpenAI:
-    api_key = api_key or os.environ.get(profile.api_key_env) or stored_key(profile.api_key_env)
+    api_key = api_key or read_key(profile.api_key_env)
     if not api_key and profile.api_key_required:
         raise ValueError(f"set {profile.api_key_env} or the api_key option")
     # Local servers usually need no key, but the SDK insists on one.
