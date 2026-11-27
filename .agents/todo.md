@@ -21,6 +21,12 @@ Agent Note (`notes/proposed/`) and leaves this list.
   messages to the user, forced topic switches, drives and injected random memories (they
   steer what it thinks). Maybe: an ability to give one thought to the main model when it
   seems worth it.
+- **Finding and installing tools** (2026-11-27), as Claude Desktop's directory of
+  extensions and connectors: a Browse on Settings → Tool servers listing MCP servers (from
+  the official MCP Registry, not a catalogue of Kaden's own), what each does and who
+  published it; one-click install (asking for its keys, kept in the keychain as today) and
+  remove. Open, for an Agent Note first: what "certified" means, since a server runs with
+  the user's permissions (verified publishers only, or a short list Kaden vouches for).
 - **macOS, the rest** (2026-11-25). Done: file tools, the Seatbelt sandbox, screenshots,
   a macOS test job. Left: at window startup, reading the saved voice name on a worker
   thread never returns on the Mac job (`test_the_zoom_and_theme_are_written_once_when_the_
