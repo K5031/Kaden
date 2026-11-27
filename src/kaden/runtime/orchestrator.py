@@ -163,8 +163,9 @@ _RUNNING = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_P
 _DESCRIPTION_SCHEMA = {
     "type": "string",
     "description": "What this step does, in a few plain words the user understands without "
-                   "knowing the tool, e.g. \"Search the web for flights to Oslo\". The user "
-                   "sees this instead of the tool and its input.",
+                   "knowing the tool, e.g. \"Read your trip notes\". The user sees this "
+                   "instead of the tool and its input. Leave it out of tools that do not "
+                   "list it, such as a provider's own web search: they refuse the call.",
 }
 REVIEW_HISTORY = 200  # newest messages searched for the user's words in a permission review
 USAGE_FILE = "usage.json"

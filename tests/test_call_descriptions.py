@@ -31,6 +31,17 @@ async def test_every_offered_tool_takes_a_description(make: Any) -> None:
     assert h.tools.specs["read"].parameters == STRICT  # the module's own spec is untouched
 
 
+async def test_the_description_keeps_off_tools_that_do_not_list_it(make: Any) -> None:
+    """A provider's own tools (Anthropic's web_search) refuse an argument they do not
+    declare, so the description says so, and its example is not a web search."""
+    h = await harness(make)
+    await h.start()
+    [spec] = [s for s in await h.runtime.list_tools() if s.name == "read"]
+    text = spec.parameters["properties"][DESCRIPTION_ARG]["description"]
+    assert "web" not in text.split("Leave")[0].lower()
+    assert "do not list" in text and "web search" in text
+
+
 async def test_the_tool_never_sees_the_description(make: Any) -> None:
     h = await harness(make, Step(calls=[call("read", {"path": "a.txt",
                                                       DESCRIPTION_ARG: "Read your notes"},

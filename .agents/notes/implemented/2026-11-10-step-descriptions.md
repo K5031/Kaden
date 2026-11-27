@@ -13,7 +13,10 @@ prompt they cannot read gets clicked away. Claude Code shows a short line per st
 - The runtime adds an optional argument, `api.DESCRIPTION_ARG` (`"step_summary"`), to the
   schema of every tool it offers, built-ins included: "What this step does, in a few plain
   words the user understands without knowing the tool". The module's own spec is not
-  changed.
+  changed. The description also tells the model to leave it out of tools that do not
+  list it: a provider's own tools (Anthropic's `web_search`) refuse an argument they do
+  not declare (`invalid_tool_input`), and a model used to adding it everywhere adds it
+  there too. Its example is therefore not a web search.
 - Before the Tools module sees a call (`confined`, `execute`) the runtime removes it
   (`Runtime._bare`). Events, snapshots and the transcript keep it, so frontends show it
   live and in history. The name is one no tool needs: frontends cannot tell an added
