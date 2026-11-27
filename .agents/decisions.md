@@ -685,7 +685,7 @@ Design: [Agent Note](notes/implemented/2026-11-10-module-provided-tools.md).
 | Confined | Never: AUTO reviews each call, stricter levels ask |
 | Environment | The SDK's safe default (HOME, LOGNAME, PATH, SHELL, USER), the server's own variables, and `PERMISSION_CEILING_ENV` |
 | Close | `aclose` stops every server, waits 5 s, cancels the rest and waits for them to end |
-| Start | At the first `list_tools` (the first request), all servers at once, 30 s to start and list; one that fails is left out and logged |
+| Start | At the first `list_tools` (as a conversation opens: in the background, or before the conversation is open when it has watches), all servers at once, 30 s to start and list; every listing meanwhile waits for that one start, which a cancelled listing does not end; one that fails is left out and logged |
 | Settings | `[[mcp_servers]]` in settings.toml: name, command or url, env as variable names; values in the keychain as `mcp/<server>/<NAME>`; removed variables are erased from it |
 | Apply | Like modules: at the next start (Restart now), as one more Tools module after the configured one |
 | Names | 1 to 32 of letters, digits, `-` and `_`, unique |

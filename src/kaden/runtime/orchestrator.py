@@ -111,6 +111,7 @@ from kaden.api import (
     ToolSpec,
     ToolStarted,
     ToolStatus,
+    ToolTitles,
     TransientCoreError,
     Usage,
     UsageReport,
@@ -156,6 +157,13 @@ from kaden.runtime.review import (
 from kaden.runtime.settings import runtime_changes
 
 logger = logging.getLogger(__name__)
+
+
+def _log_listing_failure(task: asyncio.Task[Any]) -> None:
+    """The background listing's error, which nothing awaits (module errors are reported
+    within it, as Failure events)."""
+    if not task.cancelled() and (error := task.exception()) is not None:
+        logger.error("Listing the tools failed", exc_info=error)
 
 _RUNNING = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION,
             AgentState.FINISHING)
@@ -447,6 +455,8 @@ class Runtime:
         self._fired: list[_Firing] = []
         self._confirms: dict[str, _Firing] = {}
         self._keeping: asyncio.Task[None] | None = None
+        self._listing: asyncio.Task[Any] | None = None  # the tools listed as a conversation opens
+        self._listing_lock = asyncio.Lock()
         self._watch_writing = asyncio.Lock()
         self._watch_saves: set[asyncio.Task[None]] = set()
         # Whether the agent was last told the user talks to it; None: not looked up yet.
@@ -469,6 +479,7 @@ class Runtime:
         self._plan_call: CallId | None = None
         self._skill_problems: list[str] = []
         self._tool_owner: dict[str, Tools] = {}  # the Tools module that offered each name
+        self._titles: dict[str, str] = {}  # the offered tools' titles (ToolSpec.title)
         self._wake_set: set[CallId] | None = None
         self._immediate_wake = False
         self._unseen = False
@@ -519,6 +530,7 @@ class Runtime:
             help_needed=self._help,
             plan_mode=self._plan_mode,
             prompts=tuple(o.prompt for o in self._open.values()),
+            tool_titles=dict(self._titles),
         )
 
     async def list_models(self) -> Sequence[ModelInfo]:
@@ -1260,7 +1272,13 @@ class Runtime:
     async def _offered_tools(self) -> dict[str, ToolSpec]:
         """The runtime's built-ins, then Memory's tools, then the Core's (its provider runs
         them), then each Tools module's; a name offered already is dropped from the later
-        module."""
+        module. One listing at a time: a later one waits for the one under way (the
+        listing as a conversation opens, while tool servers start) and lists again, so it
+        sees what that one found and is the one whose tables stay."""
+        async with self._listing_lock:
+            return await self._list_tools()
+
+    async def _list_tools(self) -> dict[str, ToolSpec]:
         specs = dict(BUILTIN_TOOLS)
         conversation = self._conversation
         if conversation is not None:
@@ -1296,6 +1314,10 @@ class Runtime:
                 elif module is not self._core:
                     owners[spec.name] = module
         self._memory_tools, self._tool_owner = memory_tools, owners
+        titles = {spec.name: spec.title for spec in specs.values() if spec.title}
+        if titles != self._titles:
+            self._titles = titles
+            self._emit(ToolTitles(dict(titles)))
         deferrable = [s for s in specs.values() if s.deferrable and not s.deferred]
         searchable = [s for s in specs.values() if s.deferred]  # always, however few
         if sum(len(json.dumps(_definition(s))) for s in deferrable) > DEFER_OVER_CHARS:
@@ -2251,9 +2273,9 @@ class Runtime:
         """Stop the tasks, not the watches: they start again when the conversation is.
         Waits for them (a call that outlasts the grace period is left) and for the
         watches' writes."""
-        tasks = [*self._watch_tasks.values(), *filter(None, [self._keeping])]
+        tasks = [*self._watch_tasks.values(), *filter(None, [self._keeping, self._listing])]
         self._watch_tasks.clear()
-        self._keeping = None
+        self._keeping = self._listing = None
         for task in tasks:
             task.cancel()
         if tasks:
@@ -2274,6 +2296,11 @@ class Runtime:
             await self._offered_tools()  # which module runs each
             for watch in self._watch_list():
                 self._run_watch(watch)
+        else:
+            # The tools' titles for the history shown (ToolTitles), without waiting for
+            # the tool servers to start.
+            self._listing = asyncio.create_task(self._offered_tools())
+            self._listing.add_done_callback(_log_listing_failure)
         await self._keep_standing()
 
     def _keep_standing_soon(self) -> None:
@@ -2436,7 +2463,7 @@ class Runtime:
         reply = await self._reply(Prompt(
             _new_id(), PromptKind.PERMISSION,
             description if isinstance(description, str) and description else call.name,
-            call, {"read_only": spec.read_only, "confined": confined,
+            call, {"read_only": spec.read_only, "confined": confined, "title": spec.title,
                    "reason": reason, "always": [str(r) for r in always],
                    "never": [str(r) for r in never]}))
         if reply is _NO_ANSWER:
@@ -2533,10 +2560,11 @@ class Runtime:
             return f"{proposed.name!r} {what}. Propose a call of an action tool."
         if error := self._validate(proposed, self._specs):
             return f"The proposed call: {error}"
-        decided = self._open_prompt(Prompt(call.id, PromptKind.PROPOSAL, reason, proposed,
-                                           {"reason": reason, "card": card}))
-        self._proposal_ops.add(call.id)
         spec = self._specs[proposed.name]
+        decided = self._open_prompt(Prompt(call.id, PromptKind.PROPOSAL, reason, proposed,
+                                           {"reason": reason, "card": card,
+                                            "title": spec.title}))
+        self._proposal_ops.add(call.id)
         # Waiting for the user is not activity (the duration budget), as a prompt is not.
         self._uncounted.add(call.id)
         op = self._launch(call, replace(BUILTIN_TOOLS["propose"], timeout=math.inf),

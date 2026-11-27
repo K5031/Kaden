@@ -35,6 +35,7 @@ from kaden.api import (
     ToolFinished,
     ToolProgress,
     ToolStarted,
+    ToolTitles,
     UsageUpdated,
 )
 from kaden.frontends.wire import COMMANDS, from_json, result_hint, to_json
@@ -264,6 +265,8 @@ def _applied(snap: RuntimeSnapshot, envelope: EventEnvelope) -> RuntimeSnapshot:
             return replace(snap, help_needed=question)
         case PlanModeChanged(on=on):
             return replace(snap, plan_mode=on)
+        case ToolTitles(titles=titles):
+            return replace(snap, tool_titles=titles)
         case ToolStarted(call=call):
             return replace(snap, operations=(*snap.operations, OperationInfo(call, 0.0)))
         case ToolProgress(call_id=call_id, text=text):

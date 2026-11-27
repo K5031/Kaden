@@ -46,6 +46,7 @@ from kaden.api import (
     ToolResult,
     ToolStarted,
     ToolStatus,
+    ToolTitles,
     TransientCoreError,
     Usage,
     UsageSnapshot,
@@ -806,17 +807,27 @@ def test_a_tools_title_names_a_step_without_a_description():
 
 
 async def test_steps_learn_tool_titles_from_the_runtime(make):
-    """Titles come from RuntimeAPI.list_tools: for a tool first seen in an event (a tool
-    server that started later), and for history loaded at the start."""
+    """Titles come with the runtime's ToolTitles and snapshot, for a tool first offered
+    after the view loaded and for history shown before any request. The view never lists
+    the tools itself: that would make the runtime list them again mid-turn."""
     from dataclasses import replace
 
     h: Harness = await make(permissions=PermissionPolicy.ALLOW_WORKSPACE)
-    spec = h.tools.instant("mcp__notes__add", "3")
-    h.tools.specs[spec.name] = replace(spec, title="Add numbers")
-    h.tools.confined_names = {spec.name}
-    h.core.add(Step(calls=[call(spec.name, {"a": 1}, id="a")]), Step(text="3."))
+    listed: list[None] = []
+    real = h.runtime.list_tools
+
+    async def counted() -> Any:
+        listed.append(None)
+        return await real()
+
+    h.runtime.list_tools = counted  # type: ignore[method-assign]
+    h.core.add(Step(calls=[call("mcp__notes__add", {"a": 1}, id="a")]), Step(text="3."))
     await h.start()
     model, controller, _ = await attach(h)
+    spec = h.tools.instant("mcp__notes__add", "3")  # a tool server that started since
+    h.tools.specs[spec.name] = replace(spec, title="Add numbers")
+    h.tools.confined_names = {spec.name}
+    assert spec.name not in model.titles
     controller.send("add")
     await eventually(lambda: of(model, ToolItem) and not model.busy)
     [step] = of(model, ToolItem)
@@ -824,6 +835,32 @@ async def test_steps_learn_tool_titles_from_the_runtime(make):
     later, _, _ = await attach(h)  # the history, as a window opened now shows it
     await eventually(lambda: of(later, ToolItem))
     assert [s.summary for s in of(later, ToolItem)] == ["Added numbers"]
+    assert listed == []
+
+
+def test_history_is_named_by_the_snapshots_titles():
+    """A window opened before any request: the runtime listed the tools as the
+    conversation opened (RuntimeSnapshot.tool_titles)."""
+    from dataclasses import replace
+
+    model = ConversationModel()
+    called = Message("m", Role.ASSISTANT, (ToolCall("a", "mcp__notes__add", {"a": 1}),), 1.0)
+    model.load(replace(_snapshot(), tool_titles={"mcp__notes__add": "Add numbers"}), [called])
+    assert [s.summary for s in of(model, ToolItem)] == ["Add numbers"]
+
+
+def test_a_title_learned_later_renames_the_steps_shown():
+    model = ConversationModel()
+    seen: list[object] = []
+    model.on_change = seen.append
+    model.apply(ToolStarted(ToolCall("a", "mcp__notes__add", {"a": 1})))
+    [step] = of(model, ToolItem)
+    assert step.summary == "Notes: add"
+    model.apply(ToolTitles({"mcp__notes__add": "Add numbers"}))
+    assert step.summary == "Add numbers"
+    assert any(getattr(c, "item", None) is step for c in seen)  # redrawn
+    model.apply(ToolTitles({}))  # the server is gone: so is its title
+    assert step.summary == "Notes: add"
 
 
 async def test_a_tool_the_provider_ran_is_a_finished_step(make):

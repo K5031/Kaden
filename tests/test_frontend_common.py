@@ -285,14 +285,17 @@ def test_a_step_in_progress_is_shown_as_it_is_being_done():
 
 
 def test_a_tools_title_stands_in_for_its_name_in_prompts():
+    """A prompt carries its tool's title in its details (the runtime puts it there)."""
+    from dataclasses import replace
+
     from kaden.api import Prompt, PromptKind, ToolCall
     from kaden.frontends.common import prompt_summary, proposal_parts, tool_sentence
 
-    titles = {"mcp__notes__add": "Add numbers"}
     add = ToolCall("c", "mcp__notes__add", {"a": 1, "b": 2})
     assert tool_sentence(add.name, add.arguments, "Add numbers") == "Add numbers"
     assert tool_sentence(add.name, add.arguments) == "Notes: add"
-    asking = Prompt("p", PromptKind.PERMISSION, add.name, add, {})
-    assert prompt_summary(asking, titles).startswith("Add numbers")
-    proposed = Prompt("q", PromptKind.PROPOSAL, add.name, add, {})
-    assert proposal_parts(proposed, titles)[0] == "Kaden proposes: Add numbers"
+    asking = Prompt("p", PromptKind.PERMISSION, add.name, add, {"title": "Add numbers"})
+    assert prompt_summary(asking).startswith("Add numbers")
+    proposed = Prompt("q", PromptKind.PROPOSAL, add.name, add, {"title": "Add numbers"})
+    assert proposal_parts(proposed)[0] == "Kaden proposes: Add numbers"
+    assert proposal_parts(replace(proposed, details={}))[0] == "Kaden proposes: Notes: add"

@@ -95,23 +95,24 @@ class McpTools(Tools):
 
     def __init__(self, servers: Mapping[str, Any]) -> None:
         self._servers = [_Server(name, target) for name, target in servers.items()]
-        self._started = False
+        self._startup: asyncio.Task[None] | None = None
+        self._closed = False
         self._owner: dict[str, _Server] = {}
 
     async def list_tools(self) -> Sequence[ToolSpec]:
-        if not self._started:
-            self._started = True
-            for server in self._servers:
-                server.task = asyncio.create_task(self._serve(server))
-            waiters = [asyncio.create_task(s.ready.wait()) for s in self._servers]
-            if waiters:
-                _, late = await asyncio.wait(waiters, timeout=CONNECT_TIMEOUT)
-                for waiter in late:
-                    waiter.cancel()
-            for server in self._servers:
-                if not server.ready.is_set():
-                    logger.warning("MCP server %s did not start in %ss", server.name,
-                                   CONNECT_TIMEOUT)
+        if self._closed:
+            return []
+        # One start for every listing, however many wait on it at once; a listing that
+        # is cancelled does not end it.
+        if self._startup is None:
+            self._startup = asyncio.create_task(self._start())
+        try:
+            await asyncio.shield(self._startup)
+        except asyncio.CancelledError:
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                raise  # this listing was cancelled
+            # else aclose() ended the start: what the servers have
         specs = []
         for server in self._servers:
             for name, spec in server.tools.items():
@@ -128,7 +129,25 @@ class McpTools(Tools):
         result = await server.client.call_tool(server.originals[call.name], call.arguments)
         return ToolOutput(_text(result), is_error=bool(result.is_error))
 
+    async def _start(self) -> None:
+        """Every server at once, then up to CONNECT_TIMEOUT for them to list their tools."""
+        for server in self._servers:
+            server.task = asyncio.create_task(self._serve(server))
+        waiters = [asyncio.create_task(s.ready.wait()) for s in self._servers]
+        if waiters:
+            _, late = await asyncio.wait(waiters, timeout=CONNECT_TIMEOUT)
+            for waiter in late:
+                waiter.cancel()
+        for server in self._servers:
+            if not server.ready.is_set():
+                logger.warning("MCP server %s did not start in %ss", server.name,
+                               CONNECT_TIMEOUT)
+
     async def aclose(self) -> None:
+        self._closed = True
+        if self._startup is not None and not self._startup.done():
+            self._startup.cancel()
+            await asyncio.gather(self._startup, return_exceptions=True)
         for server in self._servers:
             server.stop.set()
         tasks = [s.task for s in self._servers if s.task is not None]

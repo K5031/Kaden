@@ -50,10 +50,11 @@ Runtime guarantees to modules:
   start; violations are answered with ToolResult(ERROR) and the tool is not run. A
   known name is one offered in this turn's request: the runtime's built-ins, then Memory's
   tools, then the Core's (which its provider runs), then each Tools module's in configured
-  order (several may run at once), each listed once per request. A name already offered
+  order (several may run at once), each listed once per request, and once more as a
+  conversation opens (for the tools' titles, ToolTitles). A name already offered
   (a reserved one included) is dropped from the later module's offer and logged; each
   call goes to the module that offered its name. If a list_tools fails,
-  Failure(INTERNAL) is emitted and the turn offers the others only.
+  Failure(INTERNAL) is emitted and the turn (or that listing) offers the others only.
 - Every module call is wrapped: an exception becomes a Failure event (an ERROR
   ToolResult for a tool), never a crash. An unexpected exception from Core.stream is
   treated as a permanent CoreError. A failed maintain is Failure(MODEL) for CoreError
@@ -822,7 +823,7 @@ class Memory(abc.ABC):
     # conversation. After a tool that is not read_only, the runtime emits MemoriesChanged.
 
     async def list_tools(self) -> Sequence[ToolSpec]:
-        """Called once per request, like Tools.list_tools."""
+        """Called once per request and as a conversation opens, like Tools.list_tools."""
         return ()
 
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput:
@@ -1236,7 +1237,7 @@ class Tools(abc.ABC):
 
     @abc.abstractmethod
     async def list_tools(self) -> Sequence[ToolSpec]:
-        """Called each cycle, so the set may change."""
+        """Called each cycle, and as a conversation opens, so the set may change."""
 
     @abc.abstractmethod
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutput: ...
@@ -1608,12 +1609,14 @@ class UsageSnapshot:
 class PromptKind(StrEnum):
     """What a prompt asks of the person, and the shape of their reply (RuntimeAPI.respond)."""
 
-    PERMISSION = "permission"  # reply: a Decision; details: read_only, confined, reason
+    PERMISSION = "permission"  # reply: a Decision; details: read_only, confined, reason,
+    #                            title (the tool's ToolSpec.title, or None)
     QUESTION = "question"  # reply: {question: answer}; details: questions (AskUserQuestion's)
     PLAN = "plan"  # reply: {approve: bool, feedback?: str, permissions?: a PermissionPolicy};
     #                details: plan (markdown)
     PROPOSAL = "proposal"  # reply: true to run the call, false to dismiss it; details:
-    #                        reason, card (an option of the wrap_up call `id`, shown on it)
+    #                        reason, card (an option of the wrap_up call `id`, shown on it),
+    #                        title (the tool's ToolSpec.title, or None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1797,6 +1800,10 @@ class RuntimeSnapshot:
     prompts: Sequence[Prompt] = ()  # what waits on the person (PromptOpened)
     help_needed: str | None = None  # see HelpNeeded
     plan_mode: bool = False  # see PlanModeChanged
+    # The offered tools' titles by name (ToolSpec.title), from the latest listing: what
+    # frontends name a step without a sentence by. ToolTitles says when they change; a
+    # permission or proposal prompt's details carry its tool's as "title".
+    tool_titles: Mapping[str, str] = field(default_factory=dict)
 
 
 # Runtime events. TextDelta / ReasoningDelta / ToolCallDelta are reused from Core's stream.
@@ -1944,6 +1951,15 @@ class PromptClosed:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolTitles:
+    """The offered tools' titles changed (RuntimeSnapshot.tool_titles): a listing found a
+    tool server's tools, at a request or soon after a conversation opened (a server may
+    take a while to start)."""
+
+    titles: Mapping[str, str]
+
+
+@dataclass(frozen=True, slots=True)
 class PlanModeChanged:
     """Plan mode turned on or off for the open conversation (set_plan_mode, EnterPlanMode,
     an approved plan). In it only read-only calls and PLAN_MODE_TOOLS run; the others are
@@ -2020,6 +2036,7 @@ type RuntimeEvent = (
     | ToolProgress
     | ToolBackgrounded
     | ToolFinished
+    | ToolTitles
     | ModelRetry
     | ModelSelected
     | SettingsChanged

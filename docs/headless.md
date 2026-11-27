@@ -64,6 +64,11 @@ under `"type"`, such as `MessageCommitted`, `StateChanged`, `PromptOpened`,
 `HelpNeeded` and `DutyScheduled`. A jump in `seq` means events were dropped: take a
 `snapshot`, ignore events up to its `seq`, and read `history`.
 
+**Naming a step.** A tool call with a `step_summary` argument names itself (Bash and the
+Bilibili tools ask for one). For another, the tool's name for people is in the snapshot's
+`tool_titles` (by tool name), and `ToolTitles` carries all of them whenever they change,
+such as when a tool server starts; most tools have none.
+
 **States.** `StateChanged` carries `not_started`, `idle`, `thinking`, `running_tools`,
 `awaiting_permission`, `finishing`, `stopping`, `stopped` or `failed`. The agent is at
 work from `thinking` until it is `idle` again; in `finishing` its answer is complete and
@@ -82,10 +87,10 @@ with `reply` null, when it ended unanswered). The snapshot lists the open ones a
 
 | `kind` | `details` | `reply` |
 |---|---|---|
-| `permission` | `read_only`, `confined`, `reason` | `allow_once`, `allow_conversation`, `allow_always`, `deny` or `deny_always` |
+| `permission` | `read_only`, `confined`, `reason`, `title` (the tool's name for people, or null) | `allow_once`, `allow_conversation`, `allow_always`, `deny` or `deny_always` |
 | `question` | `questions` (AskUserQuestion's) | `{question: answer}`, the labels chosen (several joined with ", ") or your own words |
 | `plan` | `plan` (markdown) | `{"approve": true}`, optionally with `"permissions"` (a level to set first), or `{"approve": false, "feedback": "…"}` |
-| `proposal` | `reason`, `card` | `true` runs the call, `false` dismisses it |
+| `proposal` | `reason`, `card`, `title` (or null) | `true` runs the call, `false` dismisses it |
 
 A prompt with `words: true` (a question, a plan) is also answered by `send`: your
 message answers it in your own words and follows it in the conversation. A kind you do not

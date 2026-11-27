@@ -107,10 +107,9 @@ def notice_of(message: Message | MessageQueued) -> str | None:
     return "".join(b.text for b in message.blocks if isinstance(b, Text)).strip()
 
 
-def proposal_parts(proposal: Prompt,
-                   titles: Mapping[str, str] = {}) -> tuple[str, str]:
+def proposal_parts(proposal: Prompt) -> tuple[str, str]:
     """A PROPOSAL prompt for its card: the headline ("Kaden proposes: …") and the call's
-    other arguments. `titles`: the tools' titles by name (ToolSpec.title)."""
+    other arguments."""
     call = proposal.call
     if call is None:
         return f"Kaden proposes: {proposal.text}", ""
@@ -119,7 +118,8 @@ def proposal_parts(proposal: Prompt,
         headline = headline or (
             f"Start a subagent: {call.arguments.get('description') or call.arguments.get('prompt')}")
         detail = ""
-    headline = headline or tool_sentence(call.name, call.arguments, titles.get(call.name))
+    headline = headline or tool_sentence(call.name, call.arguments,
+                                         proposal.details.get("title"))
     return f"Kaden proposes: {headline}", detail
 
 
@@ -293,15 +293,14 @@ def tool_sentence(name: str, arguments: Mapping[str, Any] | None,
     return f"Use {name}"
 
 
-def prompt_summary(prompt: Prompt, titles: Mapping[str, str] = {}) -> str:
+def prompt_summary(prompt: Prompt) -> str:
     """What a waiting prompt asks, in one line, for a notification: a call as its card
-    names it, with its one argument where it has one (a command). `titles`: the tools'
-    titles by name (ToolSpec.title)."""
+    names it, with its one argument where it has one (a command)."""
     if prompt.call is None:
         return (prompt.text.strip().splitlines() or [""])[0][:120]
     headline, detail = call_parts(prompt.call.arguments)
     headline = headline or tool_sentence(prompt.call.name, prompt.call.arguments,
-                                         titles.get(prompt.call.name))
+                                         prompt.details.get("title"))
     if detail and "\n" not in detail:
         return f"{headline}: {detail[:80]}"
     return headline

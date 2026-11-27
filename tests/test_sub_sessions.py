@@ -639,6 +639,30 @@ async def test_a_blank_reply_is_no_step_and_later_listeners_still_hear(tmp_path)
     await sessions.aclose()
 
 
+async def test_a_step_without_a_sentence_reads_as_the_desktop_shows_it(tmp_path):
+    """A call with no step_summary is its tool's phrase or title (common.tool_sentence,
+    ToolTitles), not its bare name."""
+    import time
+
+    from kaden.api import EventEnvelope, Message, MessageCommitted, Role, ToolCall, ToolTitles
+    from kaden.frontends.sessions import SubSession
+
+    sessions = SubSessions(tmp_path)
+    child = SubSession("1", "Task", "conv", tmp_path / "c", state="working")
+    sessions.sessions.append(child)
+    sessions._event(child, EventEnvelope(0, ToolTitles({"mcp__notes__add": "Add numbers"})))
+    steps = []
+    for n, made in enumerate((ToolCall("r", "Read", {"file_path": "/a/notes.md"}),
+                              ToolCall("m", "mcp__notes__add", {"a": 1}),
+                              ToolCall("b", "Bash", {"command": "ls",
+                                                     "step_summary": "List the files"}))):
+        message = Message(f"m{n}", Role.ASSISTANT, (made,), time.time())
+        sessions._event(child, EventEnvelope(n + 1, MessageCommitted(message)))
+        steps.append(child.step)
+    assert steps == ["Read notes.md", "Add numbers", "List the files"]
+    await sessions.aclose()
+
+
 async def test_a_listener_that_fails_does_not_keep_the_others_from_hearing():
     import json
 
@@ -742,3 +766,24 @@ async def test_its_settings_are_written_whole_and_a_broken_one_is_refused(tmp_pa
     [child] = sessions.sessions
     assert result.is_error and child.state == "failed"
     await sessions.aclose()
+
+
+def test_a_sub_sessions_snapshot_follows_its_tool_titles():
+    """RemoteRuntime keeps the snapshot it took at attach() current from the events: a view
+    opened later names the child's steps by the titles its listing found since."""
+    from kaden.api import (
+        AgentState,
+        EventEnvelope,
+        RuntimeSnapshot,
+        ToolTitles,
+        Usage,
+        UsageSnapshot,
+    )
+    from kaden.frontends.remote import _applied
+
+    taken = RuntimeSnapshot(seq=0, state=AgentState.IDLE, conversation=None, config=None,
+                            model=None, usage=UsageSnapshot(Usage(), 0, 0.0), operations=(),
+                            queued_messages=())
+    snap = _applied(taken,
+                    EventEnvelope(1, ToolTitles({"mcp__notes__add": "Add numbers"})))
+    assert snap.tool_titles == {"mcp__notes__add": "Add numbers"} and snap.seq == 1

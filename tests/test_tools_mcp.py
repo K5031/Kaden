@@ -39,6 +39,45 @@ async def test_a_tools_title_is_the_servers_own(tools):
     assert specs["mcp__notes__broken"].title is None
 
 
+async def test_every_listing_waits_for_the_servers_to_start():
+    """The runtime may list while an earlier listing still waits for the servers (one
+    made as a conversation opens): each gets the servers' tools, even if the first is
+    cancelled meanwhile."""
+    import asyncio
+
+    module = McpTools({"notes": build()})
+    try:
+        first = asyncio.create_task(module.list_tools())
+        await asyncio.sleep(0)
+        second = asyncio.create_task(module.list_tools())
+        await asyncio.sleep(0)
+        first.cancel()
+        names = {s.name for s in await second}
+        assert "mcp__notes__add" in names
+    finally:
+        await module.aclose()
+
+
+async def test_a_listing_while_closing_returns():
+    """Closing during the servers' start ends it; a listing waiting on it, or made after,
+    returns what there is rather than raising a cancellation nobody asked for."""
+    import asyncio
+
+    module = McpTools({"notes": build()})
+    waiting = asyncio.create_task(module.list_tools())
+    await asyncio.sleep(0)
+    await module.aclose()
+    assert isinstance(await waiting, list)
+    assert await module.list_tools() == []
+
+
+async def test_a_listing_after_closing_starts_no_server():
+    module = McpTools({"notes": build()})
+    await module.aclose()
+    assert await module.list_tools() == []
+    assert all(server.task is None for server in module._servers)
+
+
 async def test_a_servers_read_only_hint_is_not_taken_on_trust(tools):
     """`add` says it is read-only; the server is a program of its own, so its calls are
     reviewed or asked about all the same."""

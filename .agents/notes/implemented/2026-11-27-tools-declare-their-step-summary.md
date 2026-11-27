@@ -40,11 +40,16 @@ Claude Code): a tool's schema is what its author wrote.
   the tool (its own `title`, else its annotations'), so a step reads "Add numbers" rather
   than "Notes: add". Without one, a tool server's tool shows "Server: tool name", any
   other "Use <name>".
-- The desktop learns the titles from `RuntimeAPI.list_tools`: when it loads a
-  conversation, and again when an event names a tool it has not seen listed (a tool
-  server that started since). Steps, permission and proposal cards and notifications use
-  them; steps already shown are renamed when a title arrives. A notification from
-  Continuous has its titles only while its view is open.
+- The runtime keeps the titles from the listing it makes for each request, and lists
+  once more as a conversation opens: in the background, since a tool server may take up
+  to its connect timeout to start (a conversation with watches lists before it opens, to
+  know which module runs each). Listings run one at a time, so a request made
+  meanwhile waits for that one and lists again; the MCP module starts its servers once,
+  for every listing that waits on it. When the titles change it emits `ToolTitles`; the snapshot
+  has them (`RuntimeSnapshot.tool_titles`), and a permission or proposal prompt carries
+  its tool's as `"title"` in its details. The desktop names steps by them, renaming those
+  already shown when they change; cards and notifications use the prompt's own; a
+  sub-session's row and its cached snapshot (`RemoteRuntime`) follow `ToolTitles` too.
 - Permission rules, the permission review, hooks and watches judge a call without the
   sentence (`Runtime._bare`): it says nothing about what the call does, and could make it
   look harmless.
@@ -70,6 +75,10 @@ Claude Code): a tool's schema is what its author wrote.
 - **The maintenance model writes the sentence from the call.** Works for every tool with
   no schema change, but adds cost and latency to every call, and describes what a call
   touches rather than why.
+- **Frontends list the tools for their titles** (`RuntimeAPI.list_tools`) when they see
+  a tool they do not know. No new event, but a listing reloads skills, asks every module
+  again and replaces the runtime's tool tables, and the frontend's event pump waited on
+  it mid-turn.
 - **Claude Code's name, `description`.** Familiar from Claude Code, but frontends would
   show other tools' own `description` arguments as the step's sentence.
 

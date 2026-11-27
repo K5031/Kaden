@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import datetime
 import json
-import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -79,6 +78,7 @@ from kaden.api import (
     ToolResult,
     ToolStarted,
     ToolStatus,
+    ToolTitles,
     UsageSnapshot,
     UsageUpdated,
 )
@@ -102,8 +102,6 @@ from kaden.frontends.common import (
     tool_sentence,
 )
 from kaden.frontends.sessions import SubSessions
-
-logger = logging.getLogger(__name__)
 
 HISTORY_PAGE = 100
 MAX_ARGS_CHARS = 120
@@ -417,6 +415,8 @@ class ConversationModel:
         caller subscribed first and drops envelopes at or below snapshot.seq)."""
         self.items.clear()
         self._plan = None
+        self.titles.clear()
+        self.titles.update(snapshot.tool_titles)
         self.prompts = {prompt.id: prompt for prompt in snapshot.prompts}
         self.plan_mode = snapshot.plan_mode
         self.card = None
@@ -516,6 +516,8 @@ class ConversationModel:
                     self.on_change(Updated(item))
             case ToolFinished(result=result, duration_s=duration):
                 self._finish(result, duration)
+            case ToolTitles(titles=titles):
+                self.learn_titles(titles)
             case PromptOpened(prompt=prompt):
                 self.prompts[prompt.id] = prompt
                 self.on_change(PromptsChanged())
@@ -657,16 +659,17 @@ class ConversationModel:
         return call.id not in self._cards
 
     def learn_titles(self, titles: Mapping[str, str]) -> None:
-        """Tools' titles (ToolSpec.title), for the steps shown and to come."""
-        new = {name: title for name, title in titles.items() if self.titles.get(name) != title}
-        if not new:
+        """The tools' titles (ToolSpec.title), all of them, for the steps shown and to
+        come; steps whose title changed are redrawn."""
+        changed = {name for name in {*self.titles, *titles}
+                   if self.titles.get(name) != titles.get(name)}
+        if not changed:
             return
-        self.titles.update(new)
+        self.titles.clear()  # in place: the steps share it
+        self.titles.update(titles)
         for item in self._tools.values():
-            if item.name in new:
+            if item.name in changed:
                 self.on_change(Updated(item))
-        if any(p.call is not None and p.call.name in new for p in self.prompts.values()):
-            self.on_change(PromptsChanged())
 
     def _add_tool(self, call: ToolCall, *, streaming: bool = False) -> ToolItem:
         arguments = "" if streaming else json.dumps(call.arguments, ensure_ascii=False)
@@ -1007,18 +1010,6 @@ def user_message(error: Exception) -> str:
     return text
 
 
-def _tool_name(event: object) -> str | None:
-    """The tool an event is about, if any: a call arriving, starting, or asking."""
-    match event:
-        case ToolCallDelta(name=name):
-            return name
-        case ToolStarted(call=call):
-            return call.name
-        case PromptOpened(prompt=prompt) if prompt.call is not None:
-            return prompt.call.name
-    return None
-
-
 class Controller:
     """Runs the event pump for one ConversationModel and issues runtime commands."""
 
@@ -1030,7 +1021,6 @@ class Controller:
             asyncio.Queue())
         self._tasks: set[asyncio.Task[Any]] = set()
         self._switching = asyncio.Lock()  # conversation switches, one after another
-        self._listed: set[str] = set()  # tools whose titles were looked up
         self._wanted: StartOptions | None = None  # the newest switch asked for
         self.folder_picked = False  # the open chat is in a folder the user chose for it
         # A new chat here works nowhere until the user picks it a folder (the window's own
@@ -1061,7 +1051,6 @@ class Controller:
                     if item.seq <= self.model.last_seq:
                         continue
                 self.model.last_seq = item.seq
-                await self._learn_titles(item.event)
                 self.model.apply(item.event)
                 for listener in self.listeners:
                     listener(item.event)
@@ -1082,23 +1071,7 @@ class Controller:
         finally:
             await self._inbox.put(None)
 
-    async def _learn_titles(self, event: object = None) -> None:
-        """The tools' titles, from the runtime: at the start, and again for a tool not
-        listed then (one a tool server offers since)."""
-        if event is not None and ((name := _tool_name(event)) is None or name in self._listed):
-            return
-        if event is not None:
-            self._listed.add(name)  # asked once, whether or not it has a title
-        try:
-            specs = await self.runtime.list_tools()
-        except Exception:  # steps keep their other names
-            logger.warning("Could not list the tools for their titles", exc_info=True)
-            return
-        self._listed |= {spec.name for spec in specs}
-        self.model.learn_titles({spec.name: spec.title for spec in specs if spec.title})
-
     async def recover(self) -> None:
-        await self._learn_titles()
         snapshot = self.runtime.snapshot()
         history = (await self.runtime.history(snapshot.conversation.id, limit=HISTORY_PAGE)
                    if snapshot.conversation else ())

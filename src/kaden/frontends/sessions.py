@@ -58,10 +58,12 @@ from kaden.api import (
     ToolProgress,
     Tools,
     ToolSpec,
+    ToolTitles,
     UsageUpdated,
 )
 from kaden.frontends import child, worktrees
 from kaden.frontends.child import STOP_GRACE_S
+from kaden.frontends.common import tool_sentence
 from kaden.frontends.remote import Channel, RemoteRuntime
 from kaden.frontends.worktrees import GitError, Worktree
 
@@ -146,6 +148,7 @@ class SubSession:
     worktree: Worktree | None = None  # with isolation "worktree"
     step: str | None = field(default=None, compare=False)  # what it is doing now
     messages: list[Message] = field(default_factory=list, compare=False)
+    titles: dict[str, str] = field(default_factory=dict, compare=False)  # its tools'
     returncode: int | None = field(default=None, compare=False)
     awaited: int = field(default=0, compare=False)  # parent calls waiting on it
     # Its manager's RuntimeAPI for it while its process runs: how it is now is read there.
@@ -544,13 +547,17 @@ class SubSessions(Tools):
         if isinstance(envelope.event, _QUIET):
             return  # streaming: nothing a list shows
         match envelope.event:
+            case ToolTitles(titles=titles):
+                session.titles = dict(titles)
             case MessageCommitted(message=message):
                 session.messages.append(message)
                 for block in message.blocks:
                     if isinstance(block, ToolCall):
                         if block.name == "finish_goal":
                             session.report = block.arguments.get("report")
-                        session.step = block.arguments.get(DESCRIPTION_ARG) or block.name
+                        session.step = (block.arguments.get(DESCRIPTION_ARG)
+                                        or tool_sentence(block.name, block.arguments,
+                                                         session.titles.get(block.name)))
                     elif isinstance(block, Text) and message.role == Role.ASSISTANT:
                         lines = block.text.strip().splitlines()
                         session.step = lines[0][:120] if lines else None
