@@ -69,6 +69,14 @@ Each module is a folder named after it in the folder for its kind (`src/kaden/<k
 ## Code style
 Professional, typed, concise. Comments only where needed to understand the code.
 
+## Committing
+Before every commit, a fresh subagent reviews the diff to be committed, staged and
+unstaged (`/code-review`, or an agent given the diff alone, not your conclusions), for
+bugs, redundant or dead code, patches that work around a problem instead of fixing it,
+and breaks of the rules above. Fix what it finds that holds up, rerun `uv run pytest` and
+`uv run ruff check`, then commit. In your summary, name findings you did
+not fix and why.
+
 ## Commands
 - `uv run pytest`
 - `uv run ruff check`
