@@ -34,6 +34,11 @@ Agent Note (`notes/proposed/`) and leaves this list.
   process groups and the data folder lock work as they are. Packages: Briefcase's `.dmg`,
   built on GitHub's Mac runners, signed and notarized (an Apple Developer account,
   US$99 a year). No GPU voice (NVIDIA only).
+- **Homebrew** (2026-11-27), after macOS works on a real Mac: `brew install
+  k5031/kaden/kaden` from a tap of the user's own (`K5031/homebrew-kaden`). First publish
+  to PyPI (the name `kaden` is free), then a formula built from it with its Python
+  dependencies listed (generated, updated each release). A cask for a `.dmg` later, once
+  one is signed (the Apple Developer account is put off by the user's choice).
 - **Windows** (2026-11-25), after macOS. Bigger: no POSIX shell (Git Bash, as Claude Code
   requires there), and stopping commands, the folder lock (`fcntl`), the sandbox (nothing
   like bubblewrap), screenshots and paths all need Windows versions. Packages: Briefcase's
