@@ -1261,3 +1261,14 @@ proposals never hold a conversation and are left alone.
 | The rest | Kept in the runtime only (`Runtime._rest_until`), not in the conversation: a restart wakes the life as before. Any cycle ends it, whatever started the cycle; `next_wake` takes the earlier of the rest's end and a step that falls due before it, never sooner than `min_interval_s` |
 | The prompt | `duty.prompt` names Rest beside a plan step's due time, as ways it can rest |
 | The notice | A life's scheduled check-in says `<span> passed; it is HH:MM.` (local time), the span since its last cycle ended (`duty.span`). After a restart, with no last cycle in this process, it is "Time has passed." |
+
+## After the review (2026-11-27)
+
+| Choice | Decision |
+|---|---|
+| The unused `format` column | Dropped from `messages`; the archive is schema 4 (`SqliteArchive.SCHEMA_VERSION`), the built-in Memory 11. A store of the earlier schema is refused, as the rule says. The user's two stores (theirs and Continuous's) were moved once by a script that is not part of Kaden (`ALTER TABLE messages DROP COLUMN format`, `PRAGMA user_version = 4`), each backed up beside itself as `*.schema3.bak` first |
+| One keychain reader | `api.read_key(name)`: the environment, then the keychain, None without either; Cores and the runtime both use it (contract issue P7) |
+| The work folder option | A Tools factory names it with `work_folder_option` (the built-in: `root`); the launcher fills it with the saved work folder, else the option from `config.toml`, else the folder Kaden started in (P8) |
+| A life's home by a relative path | `always_ask` also leaves out the work folder's path below the data folder's parent (`.kaden/life/home/…`), as whole path segments and not climbing out; not its bare name below the data folder, which `/home/<user>` would also match |
+| Flaky tests | `test_a_subagents_changes_stay_in_its_worktree` and one desktop window test failed only while four other sessions ran test suites on the same machine; neither failed in six full runs here, at 8 and 16 workers. Left as they are until a failure can be read |
+

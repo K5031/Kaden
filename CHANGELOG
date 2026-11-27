@@ -27,6 +27,18 @@ Arch. Kaden is now licensed under the AGPL, version 3 or later.
   while a conversation is going. Whose messages wake it is a setting.
 - **Tool settings:** a Tools module can offer settings, on a Tools page in Settings.
 - **Backups** of your chats and Continuous, once a day.
+- **Continuous rests and waits sensibly:** it can rest until a time or until something
+  wakes it, a check-in says how long it rested, and a question it asks you closes after
+  three minutes without an answer, so it never freezes while you are away.
+- **macOS:** the file tools, a Seatbelt sandbox for commands and screenshots work on a Mac
+  (tested on GitHub's Mac runners); install from source there for now.
+- **Sandbox:** on Linux, local sockets under `/run` (Docker, the system bus) are out of a
+  sandboxed command's reach. Screenshots use the desktop's screenshot portal.
+- **Fixes from a review of the whole codebase,** among them: recall read the right
+  project's notes; switching conversations no longer carries a waiting message along;
+  clearing every budget limit lasts; Edit keeps a file's CRLF line endings; renaming a
+  note onto another's title is refused; a step's arguments read as text.
+- Memory stores of earlier builds are not read (one unused column is gone).
 - Attachments reach the agent as files, and a look closer to Claude's.
 
 ## 0.0.0
