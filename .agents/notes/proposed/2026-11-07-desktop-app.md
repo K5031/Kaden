@@ -193,8 +193,8 @@ indigo accent; everything else is neutral gray. Light and dark follow the system
 scheme and switch while the app runs. Your messages are accent bubbles on the right;
 Kaden's replies are plain text beside an avatar, which stays readable when long. The
 message box is rounded with the send button inside it, and the status line sits under it
-instead of in a status bar. The view model stays free of Qt; only `window.py` and `theme.py`
-know about the look.
+instead of in a status bar. The view model stays free of Qt; only the widget modules (`window.py` and those beside
+it) and `theme.py` know about the look.
 
 ### Scope
 

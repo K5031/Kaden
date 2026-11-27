@@ -68,7 +68,10 @@ src/kaden/frontends/                 Frontends; common.py is what every frontend
                                       sessions.py the sub-sessions a frontend hosts, worktrees.py
                                       their git worktrees, life.py Continuous, child.py how
                                       both children are started
-  desktop/                            desktop app: viewmodel.py (no Qt), window.py, voice/ (speech), assets
+  desktop/                            desktop app: viewmodel.py (no Qt); window.py (MainWindow)
+                                      and the widgets beside it: widgets.py (shared), sidebar.py,
+                                      conversation.py, messages.py, prompts.py, composer.py,
+                                      frame.py, dialogs.py, settings.py; voice/ (speech), assets
 src/kaden/skills/                    the skills Kaden comes with (runtime/skills.py loads them)
 src/kaden/window.py                  the window launcher
 src/kaden_desktop/                   the module a Briefcase bundle runs

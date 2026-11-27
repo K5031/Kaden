@@ -132,8 +132,9 @@ async def test_withdrawing_and_stop_remove_the_card(make):
 async def test_the_desktop_shows_a_card_that_approves(make):
     from PySide6.QtWidgets import QLabel, QPushButton
 
+    from kaden.frontends.desktop.prompts import ProposalCard
     from kaden.frontends.desktop.viewmodel import Controller, ConversationModel
-    from kaden.frontends.desktop.window import MainWindow, ProposalCard
+    from kaden.frontends.desktop.window import MainWindow
 
     h = await harness(make, [
         Step(calls=[call("propose", {"call": WRITE, "reason": "They are messy"}, id="p")]),

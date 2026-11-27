@@ -134,8 +134,9 @@ async def test_writing_instead_withdraws_the_option_before_the_message(make):
 async def test_the_desktop_shows_the_card_and_sends_a_reply(make):
     from PySide6.QtWidgets import QLabel, QPushButton, QToolButton
 
+    from kaden.frontends.desktop.messages import WrapUpCard
     from kaden.frontends.desktop.viewmodel import Controller, ConversationModel
-    from kaden.frontends.desktop.window import MainWindow, WrapUpCard
+    from kaden.frontends.desktop.window import MainWindow
 
     h = await harness(make, [
         Step(text="Committed.", calls=[call("wrap_up", WRAP, id="w")]),
@@ -164,8 +165,10 @@ async def test_the_desktop_shows_the_card_and_sends_a_reply(make):
 async def test_the_desktop_runs_the_option_with_a_call(make):
     from PySide6.QtWidgets import QPushButton
 
+    from kaden.frontends.desktop.messages import WrapUpCard
+    from kaden.frontends.desktop.prompts import ProposalCard
     from kaden.frontends.desktop.viewmodel import Controller, ConversationModel
-    from kaden.frontends.desktop.window import MainWindow, ProposalCard, WrapUpCard
+    from kaden.frontends.desktop.window import MainWindow
 
     h = await harness(make, [
         Step(text="Committed.", calls=[call("wrap_up", ACTION, id="w")]),
@@ -191,8 +194,9 @@ async def test_the_desktop_runs_the_option_with_a_call(make):
 async def test_closing_the_card_puts_it_away(make):
     from PySide6.QtWidgets import QToolButton
 
+    from kaden.frontends.desktop.messages import WrapUpCard
     from kaden.frontends.desktop.viewmodel import Controller, ConversationModel
-    from kaden.frontends.desktop.window import MainWindow, WrapUpCard
+    from kaden.frontends.desktop.window import MainWindow
 
     h = await harness(make, [Step(text="Committed.", calls=[call("wrap_up", WRAP, id="w")])])
     await h.turn("commit it")
@@ -259,8 +263,9 @@ def test_a_closed_card_stays_closed_when_the_history_is_reloaded():
 async def test_options_are_told_apart_by_position_not_label(make):
     from PySide6.QtWidgets import QPushButton
 
+    from kaden.frontends.desktop.messages import WrapUpCard
     from kaden.frontends.desktop.viewmodel import Controller, ConversationModel
-    from kaden.frontends.desktop.window import MainWindow, WrapUpCard
+    from kaden.frontends.desktop.window import MainWindow
 
     same = {**WRAP, "options": [{"label": "Yes", "call": PUSH}, {"label": "Yes"}]}
     h = await harness(make, [

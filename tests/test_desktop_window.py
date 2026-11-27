@@ -37,26 +37,22 @@ from kaden.api import (
     ToolStatus,
 )
 from kaden.frontends.desktop import app_menu, theme
+from kaden.frontends.desktop import composer as composer_module
+from kaden.frontends.desktop import messages as messages_module
 from kaden.frontends.desktop import window as window_module
+from kaden.frontends.desktop.dialogs import WelcomeDialog
+from kaden.frontends.desktop.messages import AssistantBubble, StepGroup, ToolCard, UserBubble
+from kaden.frontends.desktop.prompts import PermissionCard
+from kaden.frontends.desktop.settings import LifeSettingsDialog, SettingsDialog
 from kaden.frontends.desktop.viewmodel import (
     AssistantItem,
     Controller,
     ConversationModel,
     NoticeItem,
+    Updated,
 )
-from kaden.frontends.desktop.window import (
-    DATE_ROLE,
-    PREVIEW_ROLE,
-    AssistantBubble,
-    LifeSettingsDialog,
-    MainWindow,
-    PermissionCard,
-    SettingsDialog,
-    StepGroup,
-    ToolCard,
-    UserBubble,
-    WelcomeDialog,
-)
+from kaden.frontends.desktop.widgets import DATE_ROLE, PREVIEW_ROLE
+from kaden.frontends.desktop.window import MainWindow
 from kaden.runtime import ModuleState
 from kaden.runtime.config import RuntimeConfig
 from kaden.runtime.setup import SetupRuntime
@@ -456,7 +452,7 @@ async def test_continue_in_a_new_conversation(make, qapp):
 
 async def test_memory_dialog_add_edit_delete_notes(make, qapp):
     from kaden.api import PROFILE
-    from kaden.frontends.desktop.window import NoteDialog
+    from kaden.frontends.desktop.dialogs import NoteDialog
 
     h: Harness = await make()
     await h.start()
@@ -581,7 +577,7 @@ async def test_a_reply_with_nothing_to_show_is_not_drawn(make, qapp):
     empty, reply = widgets(window, AssistantBubble)
     assert empty.isHidden() and not reply.isHidden()
     empty.item.reasoning = "Let me think"
-    model.on_change(window_module.Updated(empty.item))
+    model.on_change(Updated(empty.item))
     await asyncio.sleep(0)
     assert not empty.isHidden()
     lone = AssistantBubble(AssistantItem())
@@ -905,7 +901,7 @@ async def test_a_burst_of_changes_is_laid_out_once(make, qapp, monkeypatch):
 
 
 async def test_tool_servers_are_added_edited_and_removed(make, qapp, keychain):
-    from kaden.frontends.desktop.window import McpDialog, ServerDialog
+    from kaden.frontends.desktop.settings import McpDialog, ServerDialog
 
     h: Harness = await make(modules=ModuleState(running=RUNNING, work_folder="/start"))
     await h.start()
@@ -944,7 +940,7 @@ async def test_tool_servers_are_added_edited_and_removed(make, qapp, keychain):
 
 async def test_a_server_list_read_before_a_save_does_not_replace_it(make, qapp, keychain):
     from kaden.api import McpServer
-    from kaden.frontends.desktop.window import McpDialog
+    from kaden.frontends.desktop.settings import McpDialog
 
     h: Harness = await make(modules=ModuleState(running=RUNNING, work_folder="/start"))
     await h.start()
@@ -970,7 +966,7 @@ async def test_a_server_list_read_before_a_save_does_not_replace_it(make, qapp, 
 
 async def test_a_memory_update_after_an_answer_is_shown_with_a_link(make, qapp):
     from kaden.api import Completion
-    from kaden.frontends.desktop.window import NoticeLine
+    from kaden.frontends.desktop.messages import NoticeLine
 
     h: Harness = await make()
 
@@ -998,7 +994,7 @@ async def test_a_memory_update_after_an_answer_is_shown_with_a_link(make, qapp):
 
 async def test_the_duty_dialog_turns_a_duty_on_and_off(make, qapp):
     from kaden.api import Duty, DutyKind, PlanStatus
-    from kaden.frontends.desktop.window import DutyDialog
+    from kaden.frontends.desktop.dialogs import DutyDialog
 
     h: Harness = await make(budget=Budget(max_cost_usd=5))
     h.core.add(Step(text="on it"))
@@ -1028,7 +1024,7 @@ async def test_the_duty_dialog_turns_a_duty_on_and_off(make, qapp):
 
 
 async def test_the_duty_dialog_shows_why_it_cannot_save(make, qapp):
-    from kaden.frontends.desktop.window import DutyDialog
+    from kaden.frontends.desktop.dialogs import DutyDialog
 
     h: Harness = await make()
     await h.start()
@@ -1050,7 +1046,7 @@ async def test_the_duty_dialog_shows_why_it_cannot_save(make, qapp):
 
 async def test_a_sub_session_sits_under_its_conversation_and_opens_in_place(
         make, qapp, tmp_path, child_env):
-    from kaden.frontends.desktop.window import KIND_ROLE
+    from kaden.frontends.desktop.widgets import KIND_ROLE
     from tests.test_sub_sessions import finish, parent
 
     h, sessions = await parent(make, tmp_path, [
@@ -1097,7 +1093,7 @@ async def test_the_windows_own_conversation_is_heard_while_a_sub_session_shows(
         make, qapp, tmp_path, child_env):
     """What is the window's (the list of conversations, whether a new chat can start)
     follows its own conversation, whatever the conversation area shows."""
-    from kaden.frontends.desktop.window import KIND_ROLE
+    from kaden.frontends.desktop.widgets import KIND_ROLE
     from tests.test_sub_sessions import finish, parent
 
     h, sessions = await parent(make, tmp_path, [
@@ -1170,7 +1166,7 @@ async def test_clicks_in_a_row_open_the_last_one_and_not_each(make, qapp, tmp_pa
 
 
 async def test_projects_group_the_sidebar_and_fold(make, qapp, tmp_path):
-    from kaden.frontends.desktop.window import KIND_ROLE
+    from kaden.frontends.desktop.widgets import KIND_ROLE
 
     h: Harness = await make()
     await h.start()
@@ -1192,7 +1188,7 @@ async def test_projects_group_the_sidebar_and_fold(make, qapp, tmp_path):
 
 
 async def test_child_rows_have_a_menu(make, qapp, tmp_path, child_env):
-    from kaden.frontends.desktop.window import KIND_ROLE
+    from kaden.frontends.desktop.widgets import KIND_ROLE
     from tests.test_sub_sessions import finish, parent
 
     h, sessions = await parent(make, tmp_path, [
@@ -1238,7 +1234,7 @@ async def test_a_notice_from_a_child_wakes_the_open_conversation(make, qapp, tmp
 
 
 def test_long_call_details_are_clipped_until_shown(qapp):
-    from kaden.frontends.desktop.window import Detail
+    from kaden.frontends.desktop.widgets import Detail
 
     brief = "\n".join(f"Line {n} of a long sub-session brief." for n in range(12))
     detail = Detail(brief)
@@ -1282,7 +1278,8 @@ async def test_settings_set_the_limit_per_sub_session(make, qapp, tmp_path):
 
 
 async def test_a_long_notice_is_folded(make, qapp):
-    from kaden.frontends.desktop.window import Detail, NoticeLine
+    from kaden.frontends.desktop.messages import NoticeLine
+    from kaden.frontends.desktop.widgets import Detail
 
     h: Harness = await make()
     await h.start()
@@ -1319,7 +1316,7 @@ async def test_the_menus_live_behind_two_buttons_and_their_shortcuts_still_work(
 
 
 async def test_the_window_has_rounded_corners_and_a_shadow_unless_maximized(make, qapp):
-    from kaden.frontends.desktop.window import RoundedCorners
+    from kaden.frontends.desktop.frame import RoundedCorners
 
     h: Harness = await make()
     await h.start()
@@ -1350,7 +1347,7 @@ async def test_the_window_has_rounded_corners_and_a_shadow_unless_maximized(make
 async def test_the_window_draws_its_own_title_bar(make, qapp):
     from PySide6.QtCore import QPoint
 
-    from kaden.frontends.desktop.window import DragArea
+    from kaden.frontends.desktop.frame import DragArea
 
     h: Harness = await make()
     await h.start()
@@ -1578,7 +1575,7 @@ async def test_leaving_a_sub_session_for_its_parent_never_shows_the_old_chat(
     """Open chat A, a sub-session of chat B, then B: A must not light up on the way."""
     from PySide6.QtWidgets import QListWidgetItem
 
-    from kaden.frontends.desktop.window import KIND_ROLE
+    from kaden.frontends.desktop.widgets import KIND_ROLE
     from tests.test_sub_sessions import finish, parent
 
     h, sessions = await parent(make, tmp_path, [
@@ -1824,8 +1821,8 @@ async def test_the_folder_a_new_chat_starts_with_can_be_chosen_as_it_is(make, qa
 
 async def test_the_checklist_is_part_of_the_conversation(make, qapp):
     """It sits under the newest message while the agent works and is gone when it stops."""
+    from kaden.frontends.desktop.messages import PlanCard
     from kaden.frontends.desktop.viewmodel import ChecklistItem, Phase, ToolItem
-    from kaden.frontends.desktop.window import PlanCard
 
     h: Harness = await make()
     plan = [{"content": "Read the code", "activeForm": "Read the code", "status": "in_progress"}, {"status": "pending", "content": "Fix the bug", "activeForm": "Fix the bug"}]
@@ -2050,7 +2047,7 @@ async def test_add_files_picks_files_to_go_with_the_message(make, qapp, tmp_path
 
 
 async def test_the_agents_questions_are_answered_from_a_card(make, qapp):
-    from kaden.frontends.desktop.window import QuestionCard
+    from kaden.frontends.desktop.prompts import QuestionCard
 
     questions = [
         {"question": "Which database?", "header": "Database", "multiSelect": False,
@@ -2094,7 +2091,7 @@ async def test_plan_mode_is_turned_on_from_the_permission_picker(make, qapp):
 
 
 async def test_the_agents_plan_is_approved_from_a_card(make, qapp):
-    from kaden.frontends.desktop.window import PlanApprovalCard
+    from kaden.frontends.desktop.prompts import PlanApprovalCard
 
     h: Harness = await make(permissions=PermissionPolicy.ASK)
     h.core.add(Step(calls=[call("ExitPlanMode", {"plan": "1. Add the column"}, id="x")]),
@@ -2114,7 +2111,7 @@ async def test_the_agents_plan_is_approved_from_a_card(make, qapp):
 
 
 async def test_a_plan_sent_back_from_its_card_keeps_plan_mode(make, qapp):
-    from kaden.frontends.desktop.window import PlanApprovalCard
+    from kaden.frontends.desktop.prompts import PlanApprovalCard
 
     h: Harness = await make()
     h.core.add(Step(calls=[call("ExitPlanMode", {"plan": "1. Add the column"}, id="x")]),
@@ -2175,7 +2172,7 @@ async def test_zooming_rescales_the_sidebar_with_the_text(make, qapp, unzoomed):
 
 def test_a_prompt_of_a_kind_the_app_does_not_know_is_answered_in_words(qapp):
     from kaden.api import Prompt
-    from kaden.frontends.desktop.window import AnyPromptCard
+    from kaden.frontends.desktop.prompts import AnyPromptCard
 
     replies: list[tuple[str, Any]] = []
     card = AnyPromptCard(Prompt("p1", "survey", "How did it go?"),
@@ -2263,7 +2260,7 @@ async def test_a_voice_is_added_from_a_recording_in_settings(make, qapp, tmp_pat
 
 def test_the_hint_in_the_message_box_starts_after_the_cursor(qapp):
     """The blinking cursor does not cover the first letter of "Message Kaden"."""
-    box = window_module.MessageBox()
+    box = composer_module.MessageBox()
     box.setPlaceholderText("Message Kaden")
     assert box.placeholderText() == "Message Kaden"
     box.resize(300, 40)
@@ -2588,8 +2585,8 @@ def test_a_broken_picture_is_left_out_and_a_wide_one_fits(qapp):
     from PySide6.QtGui import QColor, QImage
 
     from kaden.api import Image
+    from kaden.frontends.desktop.messages import PICTURE_HEIGHT, PICTURE_WIDTH
     from kaden.frontends.desktop.viewmodel import ToolItem
-    from kaden.frontends.desktop.window import PICTURE_HEIGHT, PICTURE_WIDTH
 
     wide = QImage(3000, 200, QImage.Format.Format_RGB32)
     wide.fill(QColor("white"))
@@ -2614,7 +2611,7 @@ async def test_a_folded_run_of_steps_still_shows_their_pictures(make, qapp):
     from PySide6.QtGui import QColor, QImage
 
     from kaden.api import Image, ToolOutput, ToolSpec
-    from kaden.frontends.desktop.window import StepGroup
+    from kaden.frontends.desktop.messages import StepGroup
 
     picture = QImage(40, 30, QImage.Format.Format_RGB32)
     picture.fill(QColor("black"))
@@ -2905,7 +2902,7 @@ def _fragments(bubble: AssistantBubble) -> list[Any]:
 
 
 def test_a_spinner_turns_only_while_it_shows(qapp):
-    from kaden.frontends.desktop.window import Spinner
+    from kaden.frontends.desktop.widgets import Spinner
 
     spinner = Spinner()
     assert not spinner._timer.isActive()
@@ -2931,13 +2928,13 @@ async def test_pictures_pasted_at_once_are_each_kept(make, qapp):
 
 def test_a_streaming_reply_renders_each_finished_part_once(qapp, monkeypatch):
     rendered: list[str] = []
-    original = window_module.MarkdownView.setMarkdown
+    original = messages_module.MarkdownView.setMarkdown
 
     def counting(self: Any, markdown: str) -> None:
         rendered.append(markdown)
         original(self, markdown)
 
-    monkeypatch.setattr(window_module.MarkdownView, "setMarkdown", counting)
+    monkeypatch.setattr(messages_module.MarkdownView, "setMarkdown", counting)
     item = AssistantItem(text="")
     bubble = AssistantBubble(item)
     text = ""
