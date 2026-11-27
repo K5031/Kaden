@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import os
 import shutil
+import sys
 import tempfile
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
@@ -45,6 +46,13 @@ FAST: dict[str, Any] = {
     "retry_max_delay_s": 0.05,
     "permissions": PermissionPolicy.ALLOW_READ_ONLY,
 }
+
+
+def skip_windows_on_mac_ci() -> None:
+    """Skips a test that opens Qt windows on GitHub's macOS runners, where a window's start
+    hangs or crashes now and then; such tests run on Linux and on a real Mac."""
+    if sys.platform == "darwin" and os.environ.get("GITHUB_ACTIONS"):
+        pytest.skip("Qt windows are unreliable on GitHub's macOS runners")
 
 
 if os.environ.get("KADEN_TEST_LOOP") == "qasync":

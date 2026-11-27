@@ -1,6 +1,8 @@
 # Runs the tests on macOS, the one place the macOS code runs for real: the Seatbelt
 # sandbox profile (tests/test_sandbox.py, the boundary test in test_tools_shell_files.py),
 # the file tools without /proc, and screencapture being found.
+# The tests that open Qt windows skip themselves here (conftest.skip_windows_on_mac_ci): on
+# these runners a window's start hangs or crashes now and then.
 name: Tests (macOS)
 
 on:

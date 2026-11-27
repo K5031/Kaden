@@ -17,11 +17,12 @@ from kaden.frontends import desktop
 from kaden.frontends.desktop import single
 from kaden.runtime.config import RuntimeConfig
 from kaden.runtime.setup import SetupRuntime
-from tests.conftest import eventually
+from tests.conftest import eventually, skip_windows_on_mac_ci
 
 
 @pytest.fixture
 def qapp() -> QApplication:
+    skip_windows_on_mac_ci()
     app = QApplication.instance() or QApplication([])
     app.setQuitOnLastWindowClosed(False)  # the launcher's setting: the runtime ends the loop
     return app

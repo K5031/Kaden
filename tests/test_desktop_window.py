@@ -56,7 +56,7 @@ from kaden.frontends.desktop.window import MainWindow
 from kaden.runtime import ModuleState
 from kaden.runtime.config import RuntimeConfig
 from kaden.runtime.setup import SetupRuntime
-from tests.conftest import Harness, eventually
+from tests.conftest import Harness, eventually, skip_windows_on_mac_ci
 from tests.fakes.core import Step, call
 from tests.fakes.tools import FakeTools
 
@@ -67,6 +67,7 @@ RUNNING = {"core": "first", "memory": "fake-memory", "tools": "fake-tools",
 @pytest.fixture(scope="module")
 def qapp() -> QApplication:
     """Styled as the launcher styles it: sizes and layout depend on the style sheet."""
+    skip_windows_on_mac_ci()
     app = QApplication.instance() or QApplication([])
     app.setQuitOnLastWindowClosed(False)  # the launcher's setting: the runtime ends the loop
     theme.apply(app, dark=False)

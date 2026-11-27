@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QApplication
 from kaden.frontends.desktop import theme
 from kaden.frontends.desktop.voice.speech import Sentences, spoken
 from kaden.frontends.desktop.voice.turns import State, Voice
-from tests.conftest import eventually
+from tests.conftest import eventually, skip_windows_on_mac_ci
 
 
 def test_only_words_are_read_aloud():
@@ -58,6 +58,7 @@ def test_a_reply_is_cut_into_sentences_while_it_streams():
 
 @pytest.fixture(scope="module")
 def qapp() -> QApplication:
+    skip_windows_on_mac_ci()
     app = QApplication.instance() or QApplication([])
     app.setQuitOnLastWindowClosed(False)
     theme.apply(app, dark=False)

@@ -45,7 +45,10 @@ Agent Note (`notes/proposed/`) and leaves this list.
   be a later layer if that becomes a standard. Needs an Agent Note first: a contract
   change.
 - **macOS, the rest** (2026-11-25). Done: file tools, the Seatbelt sandbox, screenshots,
-  a macOS test job. Left: a first run on a real Mac; the app menu and single-window check; later
+  a macOS test job (without the tests that open windows, which hang on its runners). Left:
+  a first run on a real Mac, the window tests among it; timing tests that fail now and then
+  on the slow Mac runner (test_backup's backup notice, test_runtime's message queued after
+  the last turn, test_watches' kept watch); the app menu and single-window check; later
   a `.dmg` (Briefcase, built on GitHub's Mac runners; signing needs an Apple Developer
   account, put off). No GPU voice (NVIDIA only).
 - **Homebrew** (2026-11-27), after macOS works on a real Mac: `brew install
