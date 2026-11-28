@@ -489,6 +489,9 @@ class Runtime:
         self._skills: dict[str, skill_files.Loaded] = {}  # found for this request
         self._instructions: list[instructions.File] = []  # the project's, for this request
         self._instructions_skipped: list[str] = []
+        self._environment = ""  # the work folder, its git branch, the platform
+        # The conversation and folder it was taken for: taken again only when they change.
+        self._environment_of: tuple[str | None, str | None] | None = None
         # The TodoWrite call that wrote the open conversation's plan; None when a person
         # did, or it is not known (the conversation was opened again).
         self._plan_call: CallId | None = None
@@ -850,6 +853,12 @@ class Runtime:
         roots = skill_files.folders(self._config.data_dir, self._project())
         self._skills, problems = await asyncio.to_thread(skill_files.load, roots)
         found, skipped = await asyncio.to_thread(instructions.read, self._project())
+        # Once per conversation and folder, as Claude Code's: a branch switch mid-task keeps
+        # the prompt cache.
+        key = (self._conversation.id if self._conversation else None, self._project())
+        if self._environment_of != key:
+            self._environment = await asyncio.to_thread(instructions.environment, key[1])
+            self._environment_of = key
         if [f.path for f in found] != [f.path for f in self._instructions]:
             self._log.decision("instructions_read", files=[str(f.path) for f in found])
         if skipped != self._instructions_skipped:
@@ -862,9 +871,9 @@ class Runtime:
                 self._log.decision("skill_skipped", problem=problem)
 
     def _system(self) -> str:
-        """Kaden's guidance, then the user's own instructions, the project's instruction
-        files, the skills' listing and, in plan mode, what it allows."""
-        sections = [self._config.base_prompt, self._config.system_prompt,
+        """Kaden's guidance, then the user's own instructions, where the work is, the
+        project's instruction files, the skills' listing and, in plan mode, what it allows."""
+        sections = [self._config.base_prompt, self._config.system_prompt, self._environment,
                     instructions.prompt(self._instructions), skill_files.prompt(self._skills),
                     PLAN_MODE_PROMPT if self._plan_mode else ""]
         return "\n\n".join(s for s in sections if s)

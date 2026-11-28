@@ -13,6 +13,7 @@ environment into every request, nor make it reach a host of its choosing."""
 from __future__ import annotations
 
 import os
+import platform
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -133,6 +134,46 @@ def _add(path: Path, home: Path, hops: int, reading: _Reading) -> None:
 def _short(text: str) -> str:
     """A path or an error as the log keeps it: never a file's contents at length."""
     return text if len(text) <= 200 else text[:200] + "…"
+
+
+def environment(folder: str | Path | None) -> str:
+    """Blocking: the system prompt's section on where the work is, as Claude Code's: the
+    work folder, whether git tracks it and on which branch, and the platform."""
+    if folder is None:
+        return ""
+    here = Path(folder).expanduser()
+    return "\n".join([
+        "## Environment",
+        f"- Work folder: {here}",
+        f"- Git repository: {_git(here)}",
+        f"- Platform: {platform.system()} {platform.release()}",
+    ])
+
+
+def _git(folder: Path) -> str:
+    """"yes, on branch main", "yes, detached at 0123456", "yes" or "no", from the HEAD of
+    the nearest .git at or above the folder (a worktree's or submodule's .git is a file
+    naming its git folder); "yes" alone when HEAD says no more (a reftable repository)."""
+    try:
+        for d in [folder, *folder.resolve().parents]:
+            dot = d / ".git"
+            if not dot.exists():
+                continue
+            if dot.is_file():
+                text = dot.read_text(encoding="utf-8", errors="replace").strip()
+                if not text.startswith("gitdir:"):
+                    return "yes"
+                dot = (d / text.removeprefix("gitdir:").strip()).resolve()
+            head = (dot / "HEAD").read_text(encoding="utf-8", errors="replace").strip()
+            branch = head.removeprefix("ref: refs/heads/")
+            if head.startswith("ref: refs/heads/") and branch != ".invalid":
+                return f"yes, on branch {branch}"
+            if re.fullmatch(r"[0-9a-f]{40,64}", head):
+                return f"yes, detached at {head[:7]}"
+            return "yes"
+    except (OSError, RuntimeError, ValueError):
+        return "yes"
+    return "no"
 
 
 def prompt(files: list[File]) -> str:

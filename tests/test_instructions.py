@@ -186,3 +186,50 @@ def test_an_absolute_import_is_refused_before_the_filesystem_is_asked(tmp_path, 
     monkeypatch.setattr(Path, "resolve", resolve)
     _, skipped = instructions.read(tmp_path)
     assert not any("attacker" in a for a in asked) and any("attacker" in s for s in skipped)
+
+
+def test_the_environment_says_the_folder_the_repository_and_the_platform(tmp_path):
+    """As Claude Code's environment block: where the work is, whether git tracks it and on
+    which branch, and on what system."""
+    import platform
+
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / ".git" / "HEAD").write_text("ref: refs/heads/feature/x\n")
+    work = repo / "src"
+    work.mkdir()
+    section = instructions.environment(work)
+    assert section.startswith("## Environment")
+    assert f"Work folder: {work}" in section
+    assert "Git repository: yes, on branch feature/x" in section
+    assert platform.system() in section
+    (repo / ".git" / "HEAD").write_text("0123456789abcdef0123456789abcdef01234567\n")
+    assert "detached at 0123456" in instructions.environment(work)
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert "Git repository: no" in instructions.environment(plain)
+    assert instructions.environment(None) == ""
+
+
+def test_a_worktree_finds_its_branch_through_its_git_file(tmp_path):
+    gitdir = tmp_path / "main" / ".git" / "worktrees" / "w"
+    gitdir.mkdir(parents=True)
+    (gitdir / "HEAD").write_text("ref: refs/heads/claude/fix\n")
+    tree = tmp_path / "w"
+    tree.mkdir()
+    (tree / ".git").write_text(f"gitdir: {gitdir}\n")
+    assert "on branch claude/fix" in instructions.environment(tree)
+
+
+def test_a_submodules_relative_gitdir_and_odd_heads(tmp_path):
+    modules = tmp_path / "parent" / ".git" / "modules" / "lib"
+    modules.mkdir(parents=True)
+    (modules / "HEAD").write_text("ref: refs/heads/main\n")
+    lib = tmp_path / "parent" / "lib"
+    lib.mkdir()
+    (lib / ".git").write_text("gitdir: ../.git/modules/lib\n")
+    assert "on branch main" in instructions.environment(lib)
+    (modules / "HEAD").write_text("ref: refs/heads/.invalid\n")  # a reftable repository
+    assert "Git repository: yes\n" in instructions.environment(lib) + "\n"
+    (lib / ".git").write_text("junk")  # git refuses it; no parent's branch either
+    assert "Git repository: yes\n" in instructions.environment(lib) + "\n"

@@ -1135,6 +1135,32 @@ async def test_a_projects_instruction_files_follow_the_users_instructions(make: 
     await h.turn("hi")
     system = h.core.requests[-1].system
     assert system.index("Use kaomojis.") < system.index("Run the tests before you say done.")
+    assert f"Work folder: {folder}" in system  # where the work is, before the project's rules
+    assert system.index("## Environment") < system.index("## Project instructions")
     (folder / "CLAUDE.md").write_text("Write in French.")
     await h.turn("again")
     assert "Write in French." in h.core.requests[-1].system
+
+
+async def test_a_branch_switch_mid_conversation_leaves_the_environment_alone(
+        make: Any, tmp_path: Any) -> None:
+    """As Claude Code's, the environment is taken once per conversation: a git switch while
+    working would otherwise rebuild the whole prompt cache."""
+    from kaden.runtime.config import ModuleState
+
+    folder = tmp_path / "repo"
+    (folder / ".git").mkdir(parents=True)
+    (folder / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    tools = FakeTools()
+    tools.folders = []
+    h: Harness = await make(core=ScriptedCore(default=Step(text="ok")), tools=tools,
+                            modules=ModuleState(work_folder=str(tmp_path)))
+    await h.start(folder=str(folder))
+    await h.turn("hi")
+    assert "on branch main" in h.core.requests[-1].system
+    (folder / ".git" / "HEAD").write_text("ref: refs/heads/feature\n")
+    await h.turn("again")
+    assert "on branch main" in h.core.requests[-1].system  # the same prompt, cached
+    await h.start(folder=str(folder))  # another conversation takes it afresh
+    await h.turn("hello")
+    assert "on branch feature" in h.core.requests[-1].system
