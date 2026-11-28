@@ -3156,3 +3156,28 @@ async def test_a_theme_change_restyles_only_when_the_chosen_theme_changed(
     window._reload_themes()
     await eventually(lambda: str(folder) in window._themes_watch.directories())  # again
     theme.set_custom({})
+
+
+def test_a_long_running_step_counts_its_seconds(qapp):
+    """As Claude Code shows a long command's time: a step running more than a few seconds
+    says how long, on its card and on its group's folded line, and stops when it ends."""
+    from kaden.frontends.desktop.viewmodel import Phase, ToolItem
+
+    item = ToolItem("c1", "Bash", '{"command": "pytest"}', phase=Phase.RUNNING,
+                    running_since=time.time())
+    assert item.state_label == "running"  # not for a short step
+    item.running_since = time.time() - 12
+    assert item.state_label == "running · 12s"
+    card = ToolCard(item, lambda _call_id: None)
+    group = StepGroup(lambda _call_id: None)
+    group.set_members([card])
+    assert card.state.text() == "running · 12s" and "12s" in group.state.text()
+    assert card.ticking.isActive() and group.ticking.isActive()
+    item.running_since = time.time() - 15
+    card.ticking.timeout.emit()  # a second on: only the time changes
+    group.ticking.timeout.emit()
+    assert card.state.text() == "running · 15s" and "15s" in group.state.text()
+    item.status, item.phase, item.duration_s = ToolStatus.OK, Phase.DONE, 12.0
+    card.refresh()
+    group.refresh()
+    assert not card.ticking.isActive() and not group.ticking.isActive()

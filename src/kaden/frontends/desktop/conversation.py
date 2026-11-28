@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from kaden.api import PromptKind
+from kaden.frontends.common import duration
 from kaden.frontends.desktop.messages import (
     AssistantBubble,
     NoticeLine,
@@ -28,7 +29,6 @@ from kaden.frontends.desktop.messages import (
     ToolCard,
     UserBubble,
     WrapUpCard,
-    duration,
 )
 from kaden.frontends.desktop.prompts import (
     AnyPromptCard,

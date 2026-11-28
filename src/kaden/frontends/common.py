@@ -219,6 +219,12 @@ def step_problems(labels: Iterable[str]) -> str:
     return ", ".join(f"{n} {label}" for label, n in counts.items())
 
 
+def duration(seconds: float) -> str:
+    """"4s", "1m 5s"."""
+    minutes, rest = divmod(max(1, round(seconds)), 60)
+    return f"{minutes}m {rest}s" if minutes else f"{rest}s"
+
+
 def group_title(steps: Sequence[tuple[str, str, str | None]]) -> tuple[str, str, int | None]:
     """A folded group of steps, each (sentence, problem, state while under way or None):
     the title, the state beside it, and the index of the step under way. That is the

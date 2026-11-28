@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (
 )
 
 from kaden.api import Image, ToolStatus
-from kaden.frontends.common import Card
+from kaden.frontends.common import Card, duration
 from kaden.frontends.desktop import syntax, theme
 from kaden.frontends.desktop.viewmodel import (
     AssistantItem,
@@ -90,12 +90,6 @@ COPIED_MS = 1500  # a reply's copy button shows a tick this long
 
 TOOL_TONES = {ToolStatus.OK: "ok", ToolStatus.ERROR: "error", ToolStatus.ABANDONED: "warning",
               ToolStatus.TIMED_OUT: "warning", ToolStatus.INTERRUPTED: "warning"}
-
-
-def duration(seconds: float) -> str:
-    """"4s", "1m 5s"."""
-    minutes, rest = divmod(max(1, round(seconds)), 60)
-    return f"{minutes}m {rest}s" if minutes else f"{rest}s"
 
 
 def _thought(seconds: float | None) -> str:
@@ -572,6 +566,13 @@ def _whole_part_end(markdown: str) -> int:
     return end
 
 
+def _tick_while(timer: QTimer, running: bool) -> None:
+    if running and not timer.isActive():
+        timer.start()
+    elif not running:
+        timer.stop()
+
+
 class ToolCard(QFrame):
     """One row: the tool, what it works on, its state; details unfold below."""
 
@@ -579,6 +580,8 @@ class ToolCard(QFrame):
         super().__init__()
         self.item = item
         self.setObjectName("tool")
+        self.ticking = QTimer(self, interval=1000)  # its seconds, while it runs
+        self.ticking.timeout.connect(lambda: self.state.setText(self.item.state_label))
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 6, 8, 6)
         layout.setSpacing(4)
@@ -630,6 +633,7 @@ class ToolCard(QFrame):
         theme.mark(self.state, "tone", TOOL_TONES.get(item.status, "muted")
                    if item.status is not None else "muted")
         self.cancel.setVisible(item.cancellable)
+        _tick_while(self.ticking, item.running)
         self.progress.setText(item.progress)
         self.progress.setVisible(bool(item.progress) and item.status is None)
         self.details.setPlainText(f"{item.detail}\n\n{item.content}".strip())
@@ -680,6 +684,8 @@ class StepGroup(QFrame):
         super().__init__()
         self.setObjectName("steps")
         self.active: ToolItem | None = None
+        self.ticking = QTimer(self, interval=1000)  # the running step's seconds
+        self.ticking.timeout.connect(self._tick)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
@@ -732,6 +738,7 @@ class StepGroup(QFrame):
         theme.mark(self.state, "tone", tone)
         self.state.setVisible(bool(state))
         self.cancel.setVisible(self.active is not None and self.active.cancellable)
+        _tick_while(self.ticking, self.active is not None and self.active.running)
         pictures = tuple(p for step in steps for p in step.pictures)
         if pictures != self._shown:
             for label in self.pictures:
@@ -740,6 +747,10 @@ class StepGroup(QFrame):
             for label in self.pictures:
                 self._picture_row.addWidget(label)
                 label.setVisible(not self.body.isVisibleTo(self))
+
+    def _tick(self) -> None:
+        if self.active is not None:
+            self.state.setText(self.active.state_label)
 
     def _toggle(self, shown: bool) -> None:
         self.toggle.setAccessibleName("Hide the steps" if shown else "Show the steps")

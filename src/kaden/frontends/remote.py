@@ -9,6 +9,7 @@ import inspect
 import itertools
 import json
 import logging
+import time
 from collections import deque
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
@@ -268,7 +269,8 @@ def _applied(snap: RuntimeSnapshot, envelope: EventEnvelope) -> RuntimeSnapshot:
         case ToolTitles(titles=titles):
             return replace(snap, tool_titles=titles)
         case ToolStarted(call=call):
-            return replace(snap, operations=(*snap.operations, OperationInfo(call, 0.0)))
+            # When it reached us: the event carries no time of its own.
+            return replace(snap, operations=(*snap.operations, OperationInfo(call, time.time())))
         case ToolProgress(call_id=call_id, text=text):
             return replace(snap, operations=tuple(
                 replace(o, last_progress=text) if o.call.id == call_id else o

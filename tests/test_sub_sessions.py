@@ -787,3 +787,26 @@ def test_a_sub_sessions_snapshot_follows_its_tool_titles():
     snap = _applied(taken,
                     EventEnvelope(1, ToolTitles({"mcp__notes__add": "Add numbers"})))
     assert snap.tool_titles == {"mcp__notes__add": "Add numbers"} and snap.seq == 1
+
+
+def test_a_step_started_since_the_snapshot_has_the_time_it_started():
+    """A frontend reloading from the folded snapshot counts a running step's seconds from
+    when it started, not from 1970."""
+    import time
+
+    from kaden.api import (
+        AgentState,
+        EventEnvelope,
+        RuntimeSnapshot,
+        ToolCall,
+        ToolStarted,
+        Usage,
+        UsageSnapshot,
+    )
+    from kaden.frontends.remote import _applied
+
+    taken = RuntimeSnapshot(seq=0, state=AgentState.IDLE, conversation=None, config=None,
+                            model=None, usage=UsageSnapshot(Usage(), 0, 0.0), operations=(),
+                            queued_messages=())
+    snap = _applied(taken, EventEnvelope(1, ToolStarted(ToolCall("c1", "Bash", {}))))
+    assert abs(snap.operations[0].started_at - time.time()) < 5

@@ -91,6 +91,7 @@ from kaden.frontends.common import (
     Card,
     call_parts,
     card_of,
+    duration,
     group_title,
     help_text,
     money,
@@ -117,6 +118,9 @@ def clip(text: str, limit: int) -> str:
 
 
 LIMIT_WARNING = 0.8  # of the spending limit: one notice when it is passed
+
+
+SHOW_RUNNING_S = 3.0  # a step running longer says for how long, as Claude Code's commands
 
 
 class Phase(StrEnum):
@@ -171,6 +175,7 @@ class ToolItem:
     status: ToolStatus | None = None
     content: str = ""
     duration_s: float | None = None
+    running_since: float | None = None  # time.time() when it started to run
     pictures: tuple[Image, ...] = ()  # what the tool returned to be looked at
     # The tools' titles by name (ToolSpec.title): the model's, shared, so titles learned
     # later name the steps already shown.
@@ -209,9 +214,18 @@ class ToolItem:
 
     @property
     def state_label(self) -> str:
+        """Its state; while it runs, past a few seconds, for how long ("running · 12s")."""
         if self.status is not None:
             return RESULT_LABELS.get(self.status, self.status.value)
+        if self.running and self.running_since is not None:
+            elapsed = time.time() - self.running_since
+            if elapsed >= SHOW_RUNNING_S:
+                return f"{self.phase.value} · {duration(elapsed)}"
         return self.phase.value
+
+    @property
+    def running(self) -> bool:
+        return self.status is None and self.phase in (Phase.RUNNING, Phase.BACKGROUND)
 
     @property
     def problem(self) -> str:
@@ -220,7 +234,7 @@ class ToolItem:
 
     @property
     def cancellable(self) -> bool:
-        return self.status is None and self.phase in (Phase.RUNNING, Phase.BACKGROUND)
+        return self.running
 
 
 @dataclass(eq=False)
@@ -452,6 +466,7 @@ class ConversationModel:
                 continue
             item = self._tools.get(op.call.id) or self._add_tool(op.call)
             item.phase = Phase.BACKGROUND if op.backgrounded else Phase.RUNNING
+            item.running_since = op.started_at or item.running_since
             item.progress = op.last_progress or item.progress
         for queued in snapshot.queued_messages:
             self._queue(queued)
@@ -509,6 +524,7 @@ class ConversationModel:
                 item = self._tools.get(call.id) or self._add_tool(call)
                 item.arguments = json.dumps(call.arguments, ensure_ascii=False)
                 item.phase = Phase.RUNNING
+                item.running_since = time.time()
                 if item in self._stream:
                     self._stream.remove(item)
                 self.on_change(Updated(item))
