@@ -123,7 +123,14 @@ SHELL = ToolSpec(
         "workspace; elsewhere, the next starts in the workspace. A command runs until it "
         "ends or its `timeout` (milliseconds; 120000 unless set, at most 600000). Set "
         "`run_in_background` for one that runs long, such as a server or a long build: "
-        "you get on with other work and are told its outcome when it ends."
+        "you get on with other work and are told its outcome when it ends. To read, "
+        "search, list or change files, use Read, Grep, Glob and Edit rather than cat, "
+        "grep, find or sed: their output is made for you, and they keep track of what you "
+        "read; the shell is still the way to search hidden or ignored files, or ones Grep "
+        "skips. A command that waits for input (an editor, a pager, a prompt) never gets "
+        "any: give it flags that run it unattended. Quote paths that have spaces; chain "
+        "commands that depend on each other with &&, and give independent ones a call each, "
+        "all in one step: one failing does not stop the others."
     ),
     parameters=_object({
         "command": _STRING,
@@ -157,7 +164,8 @@ FILE_SPECS: tuple[ToolSpec, ...] = (
             "scan, a chart or a layout the text does not carry: at most "
             f"{PDF_PAGES_PER_READ} at a time, and each costs far more than its text. "
             "A Jupyter notebook is read as its cells with their ids and outputs. "
-            "A Word, Excel or "
+            "Read several files in one step when you know you will need them, and a large "
+            "file's parts that matter rather than all of it. A Word, Excel or "
             "PowerPoint file (.docx, .xlsx, .pptx) is read as its text, by lines like any "
             "text file."
         ),
@@ -177,7 +185,9 @@ FILE_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="Write",
         description="Create or overwrite a text file, creating parent directories. A file that is "
-            "there must have been read in this conversation, and be unchanged since.",
+            "there must have been read in this conversation, and be unchanged since. To change "
+            "part of a file, use Edit: Write replaces all of it. Create only the files the "
+            "task needs.",
         parameters=_object({"file_path": _STRING, "content": _STRING}, ["file_path", "content"]),
     ),
     ToolSpec(
@@ -185,7 +195,10 @@ FILE_SPECS: tuple[ToolSpec, ...] = (
         description=(
             "Replace an exact string in a file, which must have been read in this "
             "conversation and be unchanged since. `old_string` must occur exactly once unless "
-            "`replace_all` is true."
+            "`replace_all` is true. Copy it from what Read showed, without the line number "
+            "and tab before each line, keeping its indentation exactly, and with enough of "
+            "the lines around it to occur only once. Use `replace_all` to rename something "
+            "throughout the file."
         ),
         parameters=_object(
             {
@@ -203,7 +216,8 @@ FILE_SPECS: tuple[ToolSpec, ...] = (
             "List the files under a directory (default: workspace root) whose path relative "
             "to it matches a glob `pattern`, the most recently changed first: `*` and `?` "
             "stay within one folder, `**/` is any number of folders, `{a,b}` either. "
-            "Hidden directories and what .gitignore files leave out are skipped."
+            "Hidden directories and what .gitignore files leave out are skipped. Use it "
+            "instead of find or ls in Bash to look for files, except those it skips."
         ),
         parameters=_object({"pattern": {"type": "string", "minLength": 1}, "path": _STRING},
                            ["pattern"]),
@@ -219,7 +233,8 @@ FILE_SPECS: tuple[ToolSpec, ...] = (
             "`path-line- text`. `-i` ignores case, `glob` filters file names and `type` "
             "file types, `multiline` lets a match span lines, `head_limit` keeps the first "
             "entries. Hidden directories, what .gitignore files leave out, "
-            "binary files and files over 1 MB are skipped."
+            "binary files and files over 1 MB are skipped. Use it instead of grep or rg in "
+            "Bash, except for the files it skips."
         ),
         parameters=_object(
             {"pattern": {"type": "string", "minLength": 1}, "path": _STRING, "glob": _STRING,

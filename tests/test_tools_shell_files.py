@@ -825,3 +825,14 @@ async def test_a_character_split_between_reads_of_the_output_is_kept_whole():
     stream.feed_eof()
     await pumping
     assert out.text() == "naïve 好"
+
+
+async def test_the_file_tools_say_how_to_use_them_well(tools):
+    """The shell is not for what the file tools do (but for the files they skip), an edit's
+    old_string is copied exactly, and Write is not for changing part of a file."""
+    specs = {s.name: s.description for s in await tools.list_tools()}
+    assert all(name in specs["Bash"] for name in ("Read", "Grep", "Glob", "Edit"))
+    assert "line number" in specs["Edit"] and "indentation" in specs["Edit"]
+    assert "Edit" in specs["Write"]
+    assert "several files" in specs["Read"]
+    assert "instead of" in specs["Glob"] and "instead of" in specs["Grep"]
