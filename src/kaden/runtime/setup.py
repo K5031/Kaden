@@ -94,7 +94,8 @@ class SetupRuntime:
         await self._modules.commit(update, saved)
         self._config = replace(self._config, budget=update.budget or self._config.budget,
                                permissions=update.permissions or self._config.permissions,
-                               system_prompt=update.system_prompt or self._config.system_prompt,
+                               system_prompt=self._config.system_prompt
+                               if update.system_prompt is None else update.system_prompt,
                                permission_rules=self._config.permission_rules
                                if update.permission_rules is None
                                else tuple(update.permission_rules))

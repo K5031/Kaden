@@ -1095,3 +1095,22 @@ async def test_a_tool_that_ends_the_turn_is_the_last_word(make: Any) -> None:
     assert await requests(call("look", {}, id="a"), call("send", {}, id="b")) == 1
     assert await requests(call("broken", {}, id="a"), call("send", {}, id="b")) == 2
     assert await requests(call("look", {}, id="a")) == 2
+
+
+async def test_kadens_guidance_comes_first_and_the_users_instructions_after(make: Any) -> None:
+    """As Claude Code's: the built-in guidance and the tools' facts are always there; the
+    user's own instructions are added after them, never in their place."""
+    from kaden.api import SettingsUpdate
+    from kaden.runtime.config import TOOL_FACTS
+
+    h: Harness = await make(core=ScriptedCore(default=Step(text="ok")),
+                            system_prompt="Use kaomojis instead of emojis.")
+    await h.start()
+    await h.turn("hi")
+    system = h.core.requests[-1].system
+    assert "## Doing the work" in system and TOOL_FACTS in system
+    assert system.index("## Doing the work") < system.index("Use kaomojis")
+    await h.runtime.update_settings(SettingsUpdate(system_prompt=""))  # no instructions
+    assert (await h.runtime.settings()).system_prompt == ""
+    await h.turn("again")
+    assert "Use kaomojis" not in h.core.requests[-1].system

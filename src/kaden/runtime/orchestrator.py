@@ -852,8 +852,10 @@ class Runtime:
                 self._log.decision("skill_skipped", problem=problem)
 
     def _system(self) -> str:
-        """The system prompt with the skills' listing and, in plan mode, what it allows."""
-        sections = [self._config.system_prompt, skill_files.prompt(self._skills),
+        """Kaden's guidance, then the user's own instructions, the skills' listing and, in
+        plan mode, what it allows."""
+        sections = [self._config.base_prompt, self._config.system_prompt,
+                    skill_files.prompt(self._skills),
                     PLAN_MODE_PROMPT if self._plan_mode else ""]
         return "\n\n".join(s for s in sections if s)
 
@@ -1176,7 +1178,7 @@ class Runtime:
         self._config = replace(
             cfg, maintenance_model=light, budget=budget,
             permissions=u.permissions or cfg.permissions,
-            system_prompt=u.system_prompt or cfg.system_prompt,
+            system_prompt=cfg.system_prompt if u.system_prompt is None else u.system_prompt,
             permission_rules=(cfg.permission_rules if u.permission_rules is None
                               else tuple(u.permission_rules)))
         if self._agent_config is not None:

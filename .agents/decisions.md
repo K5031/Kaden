@@ -74,10 +74,13 @@ TextDelta, ReasoningDelta, ToolCallDelta and ToolProgress are not logged.
 
 ## Base system prompt
 
-`config.DEFAULT_SYSTEM_PROMPT` explains backgrounded operations, `TaskOutput`/`TaskStop`
-and `recall` (with scope "all" for the other conversations). `[runtime] system_prompt` or
-`system_prompt_file` replaces it. The system prompt is the same for a conversation's whole
-life.
+The system prompt is `RuntimeConfig.base_prompt` (`config.BASE_PROMPT`: `GUIDANCE`, how to
+work in any job, then `TOOL_FACTS`, which explain backgrounded operations,
+`TaskOutput`/`TaskStop` and `recall`), then the user's instructions
+(`RuntimeConfig.system_prompt`, `[runtime] system_prompt` or `system_prompt_file`, the
+Settings' Instructions; "" = none), then the skills' listing and plan mode's section.
+Continuous writes its own `base_prompt` (`life.PROMPT`) and drops the user's instructions,
+which are for the chats. The system prompt is the same for a conversation's whole life.
 Memory's `system_addendum` follows, separated by a blank line.
 
 ## Runtime-authored texts

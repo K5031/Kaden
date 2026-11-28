@@ -22,7 +22,6 @@ from kaden.api import (
     ToolStatus,
 )
 from kaden.runtime import ModuleState
-from kaden.runtime.config import DEFAULT_SYSTEM_PROMPT
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
 from tests.fakes.tools import FakeTools
@@ -66,7 +65,7 @@ async def test_settings_reflect_the_configuration(make, monkeypatch):
     assert {"anthropic", "deepseek", "openai"} <= set(infos)
     assert s.model is None and s.maintenance_model is None
     assert s.permissions is PermissionPolicy.ALLOW_READ_ONLY
-    assert s.system_prompt == DEFAULT_SYSTEM_PROMPT
+    assert s.system_prompt == ""  # the user's own instructions: none yet
     assert s.budget == Budget()
     assert s.work_folder == "/start"
     assert not s.restart_needed and s.startup_error is None
@@ -103,7 +102,7 @@ async def test_live_settings_apply_from_the_next_request(make):
     h.core.add(Step(calls=[call("write", id="w")]), Step(text="done"))
     await h.turn("go")
     request = h.core.requests[-2]
-    assert request.model == "fake-2" and request.system.startswith("Be brief.")
+    assert request.model == "fake-2" and "Be brief." in request.system  # after Kaden's own
     assert (await h.results())["w"].status == ToolStatus.REFUSED  # DENY applied
 
 
@@ -144,7 +143,6 @@ async def test_raising_a_spent_budget_lets_the_agent_continue(make):
 @pytest.mark.parametrize("update", [
     SettingsUpdate(model="nope"),
     SettingsUpdate(maintenance_model="nope"),
-    SettingsUpdate(system_prompt="   "),
     SettingsUpdate(modules={"core": "unknown"}),
     SettingsUpdate(modules={"core": "broken"}),
     SettingsUpdate(modules={"engine": "first"}),
@@ -271,7 +269,7 @@ async def test_a_failed_save_restores_the_keychain(make, keychain, monkeypatch):
         await h.runtime.update_settings(SettingsUpdate(api_key="new", system_prompt="Hi."))
     assert keychain.store[("kaden", "FIRST_API_KEY")] == "old"
     s = await h.runtime.settings()
-    assert not s.restart_needed and s.system_prompt == DEFAULT_SYSTEM_PROMPT
+    assert not s.restart_needed and s.system_prompt == ""
 
 
 # ── Saving and logging ──

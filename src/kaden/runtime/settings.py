@@ -31,12 +31,10 @@ def bad_limit(name: str, value: object) -> str | None:
 
 
 def runtime_changes(update: SettingsUpdate) -> dict[str, Any]:
-    """What `update` writes of the budget, the permissions and the system prompt, as the
-    settings file keeps them. ValueError for what the next start would refuse to read."""
+    """What `update` writes of the budget, the permissions and the user's instructions, as
+    the settings file keeps them. ValueError for what the next start would refuse to read."""
     changes: dict[str, Any] = {}
-    if update.system_prompt is not None:
-        if not update.system_prompt.strip():
-            raise ValueError("the system prompt is empty")
+    if update.system_prompt is not None:  # "" clears them
         changes["system_prompt"] = update.system_prompt
     if update.budget is not None:
         changes["budget"] = _limits(update.budget)

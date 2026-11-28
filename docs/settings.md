@@ -13,7 +13,7 @@ Change what you need and choose **Save**; only what you changed is saved.
 | Model for memory upkeep | A cheaper model for summarizing long conversations. | At the next step |
 | Spending limit | In US dollars; empty means no limit. | At once |
 | What the agent may do | See [Permissions](#permissions). | At the next step |
-| Instructions | The system prompt: who the agent is and how it should behave. | At the next step |
+| Instructions | Your own instructions: who the agent is to you, how it should talk. They are added after Kaden's built-in guidance on how to work, never in its place. | At the next step |
 | Tools | What the agent can do on your computer. | At restart |
 
 Raising or removing the spending limit, or letting the agent do more, asks you to confirm
@@ -194,7 +194,8 @@ factory = "kaden.core.openai_compat:deepseek_factory"
 model = "deepseek-flash"
 maintenance_model = "deepseek-flash"
 permissions = "auto"                # auto | allow_workspace | allow_read_only | ask | deny
-system_prompt_file = "prompt.md"    # or: system_prompt = "..."
+system_prompt_file = "prompt.md"    # your instructions; or: system_prompt = "..."
+# base_prompt = "..."               # replaces Kaden's built-in guidance (rarely wanted)
 compact_window = 300000             # compact as if the model took at most this many tokens
 
 [runtime.budget]                    # each limit optional
@@ -203,6 +204,10 @@ max_tokens = 1000000
 max_duration_s = 3600               # time spent working
 max_tool_calls = 200
 ```
+
+`base_prompt` replaces Kaden's built-in guidance on how to work and the facts about its
+tools; your instructions still follow it. Leave it out unless you mean to write all of that
+yourself.
 
 `compact_window` works like Claude Code's auto-compact window: what is sent to the model
 (instructions, tools and the conversation) is sized to at most this many tokens, so a

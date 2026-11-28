@@ -1719,7 +1719,7 @@ class Settings:
     maintenance_model: str | None  # None = the main model
     budget: Budget
     permissions: PermissionPolicy  # effective: clamped to any inherited ceiling
-    system_prompt: str
+    system_prompt: str  # the user's own instructions, after Kaden's guidance; "" = none
     # The folder new conversations get (StartOptions.folder); None = the Tools have a fixed
     # one. Conversations keep theirs (ConversationInfo.folder).
     work_folder: str | None
@@ -1759,7 +1759,7 @@ class SettingsUpdate:
     maintenance_model: str | None = None
     budget: Budget | None = None
     permissions: PermissionPolicy | None = None
-    system_prompt: str | None = None
+    system_prompt: str | None = None  # the user's instructions; "" clears them
     work_folder: str | None = None
     mcp_servers: Sequence[McpServer] | None = None  # replaces the whole list
     permission_rules: Sequence[PermissionRule] | None = None  # replaces the whole list

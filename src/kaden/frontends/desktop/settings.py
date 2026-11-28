@@ -472,6 +472,9 @@ class SettingsDialog(QDialog):
             self.permissions.addItem(label, policy)
         self.permissions.setCurrentIndex(self.permissions.findData(settings.permissions))
         self.instructions = QPlainTextEdit(settings.system_prompt)
+        self.instructions.setPlaceholderText(
+            "Your own instructions, added to Kaden's built-in guidance: who it is to you, "
+            "how it should talk, what to keep in mind")
         self.instructions.setMinimumHeight(120)
         self.notice = text_label(restart_notice(settings) or "", selectable=False, tone="warning")
         self.notice.setVisible(restart_notice(settings) is not None)
@@ -552,8 +555,9 @@ class SettingsDialog(QDialog):
                 _setting("Saved answers", "What you said always or never to, in every "
                          "conversation.", self._rules_box(settings), below=True)),
             "Instructions": _page(
-                "Instructions", _setting("Instructions", "What Kaden is told at the start of every "
-                         "conversation.", self.instructions, below=True)),
+                "Instructions", _setting("Instructions", "Your own instructions, added after "
+                         "Kaden's built-in guidance in every conversation.", self.instructions,
+                         below=True)),
             "Memory": self.memory,
             "Tool servers": self.servers,
         }

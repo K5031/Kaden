@@ -985,9 +985,7 @@ def settings_update(current: Settings, form: SettingsForm) -> SettingsUpdate:
         changes["budget"] = replace(current.budget, max_cost_usd=limit)
     if form.permissions != current.permissions:
         changes["permissions"] = form.permissions
-    if form.instructions != current.system_prompt:
-        if not form.instructions.strip():
-            raise ValueError("The instructions can't be empty.")
+    if form.instructions != current.system_prompt:  # empty: no instructions of the user's
         changes["system_prompt"] = form.instructions
     if form.permission_rules != tuple(current.permission_rules):
         changes["permission_rules"] = list(form.permission_rules)

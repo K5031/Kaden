@@ -3,7 +3,18 @@
 What is wanted and not started, for Kaden. A line each; when one is taken up it gets an
 Agent Note (`notes/proposed/`) and leaves this list.
 
+## Found while working
+
+- **A relative `system_prompt_file` breaks Continuous and sub-sessions** (2026-11-28): the
+  parent's config.toml is copied into the child's folder (`child.settings_of`), so the
+  path resolves next to the copy and the child exits "not found".
+
 ## From the user
+
+- **More of the industry's prompt pieces** (2026-11-28), after the working guidance:
+  reading a project's instruction files (`AGENTS.md`, `CLAUDE.md`), as Claude Code does; an
+  environment block (work folder, platform); a coding skill (small diffs, tests, git); and
+  a few repeatable tasks to judge prompt changes by.
 
 - **A more proactive Continuous** (2026-11-28): Ahri messaging the user on its own and
   doing things on its own more often, rather than mostly waiting. Mind what was declined

@@ -688,7 +688,6 @@ def test_only_changed_modules_are_sent():
 @pytest.mark.parametrize("field, value, message", [
     ("spending_limit", "ten", "amount in dollars"),
     ("spending_limit", "-1", "amount in dollars"),
-    ("instructions", "  ", "can't be empty"),
 ])
 def test_invalid_values_are_explained(field, value, message):
     from dataclasses import replace

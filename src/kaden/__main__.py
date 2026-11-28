@@ -40,6 +40,7 @@ from kaden.runtime import (
     hooks,
     run_instance,
 )
+from kaden.runtime.config import BASE_PROMPT
 from kaden.runtime.modules import (
     LABELS,
     MCP_FACTORY,
@@ -69,7 +70,7 @@ DEFAULT_FACTORIES = {
     "frontend": "kaden.frontends.desktop:factory",
 }
 RUNTIME_KEYS = ("model", "maintenance_model", "permissions", "budget", "system_prompt",
-                "system_prompt_file", "compact_window")
+                "system_prompt_file", "base_prompt", "compact_window")
 MIN_COMPACT_WINDOW = 100_000  # Claude Code's floor for its auto-compact window
 SECRET_WORDS = ("key", "token", "secret", "password")
 # The frontend each launcher falls back to: its own kind's built-in one.
@@ -77,7 +78,7 @@ LAUNCHER_FRONTENDS = {WINDOW: "desktop"}
 # Not an installed frontend: a person never chooses it in Settings; --headless runs it.
 HEADLESS_FACTORY = "kaden.frontends.headless:factory"
 SAVED_KEYS = ("modules", "model", "maintenance_model", "permissions",
-              "system_prompt", "compact_window", "work_folder", "budget", "mcp_servers", "always_allow",
+              "system_prompt", "base_prompt", "compact_window", "work_folder", "budget", "mcp_servers", "always_allow",
               "never_allow", "tool_settings")
 
 
@@ -129,11 +130,13 @@ def load_modules(path: Path, data: dict[str, Any]) -> dict[str, ModuleSpec]:
 
 def load_runtime(path: Path, data: dict[str, Any]) -> dict[str, Any]:
     """RuntimeConfig fields from [runtime]: model, maintenance_model, permissions, budget,
-    compact_window, and system_prompt (inline, or system_prompt_file relative to the config
-    file)."""
+    compact_window, base_prompt (Kaden's part of the system prompt, which Continuous
+    replaces), and system_prompt, the user's instructions after it (inline, or
+    system_prompt_file relative to the config file)."""
     section = table(path, data, "runtime", RUNTIME_KEYS)
     settings: dict[str, Any] = {}
-    for key in ("model", "maintenance_model", "system_prompt", "system_prompt_file"):
+    for key in ("model", "maintenance_model", "system_prompt", "system_prompt_file",
+                "base_prompt"):
         if key in section and not isinstance(section[key], str):
             raise SystemExit(f"{path}: [runtime] {key} must be a string")
     for key in ("model", "maintenance_model"):
@@ -150,8 +153,10 @@ def load_runtime(path: Path, data: dict[str, Any]) -> dict[str, Any]:
                              ) from None
     elif "system_prompt" in section:
         settings["system_prompt"] = section["system_prompt"]
-    if "system_prompt" in settings and not settings["system_prompt"].strip():
-        raise SystemExit(f"{path}: [runtime] system_prompt must not be empty")
+    if "base_prompt" in section:
+        if not section["base_prompt"].strip():
+            raise SystemExit(f"{path}: [runtime] base_prompt must not be empty")
+        settings["base_prompt"] = section["base_prompt"]
     if "permissions" in section:
         try:
             settings["permissions"] = PermissionPolicy(section["permissions"])
@@ -202,7 +207,10 @@ def show_config(config: InstanceConfig, path: Path) -> str:
         else:
             section[key] = value
     section["permissions"] = runtime.permissions.value
-    section["system_prompt"] = runtime.system_prompt
+    if runtime.system_prompt:
+        section["system_prompt"] = runtime.system_prompt
+    if runtime.base_prompt != BASE_PROMPT:
+        section["base_prompt"] = runtime.base_prompt
     if runtime.compact_window is not None:
         section["compact_window"] = runtime.compact_window
     if budget := {k: v for k, v in asdict(runtime.budget).items() if v is not None}:

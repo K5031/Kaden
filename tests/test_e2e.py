@@ -40,7 +40,7 @@ from kaden.core.openai_compat import OpenAICompatCore
 from kaden.frontends.desktop import DesktopFrontend
 from kaden.memory.sqlite import SqliteMemory
 from kaden.runtime import InstanceConfig, ModuleSpec, load_module, run_instance
-from kaden.runtime.config import DEFAULT_SYSTEM_PROMPT
+from kaden.runtime.config import BASE_PROMPT
 from kaden.tools.shell_files import ShellFilesTools
 from tests.conftest import asked
 from tests.fakes.core import Step, call
@@ -188,7 +188,7 @@ def test_runtime_defaults_without_a_runtime_section(workspace, tmp_path):
     assert runtime.model is None and runtime.maintenance_model is None
     assert runtime.permissions is PermissionPolicy.AUTO
     assert runtime.budget == Budget()
-    assert runtime.system_prompt == DEFAULT_SYSTEM_PROMPT
+    assert runtime.system_prompt == "" and runtime.base_prompt == BASE_PROMPT
 
 
 def test_module_ids_of_the_configured_modules(workspace, tmp_path):
@@ -240,7 +240,7 @@ def test_invalid_saved_settings_are_refused(workspace, tmp_path, content, messag
         build_config(["--data-dir", str(tmp_path)])
 
 
-def test_system_prompt_replaces_the_default(workspace, tmp_path):
+def test_system_prompt_is_the_users_instructions(workspace, tmp_path):
     path = tmp_path / "config.toml"
     path.write_text('[runtime]\nsystem_prompt = "Be brief."\n')
     runtime = build_config(["--data-dir", str(tmp_path), "--config", str(path)]).runtime
@@ -272,7 +272,7 @@ def test_show_config_prints_the_effective_config_without_building_modules(
     assert shown["core"]["options"]["models"]["m"]["auth_token"] == "<redacted>"
     assert shown["tools"]["options"] == {"root": str(workspace)}
     assert shown["runtime"]["permissions"] == "auto"
-    assert shown["runtime"]["system_prompt"] == DEFAULT_SYSTEM_PROMPT
+    assert "system_prompt" not in shown["runtime"]  # no instructions of the user's
     assert shown["runtime"]["budget"] == {"max_cost_usd": 10.0}
     assert "model" not in shown["runtime"]
     assert "# model: not set, the first model the Core lists" in out
@@ -287,10 +287,12 @@ def test_show_config_prints_the_effective_config_without_building_modules(
 
 def test_shown_config_loads_back_to_the_same_instance(workspace, tmp_path, capsys):
     path = tmp_path / "config.toml"
-    path.write_text(RUNTIME + '[core]\nfactory = "kaden.core.openai_compat:factory"\n'
+    path.write_text(RUNTIME.replace("[runtime]\n", '[runtime]\nbase_prompt = "Be a pirate."\n')
+                    + '[core]\nfactory = "kaden.core.openai_compat:factory"\n'
                     'options = { profile = "deepseek" }\n')
     args = ["--data-dir", str(tmp_path), "--config", str(path)]
     original = build_config(args)
+    assert original.runtime.base_prompt == "Be a pirate."
     main([*args, "--show-config"])
     path.write_text(capsys.readouterr().out)
     assert build_config(args) == original
@@ -315,7 +317,7 @@ def test_shown_config_loads_back_to_the_same_instance(workspace, tmp_path, capsy
     ("core = 'x'\n", "[core] must be a table"),
     ("[core\n", "invalid TOML"),
     ("[runtime]\nsystem_prompt = 3\n", "[runtime] system_prompt must be a string"),
-    ("[runtime]\nsystem_prompt = \"  \"\n", "[runtime] system_prompt must not be empty"),
+    ("[runtime]\nbase_prompt = \"  \"\n", "[runtime] base_prompt must not be empty"),
     ("[runtime]\nsystem_prompt = \"a\"\nsystem_prompt_file = \"p.md\"\n",
      "set system_prompt or system_prompt_file, not both"),
     ("[runtime]\nsystem_prompt_file = \"missing.md\"\n", "missing.md: not found"),

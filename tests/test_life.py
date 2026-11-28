@@ -21,7 +21,8 @@ def home(tmp_path: Path, script: list[dict[str, Any]]) -> Path:
     data.mkdir()
     (data / "settings.toml").write_text('system_prompt = "You are Ahri, a foxgirl."\n')
     (data / "config.toml").write_text(tomli_w.dumps({
-        "core": {"factory": "tests.fakes.core:factory", "options": {"script": script}}}))
+        "core": {"factory": "tests.fakes.core:factory", "options": {"script": script}},
+        "runtime": {"system_prompt": "Always answer in French."}}))
     return data
 
 
@@ -43,9 +44,10 @@ async def test_it_lives_in_its_own_folder_on_a_life_of_its_own(tmp_path, child_e
         assert settings["budget"] == {"max_cost_usd_per_day": 0.5}
         # Not the work chats' prompt or the user's instructions for them: who it is comes
         # from its own life, and an assistant's framing would contradict it.
-        assert "You are Ahri" not in settings["system_prompt"]
-        assert "accomplish the user's goals" not in settings["system_prompt"]
-        assert "TaskOutput" in settings["system_prompt"]  # the facts of its tools stay
+        # The user's instructions, in settings.toml or config.toml, are their chats'.
+        assert settings["system_prompt"] == ""
+        assert "## Doing the work" not in settings["base_prompt"]  # not an assistant's
+        assert "TaskOutput" in settings["base_prompt"]  # the facts of its tools stay
         assert Path(settings["work_folder"]) == folder / "home"  # a folder of its own
         assert settings["compact_window"] == 150_000  # compacted before a day costs much
         assert not list(data.glob("*.db"))  # nothing of it in the user's own memory
@@ -131,8 +133,8 @@ async def test_the_user_can_see_its_folder_and_no_file_is_named_for_it(tmp_path,
         await life.start()
         await eventually(lambda: life.snapshot)
         settings = tomllib.loads((data / "life" / "settings.toml").read_text())
-        assert "The user can see the files in your folder" in settings["system_prompt"]
-        assert "journal" not in settings["system_prompt"].lower()
+        assert "The user can see the files in your folder" in settings["base_prompt"]
+        assert "journal" not in settings["base_prompt"].lower()
         assert life.home == data / "life" / "home" == Path(settings["work_folder"])
     finally:
         await life.aclose()

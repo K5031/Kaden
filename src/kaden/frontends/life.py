@@ -252,7 +252,9 @@ class Life:
         settings["budget"] = ({} if self.daily_usd is None
                               else {"max_cost_usd_per_day": self.daily_usd})
         settings["work_folder"] = str(self.home)
-        settings["system_prompt"] = PROMPT
+        settings["base_prompt"] = PROMPT  # in place of the chats' guidance
+        # The user's instructions, here or in config.toml, are for their chats: none here.
+        settings["system_prompt"] = ""
         settings["compact_window"] = COMPACT_WINDOW
         child.write_settings(self.folder / "settings.toml", settings)
 
