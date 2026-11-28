@@ -47,6 +47,7 @@ async def test_it_lives_in_its_own_folder_on_a_life_of_its_own(tmp_path, child_e
         assert "accomplish the user's goals" not in settings["system_prompt"]
         assert "TaskOutput" in settings["system_prompt"]  # the facts of its tools stay
         assert Path(settings["work_folder"]) == folder / "home"  # a folder of its own
+        assert settings["compact_window"] == 150_000  # compacted before a day costs much
         assert not list(data.glob("*.db"))  # nothing of it in the user's own memory
     finally:
         await life.aclose()

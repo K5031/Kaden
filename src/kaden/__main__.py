@@ -69,14 +69,15 @@ DEFAULT_FACTORIES = {
     "frontend": "kaden.frontends.desktop:factory",
 }
 RUNTIME_KEYS = ("model", "maintenance_model", "permissions", "budget", "system_prompt",
-                "system_prompt_file")
+                "system_prompt_file", "compact_window")
+MIN_COMPACT_WINDOW = 100_000  # Claude Code's floor for its auto-compact window
 SECRET_WORDS = ("key", "token", "secret", "password")
 # The frontend each launcher falls back to: its own kind's built-in one.
 LAUNCHER_FRONTENDS = {WINDOW: "desktop"}
 # Not an installed frontend: a person never chooses it in Settings; --headless runs it.
 HEADLESS_FACTORY = "kaden.frontends.headless:factory"
 SAVED_KEYS = ("modules", "model", "maintenance_model", "permissions",
-              "system_prompt", "work_folder", "budget", "mcp_servers", "always_allow",
+              "system_prompt", "compact_window", "work_folder", "budget", "mcp_servers", "always_allow",
               "never_allow", "tool_settings")
 
 
@@ -128,7 +129,8 @@ def load_modules(path: Path, data: dict[str, Any]) -> dict[str, ModuleSpec]:
 
 def load_runtime(path: Path, data: dict[str, Any]) -> dict[str, Any]:
     """RuntimeConfig fields from [runtime]: model, maintenance_model, permissions, budget,
-    and system_prompt (inline, or system_prompt_file relative to the config file)."""
+    compact_window, and system_prompt (inline, or system_prompt_file relative to the config
+    file)."""
     section = table(path, data, "runtime", RUNTIME_KEYS)
     settings: dict[str, Any] = {}
     for key in ("model", "maintenance_model", "system_prompt", "system_prompt_file"):
@@ -156,6 +158,12 @@ def load_runtime(path: Path, data: dict[str, Any]) -> dict[str, Any]:
         except ValueError:
             raise SystemExit(f"{path}: [runtime] permissions must be one of "
                              f"{', '.join(PermissionPolicy)}") from None
+    if "compact_window" in section:
+        window = section["compact_window"]
+        if type(window) is not int or window < MIN_COMPACT_WINDOW:
+            raise SystemExit(f"{path}: [runtime] compact_window must be a number of tokens, "
+                             f"at least {MIN_COMPACT_WINDOW}")
+        settings["compact_window"] = window
     budget = table(path, section, "runtime.budget", (*BUDGET_INTS, *BUDGET_NUMBERS))
     for key, value in budget.items():
         if (wrong := bad_limit(key, value)) is not None:
@@ -195,6 +203,8 @@ def show_config(config: InstanceConfig, path: Path) -> str:
             section[key] = value
     section["permissions"] = runtime.permissions.value
     section["system_prompt"] = runtime.system_prompt
+    if runtime.compact_window is not None:
+        section["compact_window"] = runtime.compact_window
     if budget := {k: v for k, v in asdict(runtime.budget).items() if v is not None}:
         section["budget"] = budget
     data["runtime"] = section

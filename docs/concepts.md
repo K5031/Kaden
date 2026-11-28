@@ -160,7 +160,9 @@ comes back as the result of that step. Several can run at once.
 Kaden keeps every message of every conversation until you delete the conversation.
 
 - When a conversation fills about 90% of the model's context, its older half is
-  **summarized** so the recent part fits. Long tool output (command output, web pages) is
+  **summarized** so the recent part fits. Continuous counts its context as 150K tokens
+  at most, so its conversation, which never ends, is summarized before each step gets
+  expensive (`compact_window` in [Settings](settings.md#configtoml)). Long tool output (command output, web pages) is
   shortened for the summary, so summaries stay cheap. The originals stay saved, in full.
 - The summary ends with a list of the **topics covered so far**, one line each. Details
   fade from the summary as it is rewritten, but the list keeps every topic, so the agent

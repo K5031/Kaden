@@ -43,6 +43,10 @@ from kaden.runtime.config import TOOL_FACTS
 FOLDER = "life"
 RECORD = "life.json"
 HOME = "home"  # its own work folder, in its data folder
+# A life's conversation never ends, and each wake after the prompt cache has expired sends
+# all of it again: what is sent is kept to this many tokens (about two days of it stay
+# word for word).
+COMPACT_WINDOW = 150_000
 JOURNAL = "journal.md"  # in its folder: what the user reads of its days, in its view
 NAME = "Kaden"  # until the user names it
 OWN = ("You live on the user's computer: not their assistant, someone with a life of "
@@ -257,6 +261,7 @@ class Life:
                               else {"max_cost_usd_per_day": self.daily_usd})
         settings["work_folder"] = str(self.folder / HOME)
         settings["system_prompt"] = PROMPT
+        settings["compact_window"] = COMPACT_WINDOW
         child.write_settings(self.folder / "settings.toml", settings)
 
     def _read(self) -> dict[str, Any]:

@@ -544,3 +544,16 @@ def test_every_loader_reads_a_factory_path_alike(tmp_path, monkeypatch):
     assert load_entry("core", "boxed", target) is not None
     assert declared_settings(target) == (ToolSetting("fast", "Go fast", "boolean", False),)
     assert launcher.frontend_loop(ModuleSpec(target)) is print
+
+
+def test_the_saved_compact_window_reaches_the_runtime(tmp_path):
+    settings_file(tmp_path, "compact_window = 150000\n")
+    assert launcher.load_config(args(tmp_path)).runtime.compact_window == 150_000
+
+
+@pytest.mark.parametrize("value", ["99999", '"150k"', "true"])
+def test_a_compact_window_below_claude_codes_floor_or_not_a_number_is_refused(tmp_path,
+                                                                             value):
+    settings_file(tmp_path, f"compact_window = {value}\n")
+    with pytest.raises(SystemExit, match="compact_window"):
+        launcher.load_config(args(tmp_path))

@@ -9,6 +9,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from kaden.runtime import backup
+from tests.conftest import eventually
 
 
 def data_folder(tmp_path: Path) -> Path:
@@ -108,20 +109,20 @@ async def test_the_app_keeps_it_backed_up_and_says_when_it_cannot(tmp_path, monk
     failures: list[str] = []
     task = asyncio.create_task(backup.keep_backed_up(data, every_s=0.01,
                                                      failed=failures.append))
-    for _ in range(200):
-        if (data / "backups").exists() and any((data / "backups").iterdir()):
-            break
-        await asyncio.sleep(0.01)
-    assert len([p for p in (data / "backups").iterdir() if not p.name.startswith(".")]) == 1
+    def finished() -> list[Path]:  # a backup being written starts with "."
+        backups = data / "backups"
+        if not backups.exists():
+            return []
+        return [p for p in backups.iterdir() if not p.name.startswith(".")]
+
+    await eventually(finished)
+    assert len(finished()) == 1
 
     def broken(*_args: object) -> None:
         raise OSError("No space left on device")
 
     monkeypatch.setattr(backup, "back_up", broken)
-    for _ in range(200):
-        if failures:
-            break
-        await asyncio.sleep(0.01)
+    await eventually(lambda: failures)
     task.cancel()
     assert failures and "No space left on device" in failures[0]
     await asyncio.sleep(0.05)

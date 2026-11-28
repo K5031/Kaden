@@ -482,8 +482,9 @@ async def test_a_message_queued_after_the_last_turn_is_still_answered(make: Any)
     await h.start()
     await h.runtime.send("go")
     queued = (await h.rec.wait_for(lambda r: r.of(MessageQueued)))[0]
-    await eventually(lambda: len(core.requests) == 2)
-    await h.rec.wait_state(AgentState.IDLE)
+    # Waiting for IDLE would return at once: it was IDLE before "go" too.
+    await h.rec.wait_for(lambda r: [e for e in r.of(MessageCommitted)
+                                    if e.message.blocks == (Text("second answer"),)])
     said = [e.message for e in h.rec.of(MessageCommitted)]
     assert [m.blocks for m in said if m.id == queued.message_id] == [(Text("one more thing"),)]
     assert said[-1].blocks == (Text("second answer"),)
@@ -1049,3 +1050,21 @@ async def test_the_context_is_sized_after_the_duty_in_the_system_prompt(make: An
         return given
 
     assert await budget(None) - await budget(text) >= estimate_tokens(text)
+
+
+async def test_the_compact_window_narrows_the_window_memory_compacts_in(make: Any) -> None:
+    """compact_window, as Claude Code's autoCompactWindow: what is sent is sized, and so
+    compacted, to at most this many tokens; the output keeps its reserve."""
+
+    async def budget(compact_window: int | None) -> int:
+        h: Harness = await make(core=ScriptedCore(default=Step(text="ok")),
+                                compact_window=compact_window)
+        await h.start()
+        await h.turn("hi")
+        given = h.memory.assemble_budgets[-1]
+        await h.close()
+        return given
+
+    # fake-1: a 100K window, 1K of it kept for the output
+    assert await budget(None) - await budget(60_000) == 39_000
+    assert await budget(200_000) == await budget(None)  # never wider than the model's

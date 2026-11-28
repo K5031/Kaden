@@ -95,6 +95,9 @@ class RuntimeConfig:
     model: str | None = None  # default model; None = first model Core lists
     maintenance_model: str | None = None  # Completion(light=True); None = main model
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
+    # What is sent (system prompt, tools, context) is sized, and so compacted, to at most
+    # this many tokens (Claude Code's autoCompactWindow); None = the model's window.
+    compact_window: int | None = None
     permission_rules: tuple[PermissionRule, ...] = ()  # what the user answered always or never
     hooks: tuple[Hook, ...] = ()  # the user's commands before and after tool calls
     default_max_output_tokens: int = 4096

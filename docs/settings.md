@@ -195,6 +195,7 @@ model = "deepseek-flash"
 maintenance_model = "deepseek-flash"
 permissions = "auto"                # auto | allow_workspace | allow_read_only | ask | deny
 system_prompt_file = "prompt.md"    # or: system_prompt = "..."
+compact_window = 300000             # compact as if the model took at most this many tokens
 
 [runtime.budget]                    # each limit optional
 max_cost_usd = 5.0
@@ -202,6 +203,13 @@ max_tokens = 1000000
 max_duration_s = 3600               # time spent working
 max_tool_calls = 200
 ```
+
+`compact_window` works like Claude Code's auto-compact window: what is sent to the model
+(instructions, tools and the conversation) is sized to at most this many tokens, so a
+conversation is summarized sooner and each step costs less. It is at least 100000; left out,
+the model's whole context counts. It can also go in `settings.toml`, which wins over
+`config.toml`; there is no field for it in the settings screen. Continuous sets its own,
+150000.
 
 `[core]`, `[memory]`, `[tools]` and `[frontend]` each take a `factory` and `options`; a
 section left out uses Kaden's default. A module chosen in the settings screen replaces the

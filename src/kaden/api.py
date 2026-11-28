@@ -594,9 +594,10 @@ class PlanItem:
 @dataclass(frozen=True, slots=True)
 class ContextRequest:
     conversation_id: ConversationId
-    # Budget for the assembled context: window minus base system prompt, tool schemas and
-    # the output reserve (the model's max_output_tokens or the runtime default, capped at
-    # a quarter of the window; also sent as InferenceRequest.max_output_tokens).
+    # Budget for the assembled context: window minus the output reserve (the model's
+    # max_output_tokens or the runtime default, capped at a quarter of the window; also
+    # sent as InferenceRequest.max_output_tokens), at most the runtime's compact window,
+    # minus base system prompt and tool schemas. Memory compacts within it.
     max_tokens: int
     count_tokens: TokenCounter
 

@@ -166,6 +166,12 @@ def _log_listing_failure(task: asyncio.Task[Any]) -> None:
     if not task.cancelled() and (error := task.exception()) is not None:
         logger.error("Listing the tools failed", exc_info=error)
 
+
+def _log_keeping_failure(task: asyncio.Task[Any]) -> None:
+    """The kept watches' check's error, which nothing awaits after a turn."""
+    if not task.cancelled() and (error := task.exception()) is not None:
+        logger.error("Checking the kept watches failed", exc_info=error)
+
 _RUNNING = (AgentState.THINKING, AgentState.RUNNING_TOOLS, AgentState.AWAITING_PERMISSION,
             AgentState.FINISHING)
 REVIEW_HISTORY = 200  # newest messages searched for the user's words in a permission review
@@ -463,6 +469,7 @@ class Runtime:
         self._fired: list[_Firing] = []
         self._confirms: dict[str, _Firing] = {}
         self._keeping: asyncio.Task[None] | None = None
+        self._keep_again = False  # a check was asked for while one ran
         self._listing: asyncio.Task[Any] | None = None  # the tools listed as a conversation opens
         self._listing_lock = asyncio.Lock()
         self._watch_writing = asyncio.Lock()
@@ -1253,17 +1260,21 @@ class Runtime:
 
     def _context_request(self, info: ModelInfo, tools: Sequence[ToolSpec],
                          factor: float = 1.0) -> tuple[ContextRequest, int]:
-        """The assembled context gets the window minus system prompt, tools and output."""
+        """The assembled context gets the window minus output, at most compact_window, minus
+        system prompt and tools."""
         assert self._conversation is not None
         window = self._window(info)
         reserve = min(info.max_output_tokens or self._config.default_max_output_tokens,
                       window // 4)
+        room = window - reserve  # for what is sent: at most compact_window
+        if self._config.compact_window is not None:
+            room = min(room, self._config.compact_window)
         count = self._counter(info.id)
         tool_json = json.dumps([[t.name, t.description, t.parameters] for t in tools])
         # The system prompt as sent, but for Memory's addendum, which comes of assembling:
         # its plan counted in full (in view, it is left out).
         system = "\n\n".join([self._system(), *self._prompt_sections(in_view=False)])
-        budget = window - reserve - count(system) - count(tool_json)
+        budget = room - count(system) - count(tool_json)
         return ContextRequest(self._conversation.id, max(0, int(budget * factor)), count), reserve
 
     async def _send_back(self) -> bool:
@@ -2333,12 +2344,29 @@ class Runtime:
             # the tool servers to start.
             self._listing = asyncio.create_task(self._offered_tools())
             self._listing.add_done_callback(_log_listing_failure)
-        await self._keep_standing()
+        self._keep_standing_soon()
+        task = self._keeping
+        if task is not None:
+            await asyncio.wait([task])
+            if not task.cancelled() and (exc := task.exception()) is not None:
+                raise exc
 
     def _keep_standing_soon(self) -> None:
-        if self._closed or (self._keeping is not None and not self._keeping.done()):
+        """Check the kept watches; asked while a check runs, one more follows it."""
+        if self._closed:
             return
-        self._keeping = asyncio.create_task(self._keep_standing())
+        if self._keeping is not None and not self._keeping.done():
+            self._keep_again = True
+            return
+        self._keeping = asyncio.create_task(self._keep_standing_while_asked())
+        self._keeping.add_done_callback(_log_keeping_failure)
+
+    async def _keep_standing_while_asked(self) -> None:
+        while True:
+            self._keep_again = False
+            await self._keep_standing()
+            if not self._keep_again:
+                return
 
     async def _keep_standing(self) -> None:
         """Start each watch a module keeps that is not running; end those it no longer

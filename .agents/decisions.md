@@ -170,6 +170,13 @@ Module streams were imported with `rsync -a --ignore-existing`, so this reposito
 - Factory: `kaden.memory.sqlite:factory`. Options: `path` (default
   `<data_dir>/memory.db`) plus any
   `CompactionConfig` field; an unknown option raises TypeError.
+- `compact_window` (a runtime setting, as Claude Code's `autoCompactWindow`, at least
+  100000 as its floor) caps what is sent, system prompt and tools included, below the
+  window minus the output reserve; Memory sees the smaller `max_tokens` and compacts
+  within it. The output reserve stays that of the real window. Continuous writes 150000
+  into its settings at each start (`life.COMPACT_WINDOW`): measured on Ahri's log, its
+  conversation grew about 37K tokens a day, and a wake after the cache expired re-sent
+  all of it.
 - `CompactionConfig` is all fractions of `ContextRequest.max_tokens`: trigger 0.9
   (summary plus active verbatim context; compaction runs before every request, so a big
   step is compacted before it is sent, and the 10% covers token-count estimates), remove 0.5 (cut-half), summary 0.05, long-term
@@ -402,13 +409,13 @@ run with `KADEN_LIVE_TESTS=1` and a key.
 
 ## Desktop app
 
-Design: [Agent Note](notes/proposed/2026-11-07-desktop-app.md).
+Design: [Agent Note](notes/implemented/2026-11-07-desktop-app.md).
 
 | Choice | Value |
 |---|---|
 | App menu | `app_menu.install()` (Linux, from **Kaden → Add to App Menu**) writes `applications/io.github.k5031.kaden.desktop` and `icons/hicolor/scalable/apps/io.github.k5031.kaden.svg` under `$XDG_DATA_HOME` (default `~/.local/share`). `Exec` is this install's Python with `-m kaden.window`, since a menu has no terminal for `kaden`; the id is the window's desktop file name, so the window gets the icon. The action shows while the entry is missing or differs. Installing also runs `kbuildsycoca6` and sends KIconLoader's `iconChanged` signal when they exist: KDE keeps the entries and icons it has read, so without them a click runs the entry's old command |
-| Entry points | No command of its own: `kaden` hands over to `python -m kaden.window`; bundles run `python -m kaden_desktop`, which calls the same `main`, or `kaden.__main__.main` when started as `kaden` or `kd` (links the package adds) |
-| Dependencies | `pyside6-essentials` and `qasync`, in the `desktop` extra (also in the dev group) |
+| Entry points | `kaden-desktop` runs `kaden.window:main`; `kaden` hands over to `python -m kaden.window`; bundles run `python -m kaden_desktop`, which calls the same `main`, or `kaden.__main__.main` when started as `kaden` or `kd` (links the package adds) |
+| Dependencies | The `desktop` extra (also in the dev group): `pyside6-essentials`, `pyside6-addons` (the voice's audio), `qasync`, `pygments`, `sherpa-onnx`, `numpy` |
 | Default work folder | The current directory, for both launchers, when neither config file sets a root. The desktop app has the user choose each new chat's folder (`Controller.folder_picked`) |
 | At launch | Opens `--conversation` (given by `kaden`), else the most recently updated conversation, or starts one when there is none |
 | Welcome | Shown on the setup runtime when the chosen provider needs a key and no provider has one; it saves the provider, key, work folder and limit, then restarts |
@@ -1115,7 +1122,7 @@ The design is in [the note](notes/implemented/2026-11-25-backups.md); the choice
 
 ## A Bilibili account of its own
 
-The design is in [the note](notes/proposed/2026-11-25-a-bilibili-account-of-its-own.md); the choices it leaves open:
+The design is in [the note](notes/implemented/2026-11-25-a-bilibili-account-of-its-own.md); the choices it leaves open:
 
 | Choice | Decision |
 |---|---|

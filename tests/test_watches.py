@@ -325,3 +325,69 @@ async def test_a_kept_watch_is_kept_once_whatever_the_order_of_its_arguments(mak
     await eventually(lambda: tools.asked >= 2)
     await asyncio.sleep(0.1)  # what it asked is acted on
     assert [w.name for w in h.runtime._watch_list()] == ["inbox"]
+
+
+class Holding(Keeping):
+    """Keeps its watch as `keep` says when asked, then answers once `go` is set."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.go = asyncio.Event()
+        self.go.set()
+        self.asked = 0
+
+    async def standing_watches(self) -> list[StandingWatch]:
+        self.asked += 1
+        kept = await super().standing_watches()
+        await self.go.wait()
+        return kept
+
+
+async def test_a_check_asked_for_while_one_runs_is_run_after_it(make):
+    """A turn that ends while the kept watches are being checked asks again; that is not
+    lost, so a watch no longer kept ends."""
+    inbox, tools = Source(), Holding()
+    watching(tools, inbox, "inbox")
+    life = Duty("You are Mira.", DutyKind.LIFE, min_interval_s=30, max_interval_s=60)
+    h: Harness = await make(core=ScriptedCore(default=Step(text="")), tools=tools,
+                            **FAST_WATCH)
+    await h.start()
+    await h.runtime.set_duty(life)
+    await eventually(lambda: inbox.calls == 1)
+    await idle(h)
+    tools.go.clear()
+    asked = tools.asked
+    await h.turn("hi")
+    await eventually(lambda: tools.asked == asked + 1)  # held, still keeping it
+    tools.keep = False
+    await h.turn("bye")
+    tools.go.set()
+    await eventually(lambda: "inbox" not in {w.name for w in h.runtime._watch_list()})
+
+
+async def test_a_check_asked_for_while_the_conversation_opens_keeps_one_watch(make):
+    inbox, tools = Source(), Holding()
+    watching(tools, inbox, "inbox")
+    life = Duty("You are Mira.", DutyKind.LIFE, min_interval_s=30, max_interval_s=60)
+    h: Harness = await make(core=ScriptedCore(default=Step(text="")), tools=tools,
+                            **FAST_WATCH)
+    info = await h.start()
+    await h.runtime.set_duty(life)
+    await eventually(lambda: inbox.calls == 1)
+    await idle(h)
+    await h.close()
+    again_inbox, again_tools = Source(), Holding()
+    watching(again_tools, again_inbox, "inbox")
+    again_tools.go.clear()
+    again: Harness = await make(core=ScriptedCore(default=Step(text="")), tools=again_tools,
+                                store=h.store, data_dir=h.data_dir, **FAST_WATCH)
+    opening = asyncio.create_task(again.start(info.id))
+    await eventually(lambda: again_tools.asked == 1)  # the open-time check, held
+    again.runtime._keep_standing_soon()
+    await asyncio.sleep(0.05)
+    assert again_tools.asked == 1  # one check at a time: the second waits for the first
+    again_tools.go.set()
+    await opening
+    await eventually(lambda: again_tools.asked == 2)
+    await asyncio.sleep(0.1)  # what it asked is acted on
+    assert [w.name for w in again.runtime._watch_list()] == ["inbox"]
