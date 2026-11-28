@@ -72,13 +72,13 @@ def prompt(duty: Duty | None, plan: Sequence[PlanItem], *, in_view: bool = False
             f"## Your life\n{duty.instruction}\n\n"
             "Your time is your own. The user is part of your life: you may reach out to "
             "them whenever you like, not only when they write. You have your tools, a "
-            "folder of your own, the web, and memory to keep what you want to remember. When you end your turn, you rest until something wakes "
-            "you: the user writing, something you watch happening, background work of yours "
-            "finishing, or a time you choose (with Rest, or a step of your plan given a due "
-            f"time with TodoWrite; at most {span(duty.max_interval_s)} ahead). Nothing else "
-            "wakes you. When the user writes, you answer them. Text you "
-            "write in a turn the user did not start reaches them as a message; a turn that "
-            "ends without text reaches no one.")
+            "folder of your own, the web, and memory to keep what you want to remember. "
+            "When you end your turn, you rest until something wakes you: the user writing, "
+            "something you watch happening, background work of yours finishing, or a time "
+            "you choose (with Rest, or a step of your plan given a due time with TodoWrite;"
+            f" at most {span(duty.max_interval_s)} ahead). Nothing else wakes you. When the "
+            "user writes, you answer them. Text you write in a turn the user did not start "
+            "reaches them as a message; a turn that ends without text reaches no one.")
     elif duty is not None:
         until = (" until the goal is reached; then call finish_goal with a short report"
                  if duty.kind == DutyKind.GOAL else "")
