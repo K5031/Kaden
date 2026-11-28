@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 import kaden.__main__ as launcher
-from kaden.api import AgentState, Budget, DutyKind, PermissionPolicy, StartOptions
+from kaden.api import Budget, PermissionPolicy, StartOptions
 from kaden.frontends.headless import HeadlessFrontend, factory
 from tests.conftest import Harness, eventually
 from tests.fakes.core import ScriptedCore, Step, call
@@ -127,18 +127,24 @@ async def test_errors_keep_their_message(make, clients):
                                  for m in client.messages))
 
 
-async def test_a_duty_is_set_and_the_plan_is_read(make, clients):
+async def test_a_life_is_set_and_the_plan_is_read(make, clients):
+    """Continuous sets its process's life with set_duty; a duty of another kind, as the
+    removed duties and goals were, is refused."""
     h: Harness = await make(core=ScriptedCore([Step(text="on it")]),
                             budget=Budget(max_cost_usd=5))
     client = clients()
     await client.run(h.runtime)
     await client.request("start")
+    refused = await client.request("set_duty", duty={"instruction": "Answer the inbox",
+                                                     "kind": "goal"})
+    assert refused["error"]["code"] == -32602 and "DutyKind" in refused["error"]["message"]
+    assert h.runtime.snapshot().conversation.duty is None
     reply = await client.request("set_duty", duty={"instruction": "Answer the inbox",
-                                                   "kind": "goal", "max_interval_s": 600})
+                                                   "kind": "life", "max_interval_s": 600})
     assert reply["result"] is None
     await client.request("set_plan", plan=[{"text": "Read mail", "status": "doing"}])
     info = (await client.request("snapshot"))["result"]["conversation"]
-    assert info["duty"]["kind"] == "goal" and info["duty"]["max_interval_s"] == 600
+    assert info["duty"]["kind"] == "life" and info["duty"]["max_interval_s"] == 600
     assert info["plan"] == [{"type": "PlanItem", "text": "Read mail", "status": "doing",
                              "due": None, "note": ""}]
 
@@ -169,46 +175,27 @@ async def test_closing_stdin_ends_the_frontend(make, clients):
     await asyncio.wait_for(task, 3)
 
 
-async def test_a_launch_duty_starts_a_new_conversation_on_it(make, clients):
-    h: Harness = await make(core=ScriptedCore([Step(text="working on it")]),
-                            budget=Budget(max_cost_usd=5))
-    client = clients(start=StartOptions(), duty="Run the socials", kind=DutyKind.DUTY)
-    await client.run(h.runtime)
-    await eventually(lambda: h.runtime.snapshot().conversation is not None
-                     and h.runtime.snapshot().conversation.duty is not None)
-    assert h.runtime.snapshot().conversation.duty.instruction == "Run the socials"
-    await eventually(lambda: len(h.core.requests) == 1
-                     and h.runtime.snapshot().state == AgentState.IDLE)
-
-
-async def test_a_launch_duty_that_cannot_run_ends_the_unit(make, clients, capsys):
-    h: Harness = await make()
-    client = clients(start=StartOptions(), duty="  ", kind=DutyKind.DUTY)  # says nothing
-    task = await client.run(h.runtime)
-    await asyncio.wait_for(task, 3)
-    assert "needs an instruction" in capsys.readouterr().err
-
-
 def test_factory_options():
-    frontend = factory({"start": True, "conversation_id": "c1", "duty": "Watch",
-                        "goal": True}, None)
+    frontend = factory({"start": True, "conversation_id": "c1"}, None)
     assert frontend.info.interactive_permissions
     assert frontend.start == StartOptions(conversation_id="c1")
-    assert (frontend.duty, frontend.kind) == ("Watch", DutyKind.GOAL)
 
 
 def test_the_launcher_runs_the_headless_frontend(tmp_path):
-    args = launcher.parse_args(["--data-dir", str(tmp_path), "--headless", "--goal", "Ship"])
+    args = launcher.parse_args(["--data-dir", str(tmp_path), "--headless",
+                                "--conversation", "c1"])
     config = launcher.load_config(args)
     assert config.frontend.factory == "kaden.frontends.headless:factory"
-    assert config.frontend.options == {"start": True, "duty": "Ship", "goal": True}
+    assert config.frontend.options == {"start": True, "conversation_id": "c1"}
     assert config.runtime.modules.running["frontend"] is None
 
 
-def test_a_duty_needs_headless(tmp_path):
-    with pytest.raises(SystemExit):
-        launcher.load_config(launcher.parse_args(["--data-dir", str(tmp_path),
-                                                  "--duty", "x"]))
+@pytest.mark.parametrize("flag", ["--duty", "--goal"])
+def test_there_is_no_duty_or_goal_flag(tmp_path, flag, capsys):
+    with pytest.raises(SystemExit) as exited:
+        launcher.parse_args(["--data-dir", str(tmp_path), "--headless", flag, "x"])
+    assert exited.value.code == 2  # argparse's error
+    assert "unrecognized arguments" in capsys.readouterr().err
 
 
 async def test_a_real_process_keeps_stdout_for_the_channel(tmp_path):
@@ -226,20 +213,27 @@ async def test_a_real_process_keeps_stdout_for_the_channel(tmp_path):
     env.pop("KADEN_PERMISSION_CEILING", None)
     process = await asyncio.create_subprocess_exec(
         sys.executable, "-c", "import kaden.__main__ as m; print('stray'); m.main()",
-        "--headless", "--data-dir", str(data), "--goal", "Say ok",
+        "--headless", "--data-dir", str(data),
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE, cwd=root, env=env)
     lines: list[dict[str, Any]] = []
     try:
-        async def until_answered() -> None:
-            while line := await process.stdout.readline():
-                lines.append(json.loads(line))  # every stdout line is the protocol's
-                if any(e["params"]["event"]["type"] == "MessageCommitted"
-                       and e["params"]["event"]["message"]["role"] == "assistant"
-                       for e in lines if e.get("method") == "event"):
-                    return
+        async def request(n: int, method: str, **params: Any) -> None:
+            process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": n, "method": method,
+                                            "params": params}).encode() + b"\n")
+            await process.stdin.drain()
 
-        await asyncio.wait_for(until_answered(), 20)
+        async def until(done: Any) -> None:
+            while not done() and (line := await process.stdout.readline()):
+                lines.append(json.loads(line))  # every stdout line is the protocol's
+
+        await request(0, "start")
+        await asyncio.wait_for(until(lambda: any(e.get("id") == 0 for e in lines)), 20)
+        await request(1, "send", text="Say ok")
+        await asyncio.wait_for(until(lambda: any(
+            e["params"]["event"]["type"] == "MessageCommitted"
+            and e["params"]["event"]["message"]["role"] == "assistant"
+            for e in lines if e.get("method") == "event")), 20)
     finally:
         process.stdin.close()
         stderr = (await asyncio.wait_for(process.communicate(), 20))[1].decode()

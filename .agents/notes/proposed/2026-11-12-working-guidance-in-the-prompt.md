@@ -10,8 +10,7 @@ Kaden runs on one sentence of persona. What the agent knows about how to work co
 the tool descriptions, the Memory module's rules and the model's own habits.
 
 Guidance that belongs to no single tool has nowhere to live. Rules added on 2026-11-12
-(plan first, close the plan when finishing a goal, how to answer when the user is
-talking) each went into a tool's description or a runtime notice because that was the
+(plan first, how to answer when the user is talking) each went into a tool's description or a runtime notice because that was the
 only place that survives a custom prompt. Claude Code and Codex carry long prompts on how
 to work: when to act and when to ask, checking work before calling it done, reporting
 failures plainly, care with what cannot be undone, staying inside what was asked, how to
@@ -28,7 +27,7 @@ Three layers, so that the agent stays general and puts its specialisation on:
 |---|---|---|
 | Base | how to work, in any job | a built-in page, always in the system prompt |
 | Trade | how to do one kind of work (coding, writing copy, research) | skills, loaded when the task calls for them |
-| Role | what this agent is responsible for | the user's prompt, the project, a duty's instruction (in a fleet, the supervisor's brief) |
+| Role | what this agent is responsible for | the user's prompt, the project, a life's instruction (in a fleet, the supervisor's brief) |
 
 - The base page is short and holds only habits that are true for any work. Nothing about
   a trade goes in it: no rules about diffs or tests.

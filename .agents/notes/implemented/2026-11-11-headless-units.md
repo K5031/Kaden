@@ -11,17 +11,17 @@ headless, report back, keep to the budgets and permissions it is given, and be p
 killed at any time. Communication may go through the KFM instead of directly between
 units.
 
-[Duties](2026-11-11-duties.md) gave one Kaden what a unit does by itself: a standing
-instruction, a plan, wake-ups, and `ask_for_help` when it is blocked. Running one from
-another program was not possible:
+One Kaden already did a unit's work: it takes a task, keeps a plan and reports on work
+it started ([duties](../rejected/2026-11-11-duties.md), since removed, gave it standing
+work too). Running one from another program was not possible:
 
 - **No way to drive it from outside.** The only frontend was the desktop window, for a
   person at a screen. Spawning `kd` as a subprocess gave the spawner no
-  structured way to send a message, give a duty, answer a prompt or stop it.
+  structured way to send a message, answer a prompt or stop it.
 - **No way to watch it from outside.** A supervisor must verify work, which means reading
   the subordinate's plan, state and, when needed, its transcript, while it runs. The
   runtime API has all of this (`snapshot`, `history`, `events`), but only in-process.
-- **Questions and prompts reached nobody.** `ask_for_help` and permission prompts waited
+- **Questions and prompts reached nobody.** The agent's questions and permission prompts waited
   for the person at the screen, and a non-interactive frontend refuses every call that
   would prompt.
 
@@ -52,13 +52,13 @@ process and knows nothing of ranks, teams or other units (SPEC 10.2).
   enums as values, so a new field needs no protocol code.
 - **Prompts are answered over the channel.** The frontend declares
   `interactive_permissions=True`: a permission prompt (`PromptOpened`) goes out as an event and the
-  client answers with `respond`. `HelpNeeded` goes out the same way; the answer
-  is a `send`.
-- **Launch options:** `--duty "…"` and `--goal "…"` start a new conversation with that
-  duty, which counts as the person's action that starts a duty; a duty that cannot start
-  (no instruction) is reported on stderr and the unit quits. Budget, permissions and
-  model come from the unit's `config.toml`, which the spawner writes into the unit's data
-  folder, so they persist with the usage they limit.
+  client answers with `respond`.
+- **Launch options:** `--conversation` starts in that conversation; a client starts a
+  new one with `start` and gives it its task with `send`, as the desktop app does its
+  sub-sessions ([no duty mode](2026-11-28-no-duty-mode.md)). A conversation that cannot
+  open is reported on stderr and the unit quits. Budget, permissions and model come from
+  the unit's `config.toml`, which the spawner writes into the unit's data folder, so they
+  persist with the usage they limit.
 - **Quitting:** stdin closing answers what was already asked, then shuts the instance
   down as on quit (running calls cancelled or abandoned, never interrupted).
 
@@ -83,7 +83,7 @@ Recorded so the frontend covers it:
     `read_transcript` costs the supervisor its own context and money, so it pages and is
     asked for only when the plan is not enough.
   - **Scoped by rank.** A supervisor sees the units below it; a human sees every unit.
-- **Escalation.** A unit's `HelpNeeded` and permission prompts go to its supervisor, which
+- **Escalation.** A unit's questions and permission prompts go to its supervisor, which
   answers or escalates one rank up, to the human only at the top. Actions with real-world
   effect (publishing, payments, outbound messages) go to the human unless the human
   granted them explicitly.
@@ -119,7 +119,7 @@ Recorded so the frontend covers it:
 
 ## Consequences
 
-- A program can run Kaden units without a screen, give them work and duties, watch every
+- A program can run Kaden units without a screen, give them work, watch every
   step, answer their prompts and questions, and stop them.
 - **The protocol is a contract.** The KFM depends on it, so renaming an API type or field
   changes the wire format; additions stay compatible.

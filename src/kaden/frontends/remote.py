@@ -19,13 +19,13 @@ from kaden.api import (
     ConversationUpdated,
     DutyScheduled,
     EventEnvelope,
-    HelpNeeded,
     MessageCommitted,
     MessageQueued,
     ModelSelected,
     OperationInfo,
     PlanModeChanged,
     PromptClosed,
+    PromptKind,
     PromptOpened,
     Refusal,
     RuntimeAPI,
@@ -216,8 +216,14 @@ class RemoteRuntime:
         return stream()
 
     def snapshot(self) -> RuntimeSnapshot:
+        """As the runtime's own: a call waiting as a proposal is not an operation."""
         assert self._snapshot is not None, "attach() first"
-        return self._snapshot
+        snap = self._snapshot
+        proposed = {p.id for p in snap.prompts if p.kind == PromptKind.PROPOSAL}
+        if not proposed:
+            return snap
+        return replace(snap, operations=tuple(o for o in snap.operations
+                                              if o.call.id not in proposed))
 
     async def restart(self) -> None:
         raise RuntimeStateError("a sub-session restarts with its parent", Refusal.UNAVAILABLE)
@@ -262,8 +268,6 @@ def _applied(snap: RuntimeSnapshot, envelope: EventEnvelope) -> RuntimeSnapshot:
             return replace(snap, usage=usage)
         case DutyScheduled(wake_at=wake_at):
             return replace(snap, duty_wake_at=wake_at)
-        case HelpNeeded(question=question):
-            return replace(snap, help_needed=question)
         case PlanModeChanged(on=on):
             return replace(snap, plan_mode=on)
         case ToolTitles(titles=titles):

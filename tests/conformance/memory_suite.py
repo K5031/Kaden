@@ -289,7 +289,7 @@ class MemoryConformance:
         memory = open_memory()
         conv = await memory.create_conversation()
         assert conv.duty is None and conv.plan == ()
-        duty = Duty("Answer the inbox", DutyKind.GOAL, min_interval_s=30, max_interval_s=600)
+        duty = Duty("Answer the inbox", DutyKind.LIFE, min_interval_s=30, max_interval_s=600)
         plan = (PlanItem("Read new mail", PlanStatus.DOING, due=1_800_000_000.5, note="hourly"),
                 PlanItem("Draft replies"))
         info = await memory.save_duty(conv.id, duty, plan)

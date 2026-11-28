@@ -5,24 +5,23 @@ manager, a script, a test. The program starts Kaden as a child process and talks
 over Kaden's stdin and stdout.
 
 ```bash
-kaden --headless --data-dir ~/units/writer --goal "Draft the launch post"
+kaden --headless --data-dir ~/units/writer
 ```
 
 | Option | Does |
 |---|---|
 | `--headless` | Use stdin and stdout for the program, as below |
-| `--duty "…"` | Start a new conversation with this as its [duty](concepts.md#duties), right away |
-| `--goal "…"` | The same, as a goal: it ends when the agent says it is reached |
 | `--data-dir`, `--config`, `--conversation`, `--model`, `--maintenance-model`, `--permissions` | See [Starting](using-kaden.md#starting) |
 
-Give each unit its own data folder. Its `config.toml` sets the model, permissions and
+To give it work, `start` a conversation and `send` the task, as the desktop app does for
+its sub-sessions. Give each unit its own data folder. Its `config.toml` sets the model, permissions and
 spending limit, if it should have one; see [config.toml](settings.md#configtoml).
 
 ## The channel
 
 [JSON-RPC 2.0](https://www.jsonrpc.org/specification), one message per line, UTF-8.
 Kaden writes nothing else to stdout: anything else the process prints goes to stderr, and
-so do Kaden's own errors, such as a duty that cannot start. Closing Kaden's stdin quits it
+so do Kaden's own errors, such as a conversation that cannot open. Closing Kaden's stdin quits it
 the way closing the window does.
 
 **Requests** have the names and parameters of the runtime's commands, every one but
@@ -36,7 +35,7 @@ drives its sub-sessions this way:
 | `activate`, `stop` | none |
 | `cancel_operation` | `call_id` |
 | `select_model` | `model_id` |
-| `set_duty` | `duty`: `{instruction, kind ("duty" or "goal"), min_interval_s, max_interval_s}` or `null` to end it |
+| `set_duty` | `duty`: `{instruction, kind ("life"), min_interval_s, max_interval_s}` or `null` to end it: the life Continuous gives its conversation ([Continuous](concepts.md#continuous)) |
 | `set_plan` | `plan`: a list of `{text, status, due, note}` |
 | `respond` | `prompt_id`, `reply`: shaped by the prompt's `kind` (below) |
 | `set_plan_mode` | `on` (true or false) |
@@ -50,10 +49,10 @@ drives its sub-sessions this way:
 | `inspect_memory` | `conversation_id` |
 | `save_note`, `delete_note` | `title`, `description`, `text`, optional `note_id`; or `note_id` |
 
-A refusal (asking before `start`, a duty without an instruction, an unknown
+A refusal (asking before `start`, a life without an instruction, an unknown
 conversation) is error `-32000` with the runtime's message and `data.type`, such as
 `RuntimeStateError`. A `RuntimeStateError` also has `data.reason`, a word to act on:
-`not_started`, `busy`, `budget`, `not_pending`, `conversation_open` or `unavailable`. Missing parameters are `-32602`, unknown methods `-32601`.
+`not_started`, `busy`, `budget`, `not_pending`, `conversation_open` or `unavailable`. Missing or unreadable parameters (a `kind` that is not `life`) are `-32602`, unknown methods `-32601`.
 A message longer than 16 MiB is `-32600` (with no `id`) and is dropped; the channel
 goes on. Any other failure inside a command is `-32000`, `data.type` naming the
 exception.
@@ -61,7 +60,7 @@ exception.
 **Events** come as notifications: `{"method": "event", "params": {"seq": 12, "event":
 {...}}}`, every event the runtime emits, in order. Values are JSON objects with their kind
 under `"type"`, such as `MessageCommitted`, `StateChanged`, `PromptOpened`,
-`HelpNeeded` and `DutyScheduled`. A jump in `seq` means events were dropped: take a
+and `DutyScheduled`. A jump in `seq` means events were dropped: take a
 `snapshot`, ignore events up to its `seq`, and read `history`.
 
 **Naming a step.** A tool call with a `step_summary` argument names itself (Bash and the
@@ -75,7 +74,7 @@ work from `thinking` until it is `idle` again; in `finishing` its answer is comp
 Kaden saves what it learned.
 
 **A message says who wrote it.** A `Message` with role `user` has an `author`: `user`,
-or `kaden` for what Kaden itself wrote for the agent (a check-in, a reminder,
+or `kaden` for what Kaden itself wrote for the agent (a reminder, a life's wake-up,
 background results). Its `text` is exactly what was written. To tell the agent something
 that is not the user's words, use `notify` with a `text` instead of `send`.
 
@@ -94,12 +93,10 @@ with `reply` null, when it ended unanswered). The snapshot lists the open ones a
 
 A prompt with `words: true` (a question, a plan) is also answered by `send`: your
 message answers it in your own words and follows it in the conversation. A kind you do not
-know is shown by its `text`. A question the agent asks its supervisor while on a
-duty comes as `HelpNeeded`: answer it with `send`.
+know is shown by its `text`.
 
 **The wrap-up card is a tool call.** A turn that leaves a decision may end with a `wrap_up` call:
-`question`, up to three `options` with the agent's pick first, and an optional `recap` (an `ask_for_help` call
-may carry `replies` the same way). Answer with `send`, using an option's `label` or anything
+`question`, up to three `options` with the agent's pick first, and an optional `recap`. Answer with `send`, using an option's `label` or anything
 else. An option with a `call` is also a pending proposal with `card: true` and the
 `wrap_up` call's id: `respond(id, true)` runs it. Sending a message withdraws it.
 

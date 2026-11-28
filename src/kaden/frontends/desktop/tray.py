@@ -1,5 +1,5 @@
 """Kaden's icon in the system tray, while its window is closed: Kaden goes on running
-(a life, duties, background work) until the user quits."""
+(a life, reminders, background work) until the user quits."""
 
 from __future__ import annotations
 

@@ -50,14 +50,12 @@ from kaden.api import (
     CoreError,
     Decision,
     Duty,
-    DutyKind,
     DutyScheduled,
     EventEnvelope,
     Failure,
     FailureKind,
     File,
     FrontendInfo,
-    HelpNeeded,
     InferenceRequest,
     MaintenanceFinished,
     MaintenanceStarted,
@@ -179,7 +177,7 @@ USAGE_FILE = "usage.json"
 EVENT_LOG_FILE = "events.jsonl"
 _NO_MEMORY_EDITING = "this memory module cannot edit memories"
 _NO_DELETION = "this memory module cannot delete conversations"
-_NO_DUTIES = "this memory module cannot keep duties"
+_NO_DUTIES = "this memory module cannot keep a life or a plan"
 @dataclass
 class _Open:
     """A prompt before the person, and what its reply settles."""
@@ -439,7 +437,7 @@ class Runtime:
         self._draft = False  # the open conversation is new and not stored yet
         self._models: dict[str, ModelInfo] = {}
         self._model: str | None = config.model
-        self._own_time = False  # the cycle under way was started by a duty by itself
+        self._own_time = False  # the cycle under way was started by a life by itself
         self._calibration: dict[str, float] = {}
 
         self._base = AgentState.NOT_STARTED  # state outside a cycle
@@ -500,16 +498,15 @@ class Runtime:
         self._unseen = False
         self._duty_timer: asyncio.Task[None] | None = None
         self._duty_wake_at: float | None = None
-        self._duty_cause: str | None = None  # why the next cycle was requested for a duty
+        self._duty_cause: str | None = None  # why the next cycle was requested by itself
         self._rest_until: float | None = None  # a life rests until then (Rest), this turn
         # When the last cycle of the open conversation ended: a life rested since. None:
         # not since it was opened.
         self._turn_ended: float | None = None
-        # Without a duty: steps due up to this time have reminded, or fell due while the
+        # Without a life: steps due up to this time have reminded, or fell due while the
         # conversation was closed and wait for the user.
         self._reminded = 0.0
         self._sent_back = False  # this cycle: the agent was told to finish its plan
-        self._help: str | None = None  # the agent's open question (ask_for_help)
         self._proposal_ops: set[CallId] = set()  # operations that are proposals
         self._proposal_done = False  # a proposal's outcome the model has not seen
         self._uncounted: set[CallId] = set()  # operations not counted as activity yet
@@ -542,7 +539,6 @@ class Runtime:
                         for op in self._ops.values() if op.call.id not in self._proposals()],
             queued_messages=list(self._inbox),
             duty_wake_at=self._duty_wake_at,
-            help_needed=self._help,
             plan_mode=self._plan_mode,
             prompts=tuple(o.prompt for o in self._open.values()),
             tool_titles=dict(self._titles),
@@ -649,16 +645,14 @@ class Runtime:
         self._wake_set, self._immediate_wake, self._unseen = None, False, False
         self._rest_until = self._turn_ended = None
         self._cancel_duty()
-        self._answered()
         if resumed:
             await self._repair()
         self._log.decision("start", conversation=conversation.id, resumed=resumed,
                            seed_from=conversation.seed_from, model=model)
         self._set_base(AgentState.IDLE)
         self._reminded = time.time()
-        # A duty waits for the user after it was closed; a life goes on.
-        if conversation.duty is None or conversation.duty.kind == DutyKind.LIFE:
-            self._schedule_duty()
+        # A life goes on after its conversation was closed; steps still ahead remind.
+        self._schedule_duty()
         await self._resume_watches()
         return conversation
 
@@ -721,7 +715,6 @@ class Runtime:
             for entry in [o for o in self._open.values() if o.prompt.words]:
                 self._answered_in_words(entry.prompt, text.strip())
         attached = tuple([await self._attach(path) for path in files])
-        self._answered()
         self._queue(MessageQueued(_new_id(), text, attached, spoken), "user message")
 
     async def notify(self, text: str) -> None:
@@ -769,14 +762,13 @@ class Runtime:
             raise RuntimeStateError(
                 f"cannot activate while {state}",
                 Refusal.NOT_STARTED if state == AgentState.NOT_STARTED else Refusal.BUSY)
-        self._answered()
         self._request_cycle("user activation")
 
     async def stop(self) -> None:
         state = self._state()
         if state == AgentState.NOT_STARTED:
             return
-        self._cancel_duty()  # a duty is paused until the user resumes it
+        self._cancel_duty()  # a life is paused until the user resumes it
         if state in (AgentState.STOPPING, AgentState.STOPPED):
             return
         if state in (AgentState.IDLE, AgentState.FAILED) and not self._ops:
@@ -880,7 +872,7 @@ class Runtime:
                 and conversation_id == self._conversation.id)
 
     async def _save_draft(self) -> None:
-        """Store the open conversation on its first use: a message, a duty or a name. Until
+        """Store the open conversation on its first use: a message, a life or a name. Until
         then a new chat leaves nothing behind."""
         if not self._draft:
             return
@@ -909,13 +901,15 @@ class Runtime:
         if duty is not None:
             duty = duties.check(duty)
         turned_on = duty is not None and self._conversation.duty is None
+        turned_off = duty is None and self._conversation.duty is not None
         await self._save_duty(duty, self._conversation.plan)
-        self._answered()
         self._log.decision("duty", on=duty is not None,
                            kind=duty.kind if duty is not None else None)
         state = self._state()
         if duty is None:
             self._cancel_duty()
+            if turned_off:  # a wake-up the life asked for is no longer its own
+                self._duty_cause = None
         elif turned_on and (state in (AgentState.IDLE, AgentState.STOPPED) or (
                 state == AgentState.FAILED and not self._budget.exhausted())):
             self._request_cycle(f"duty: {duties.TURNED_ON}", duties.TURNED_ON)
@@ -1012,7 +1006,7 @@ class Runtime:
         closes by itself: _NO_ANSWER."""
         answered = self._open_prompt(prompt)
         duty = self._conversation.duty if self._conversation is not None else None
-        if duty is None or duty.kind != DutyKind.LIFE:
+        if duty is None:
             return await answered
         try:
             return await asyncio.wait_for(asyncio.shield(answered),
@@ -1197,7 +1191,7 @@ class Runtime:
         settings = await self.settings()
         self._emit(SettingsChanged(settings))
         self._watch_duration()
-        # What waited on the spent budget (_queue) goes in once it is raised; a duty waits
+        # What waited on the spent budget (_queue) goes in once it is raised; a life waits
         # for the user, as after any budget stop.
         if (was_spent and self._budget.exhausted() is None and self._inbox
                 and self._state() == AgentState.FAILED and self._conversation is not None
@@ -1239,7 +1233,7 @@ class Runtime:
             raise ValueError(f"a cost budget needs prices for model {model_id!r}")
 
     def _info(self) -> ModelInfo:
-        """The model of the cycle under way: in a cycle a duty started by itself, the duty's
+        """The model of the cycle under way: in a cycle a life started by itself, the life's
         (Duty.model) when the Core offers it; otherwise the conversation's."""
         duty = self._conversation.duty if self._conversation is not None else None
         if self._own_time and duty is not None and duty.model in self._models:
@@ -1279,7 +1273,7 @@ class Runtime:
 
     async def _send_back(self) -> bool:
         """The agent ended its turn with steps of its plan open: send it back, once a
-        cycle, to do them or close them (duties.finish). Not with a duty, whose plan stays
+        cycle, to do them or close them (duties.finish). Not with a life, whose plan stays
         open between check-ins, nor while background work may still finish them."""
         conversation = self._conversation
         if (self._sent_back or conversation is None or conversation.duty is not None
@@ -1319,11 +1313,7 @@ class Runtime:
         conversation = self._conversation
         if conversation is not None:
             specs["TodoWrite"] = DUTY_TOOLS["TodoWrite"]
-            if conversation.duty is not None and conversation.duty.kind != DutyKind.LIFE:
-                specs["ask_for_help"] = DUTY_TOOLS["ask_for_help"]
-            if conversation.duty is not None and conversation.duty.kind == DutyKind.GOAL:
-                specs["finish_goal"] = DUTY_TOOLS["finish_goal"]
-            if conversation.duty is not None and conversation.duty.kind == DutyKind.LIFE:
+            if conversation.duty is not None:
                 specs["Rest"] = DUTY_TOOLS["Rest"]
         await self._load_skills()
         if self._skills:
@@ -1627,7 +1617,7 @@ class Runtime:
         await self._append()  # drain any backlog first
         await self._flush_results()
         await self._deliver_inbox()
-        # A duty's, not the user's.
+        # A life's own time, or a reminder: not the user's.
         duty_started = self._own_time = self._duty_cause is not None
         if self._duty_cause is not None:
             cause, self._duty_cause = self._duty_cause, None
@@ -1728,13 +1718,13 @@ class Runtime:
             elif not running:
                 self._request_cycle("wake-up")
 
-    # ── Duties ───────────────────────────────────────────────────────────
+    # ── A life and reminders ─────────────────────────────────────────────
 
     def _duty_running(self) -> bool:
         return self._conversation is not None and self._conversation.duty is not None
 
     def _schedule_duty(self) -> None:
-        """While idle, wake the duty at its next time (duties.next_wake); without a duty,
+        """While idle, wake the life at its next time (duties.next_wake); without a life,
         when the next step falls due (duties.next_reminder)."""
         self._cancel_duty()
         if self._conversation is None or not self._waiting():
@@ -1745,15 +1735,12 @@ class Runtime:
             if due is not None:
                 self._wake_in(max(self._config.reminder_min_s, due - time.time()), duties.DUE)
             return
-        if self._help is not None:
-            self._log.decision("duty_paused", reason="waiting for help")
-            return
         if self._day_spent():
             self._log.decision("duty_held", reason="the day's amount is spent")
             self._wake_in(max(0.0, next_day() - time.time()), duties.NEW_DAY)
             return
         wake = duties.next_wake(duty, self._conversation.plan, rest_until=self._rest_until)
-        if wake is None:  # a life that chose no time: asleep until something wakes it
+        if wake is None:  # it chose no time: asleep until something wakes it
             self._log.decision("duty_asleep")
             return
         self._wake_in(*wake)
@@ -1761,18 +1748,13 @@ class Runtime:
     def _day_spent(self) -> bool:
         """A life has spent today's amount (Budget.max_cost_usd_per_day)."""
         duty = self._conversation.duty if self._conversation is not None else None
-        return duty is not None and duty.kind == DutyKind.LIFE and self._budget.day_spent()
+        return duty is not None and self._budget.day_spent()
 
     def _wake_in(self, delay: float, cause: str) -> None:
         self._duty_timer = asyncio.create_task(self._duty_due(delay, cause))
         self._duty_wake_at = time.time() + delay
         self._log.decision("duty_scheduled", in_s=round(delay, 3), cause=cause)
         self._emit(DutyScheduled(self._duty_wake_at))
-
-    def _answered(self) -> None:
-        if self._help is not None:
-            self._help = None
-            self._emit(HelpNeeded(None))
 
     def _cancel_duty(self) -> None:
         if self._duty_timer is not None:
@@ -1922,7 +1904,7 @@ class Runtime:
         return InferenceRequest(info.id, system, messages, tools, reserve)
 
     def _prompt_sections(self, *, in_view: bool) -> list[str]:
-        """What follows the system prompt and Memory's addendum: the duty and plan, and the
+        """What follows the system prompt and Memory's addendum: the life and plan, and the
         deferred tools' names."""
         assert self._conversation is not None
         sections = []
@@ -2371,7 +2353,7 @@ class Runtime:
 
     async def _keep_standing(self) -> None:
         """Start each watch a module keeps that is not running; end those it no longer
-        keeps. Only on a conversation with a duty: one that goes on by itself."""
+        keeps. Only on a conversation with a life: one that goes on by itself."""
         if self._conversation is None or self._watches is None or self._closed:
             return
         named: list[tuple[str, dict[str, Any], bool]] = []
@@ -2438,8 +2420,8 @@ class Runtime:
     def _fire(self, watch: watch_files.Watch, text: str,
               confirm: Callable[[], None] | None) -> _Firing:
         """Deliver a watch's outcome. One kept as the user's (StandingWatch.as_user), or on
-        a conversation without a duty, comes as the user's message does: queued, and woken
-        at once. Any other on a conversation with a duty comes as its own time: within its
+        a conversation without a life, comes as the user's message does: queued, and woken
+        at once. Any other on a conversation with a life comes as its own time: within its
         day."""
         self._log.decision("watch_fired", watch=watch.id)
         firing = _Firing(text, confirm)
@@ -2895,17 +2877,9 @@ class Runtime:
                 self._plan_call = call.id
                 self._log.decision("plan", items=len(plan), by="model")
                 return ToolStatus.OK, duties.saved(plan, self._conversation.duty, now)
-            case "ask_for_help":
-                if self._conversation.duty is None:
-                    return ToolStatus.ERROR, "There is no duty to pause."
-                self._help = args["question"]
-                self._log.decision("help_requested", question_chars=len(self._help))
-                self._emit(HelpNeeded(self._help))
-                return ToolStatus.OK, ("Asked. Your check-ins pause until your supervisor "
-                                       "answers; end your turn.")
             case "Rest":
                 duty = self._conversation.duty
-                if duty is None or duty.kind != DutyKind.LIFE:
+                if duty is None:
                     return ToolStatus.ERROR, "Only a life rests."
                 now = time.time()
                 try:
@@ -2923,17 +2897,6 @@ class Runtime:
                     f"Resting until {duties.local(self._rest_until)}. The user writing, "
                     "something you watch happening or your background work finishing wakes "
                     "you sooner. End your turn.")
-            case "finish_goal":
-                duty = self._conversation.duty
-                if duty is None or duty.kind != DutyKind.GOAL:
-                    return ToolStatus.ERROR, "There is no goal to finish."
-                # The step the agent was on is the one this call completes.
-                plan = [replace(item, status=PlanStatus.DONE)
-                        if item.status == PlanStatus.DOING else item
-                        for item in self._conversation.plan]
-                await self._save_duty(None, plan)
-                self._log.decision("goal_finished")
-                return ToolStatus.OK, "Goal reached; the duty has ended."
             case "AskUserQuestion":
                 return ToolStatus.OK, await self._ask(call)
             case "EnterPlanMode":

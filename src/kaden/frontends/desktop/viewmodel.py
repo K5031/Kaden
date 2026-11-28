@@ -28,13 +28,11 @@ from kaden.api import (
     ConversationInfo,
     ConversationUpdated,
     Document,
-    Duty,
     DutyScheduled,
     EventEnvelope,
     Failure,
     FailureKind,
     File,
-    HelpNeeded,
     Image,
     InstanceLockedError,
     MemoriesChanged,
@@ -93,7 +91,6 @@ from kaden.frontends.common import (
     card_of,
     duration,
     group_title,
-    help_text,
     money,
     notice_of,
     past_tense,
@@ -370,7 +367,6 @@ class ConversationModel:
         self.model: str | None = None
         self.usage: UsageSnapshot | None = None
         self.duty_wake_at: float | None = None
-        self.help_needed: str | None = None
         self.permissions: PermissionPolicy | None = None  # what the agent may do
         self.failure: Failure | None = None  # shown as a banner until the next cycle
         # time.monotonic() when the model was last asked for its next step (THINKING):
@@ -450,7 +446,6 @@ class ConversationModel:
         self.model = snapshot.model
         self.usage = snapshot.usage
         self.duty_wake_at = snapshot.duty_wake_at
-        self.help_needed = snapshot.help_needed
         self.permissions = snapshot.config.permissions if snapshot.config else None
         self.failure = None
         self.has_earlier = len(history) >= page
@@ -588,11 +583,6 @@ class ConversationModel:
                 self.on_change(ConversationListChanged())
             case DutyScheduled(wake_at=wake_at):
                 self.duty_wake_at = wake_at
-                self.on_change(StatusChanged())
-            case HelpNeeded(question=question):
-                self.help_needed = question
-                if question is not None:
-                    self._add(NoticeItem(help_text(question), "warning"))
                 self.on_change(StatusChanged())
             case ConversationDeleted():
                 self.on_change(ConversationListChanged())
@@ -1283,18 +1273,6 @@ class Controller:
 
     def delete_note(self, note_id: str) -> asyncio.Task[None]:
         return self.command(self.runtime.delete_note(note_id))
-
-    def save_duty(self, duty: Duty | None, plan: Sequence[PlanItem],
-                  failed: Callable[[Exception], None] | None = None,
-                  done: Callable[[Any], None] | None = None) -> asyncio.Task[None]:
-        """Save the plan, then the duty: None ends a duty, if there is one."""
-        async def save() -> None:
-            await self.runtime.set_plan(plan)
-            conversation = self.model.conversation
-            if duty is not None or (conversation is not None and conversation.duty):
-                await self.runtime.set_duty(duty)
-
-        return self.command(save(), done=done, failed=failed)
 
     def can_switch(self) -> str | None:
         """Why the conversation cannot change right now, or None."""

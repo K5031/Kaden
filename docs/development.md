@@ -51,7 +51,7 @@ the kind folder beside them, not in a module.
 
 ```
 src/kaden/api.py                     module contracts (normative)
-src/kaden/runtime/                   orchestration, duties, budgets, operations, settings, event log, lock
+src/kaden/runtime/                   orchestration, the plan and lives, budgets, operations, settings, event log, lock
 src/kaden/core/                      Cores; _common.py is what the providers share
   anthropic/                          Anthropic
   openai_compat/                      OpenAI-compatible providers (openai, deepseek)

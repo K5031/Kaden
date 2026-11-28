@@ -5,7 +5,7 @@ by calling the command of that name, and the remote runtime sends one per comman
 Values: dataclasses as JSON objects with their class name under "type", enums as their
 values, tuples as lists. from_json reverses it, guided by the API's type hints, so a dict
 that only looks like an object (a tool call's arguments) stays a dict, and an object sent
-without its "type" (a duty, a plan item) still becomes the type the hint names."""
+without its "type" (a life, a plan item) still becomes the type the hint names."""
 
 from __future__ import annotations
 

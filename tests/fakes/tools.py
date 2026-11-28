@@ -184,6 +184,8 @@ def factory(options: dict[str, Any], paths: Any) -> FakeTools:
     tools.options = dict(options)
     for name in options.get("instant", ()):
         tools.instant(name)
+    for name, seconds in options.get("backgrounded", {}).items():  # run_in_background
+        tools.slow(name, seconds, foreground=True)
     return tools
 
 

@@ -1,6 +1,6 @@
-"""Duties: a person gives a conversation standing work, which the agent plans with
-update_plan and continues by itself, woken by finished work, due plan items and a
-maximum interval, until it is paused or ended."""
+"""A conversation's plan and life: the agent plans with TodoWrite, a due step reminds it,
+and a life (Continuous) goes on by itself, woken by finished work and the times it chose,
+until it is paused or ended."""
 
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ from kaden.api import (
     DutyKind,
     DutyScheduled,
     Failure,
-    HelpNeeded,
     PlanItem,
     PlanStatus,
     RuntimeStateError,
@@ -65,14 +64,20 @@ async def idle(h: Harness, requests: int) -> None:
 # ── Turning it on and off ──
 
 
-async def test_a_duty_runs_without_a_spending_limit(make):
+async def test_a_life_runs_without_a_spending_limit(make):
     """A limit is the user's choice, as in Claude's apps: nothing requires one."""
     h = await duty_harness(make, [Step(text="on it")], budget=Budget())
     await h.runtime.set_duty(QUIET)
     await idle(h, 1)
     assert h.runtime.snapshot().conversation.duty is not None
-    assert h.runtime.snapshot().duty_wake_at is not None  # and it checks in again
     assert not h.rec.of(Failure)
+
+
+def test_a_duty_is_a_life():
+    """Duties and goals are gone: a life is the one way a conversation goes on by itself."""
+    assert list(DutyKind) == [DutyKind.LIFE] and Duty("x").kind is DutyKind.LIFE
+    with pytest.raises(ValueError):
+        DutyKind("goal")
 
 
 @pytest.mark.parametrize("duty", [
@@ -89,15 +94,16 @@ async def test_set_duty_needs_an_open_conversation(make):
         await h.runtime.set_duty(QUIET)
 
 
-async def test_turning_a_duty_on_starts_work_and_shows_it(make):
+async def test_turning_a_life_on_starts_it_and_shows_it(make):
     h = await duty_harness(make, [Step(text="on it")])
     await h.runtime.set_duty(QUIET)
     await idle(h, 1)
     [request] = h.core.requests
     assert "Keep the inbox answered" in request.system
-    assert "TodoWrite" in [t.name for t in request.tools]
-    assert "finish_goal" not in [t.name for t in request.tools]  # a duty, not a goal
-    assert notices(request)[0].endswith("[Runtime notice] New duty: Keep the inbox answered")
+    names = {t.name for t in request.tools}
+    assert {"TodoWrite", "Rest"} <= names
+    assert names.isdisjoint({"finish_goal", "ask_for_help"})  # no duty mode
+    assert notices(request)[0].endswith("[Runtime notice] Your life: Keep the inbox answered")
     [updated] = [e for e in h.rec.of(ConversationUpdated) if e.info.duty is not None]
     assert updated.info.duty == QUIET
     assert h.store.conversations[h.conversation.id].info.duty == QUIET
@@ -113,7 +119,7 @@ async def test_an_ordinary_conversation_keeps_a_plan_but_has_no_duty_tools(make)
     await h.turn("fix the bug")
     names = {t.name for t in h.core.requests[0].tools}
     assert "TodoWrite" in names  # a plan for any task with steps
-    assert names.isdisjoint({"finish_goal", "ask_for_help"})
+    assert names.isdisjoint({"finish_goal", "ask_for_help", "Rest"})
     plan = h.runtime.snapshot().conversation.plan
     assert [(i.text, i.status) for i in plan] == [
         ("Read the code", PlanStatus.DONE), ("Fix the bug", PlanStatus.DONE),
@@ -151,7 +157,7 @@ async def test_the_prompt_shows_a_plan_the_conversation_does_not(make):
     assert "- [completed] Ship it" in h.core.requests[6].system
 
 
-async def test_a_duty_can_be_added_mid_conversation_and_keeps_the_context(make):
+async def test_a_life_can_be_added_mid_conversation_and_keeps_the_context(make):
     h = await duty_harness(make, [Step(text="noted"), Step(text="continuing")])
     await h.turn("we sell bikes")
     await h.runtime.set_duty(QUIET)
@@ -161,7 +167,8 @@ async def test_a_duty_can_be_added_mid_conversation_and_keeps_the_context(make):
 
 async def test_turning_it_off_ends_the_schedule_and_keeps_the_plan(make):
     h = await duty_harness(make, [Step(calls=[call("TodoWrite", {
-        "todos": [{"status": "pending", "content": "Read mail", "activeForm": "Read mail"}]})]), Step(text="planned")])
+        "todos": [{"status": "pending", "content": "Read mail", "activeForm": "Read mail",
+                   "due_in_minutes": 60}]})]), Step(text="planned")])
     await h.runtime.set_duty(QUIET)
     await idle(h, 2)
     assert h.runtime.snapshot().duty_wake_at is not None
@@ -181,7 +188,7 @@ async def test_turning_it_off_ends_the_schedule_and_keeps_the_plan(make):
 # ── The plan ──
 
 
-# ── Reminders: a due step without a duty ──
+# ── Reminders: a due step without a life ──
 
 
 def soon(text: str = "Stand up") -> Step:
@@ -189,7 +196,7 @@ def soon(text: str = "Stand up") -> Step:
         {"status": "pending", "content": text, "activeForm": text, "due_in_minutes": 0.002}]}, id="p")])  # about a tenth of a second
 
 
-async def test_a_due_step_wakes_the_agent_without_a_duty(make):
+async def test_a_due_step_wakes_the_agent_without_a_life(make):
     h = await duty_harness(make, [soon(), Step(text="I will remind you."),
                                   Step(text="Time to stand up!")], reminder_min_s=0.05,
                            budget=Budget())  # no spending limit is needed
@@ -206,8 +213,8 @@ async def test_a_due_step_wakes_the_agent_without_a_duty(make):
 
 
 async def test_a_reopened_conversation_reminds_of_what_is_still_to_come_only(make):
-    """A step that fell due while the conversation was closed waits for the user, as a
-    duty does after a restart; one that is still ahead wakes the agent."""
+    """A step that fell due while the conversation was closed waits for the user; one
+    that is still ahead wakes the agent."""
     h = await duty_harness(make, [Step(text="Second one!")], reminder_min_s=0.05)
     now = time.time()
     await h.runtime.set_plan([PlanItem("First", due=now - 60),
@@ -272,7 +279,7 @@ async def test_a_turn_that_ends_closes_the_list(make):
 
 
 async def test_steps_that_wait_are_not_sent_back_for(make):
-    """A step with a due time waits for it, and a duty keeps its plan between check-ins."""
+    """A step with a due time waits for it, and a life keeps its plan between turns."""
     h = await duty_harness(make, [
         Step(calls=[call("TodoWrite", {"todos": [
             {"status": "pending", "content": "Call back", "activeForm": "Call back", "due": "2099-01-01T09:00"}]})]),
@@ -302,7 +309,7 @@ def test_an_open_plan_tells_the_agent_to_close_it_before_ending_its_turn():
     doing = PlanItem("Fix the bug", PlanStatus.DOING)
     assert duties.CLOSE_PLAN in duties.prompt(None, [done, doing])
     assert duties.CLOSE_PLAN not in duties.prompt(None, [done])  # nothing open
-    # A duty's plan stays open between check-ins: its steps fall due later.
+    # A life's plan stays open between turns: its steps fall due later.
     assert duties.CLOSE_PLAN not in duties.prompt(Duty("Watch the inbox"), [done, doing])
 
 
@@ -352,18 +359,7 @@ async def test_the_user_edits_the_plan(make):
 # ── Waking up ──
 
 
-async def test_with_nothing_due_it_wakes_at_the_maximum_interval(make):
-    h = await duty_harness(make, [Step(text="checked"), Step(text="checked again")])
-    await h.runtime.set_duty(Duty("Watch", min_interval_s=0.05, max_interval_s=0.3))
-    await idle(h, 1)
-    wake_at = h.runtime.snapshot().duty_wake_at
-    assert wake_at is not None and wake_at - time.time() <= 0.3
-    await idle(h, 2)
-    assert "Time to check in on your work." in notices(h.core.requests[1])[-1]
-    await eventually(lambda: "duty: scheduled check-in" in wakes(h))  # logged with its cause
-
-
-async def test_a_due_plan_item_wakes_it_early(make):
+async def test_a_due_plan_item_wakes_it(make):
     h = await duty_harness(make, [
         Step(calls=[call("TodoWrite", {"todos": [{"status": "pending", "content": "Post", "activeForm": "Post", "due_in_minutes": 0.003}]})]),
         Step(text="later"), Step(text="posting")])
@@ -372,9 +368,9 @@ async def test_a_due_plan_item_wakes_it_early(make):
     assert "A step in your plan is due." in notices(h.core.requests[2])[-1]
 
 
-async def test_the_minimum_interval_holds_back_an_overdue_item(make):
+async def test_the_minimum_interval_holds_back_an_item_due_sooner(make):
     h = await duty_harness(make, [Step(text="done")])
-    await h.runtime.set_plan([PlanItem("Overdue", due=time.time() - 60)])
+    await h.runtime.set_plan([PlanItem("Soon", due=time.time() + 1)])
     await h.runtime.set_duty(Duty("x", min_interval_s=5, max_interval_s=30))
     await idle(h, 1)
     assert h.runtime.snapshot().duty_wake_at - time.time() > 4
@@ -401,12 +397,14 @@ async def test_a_user_message_still_wakes_it(make):
     assert notices(h.core.requests[1]) == notices(h.core.requests[0])  # no new notice
 
 
-async def test_editing_the_duty_while_idle_reschedules_without_starting_work(make):
+async def test_editing_the_life_while_idle_reschedules_without_starting_work(make):
     h = await duty_harness(make, [Step(text="on it")])
+    await h.runtime.set_plan([PlanItem("Look again", due=time.time() + 100)])
     await h.runtime.set_duty(QUIET)
     await idle(h, 1)
-    await h.runtime.set_duty(Duty("Keep it answered", min_interval_s=0.05, max_interval_s=600))
-    assert h.runtime.snapshot().duty_wake_at - time.time() > 500
+    assert h.runtime.snapshot().duty_wake_at - time.time() < 101
+    await h.runtime.set_duty(Duty("Keep it answered", min_interval_s=500, max_interval_s=600))
+    assert h.runtime.snapshot().duty_wake_at - time.time() > 490
     await asyncio.sleep(0.1)
     assert len(h.core.requests) == 1
 
@@ -416,7 +414,9 @@ async def test_editing_the_duty_while_idle_reschedules_without_starting_work(mak
 
 async def test_stop_pauses_and_activate_resumes(make):
     h = await duty_harness(make, [Step(text="on it"), Step(text="back")])
-    await h.runtime.set_duty(Duty("Watch", min_interval_s=0.05, max_interval_s=0.2))
+    now = time.time()
+    await h.runtime.set_plan([PlanItem("Look", due=now + 0.2), PlanItem("Later", due=now + 60)])
+    await h.runtime.set_duty(Duty("Watch", min_interval_s=0.05, max_interval_s=3600))
     await idle(h, 1)
     await h.runtime.stop()  # nothing outstanding: no full Stop, but the schedule ends
     assert h.runtime.snapshot().duty_wake_at is None
@@ -427,44 +427,13 @@ async def test_stop_pauses_and_activate_resumes(make):
     assert h.runtime.snapshot().duty_wake_at is not None
 
 
-async def test_a_restart_leaves_the_duty_paused(make):
-    h = await duty_harness(make, [Step(text="on it")])
-    await h.runtime.set_duty(Duty("Watch", min_interval_s=0.05, max_interval_s=0.2))
-    await idle(h, 1)
-    conversation = h.conversation.id
-    await h.close()
-    again: Harness = await make(core=ScriptedCore(), store=h.store, budget=LIMIT)
-    info = await again.start(conversation)
-    assert info.duty is not None
-    await asyncio.sleep(0.4)
-    assert again.core.requests == [] and again.runtime.snapshot().duty_wake_at is None
-
-
 async def test_an_exhausted_budget_pauses_it(make):
     h = await duty_harness(make, [Step(text="expensive")], budget=Budget(max_cost_usd=1e-9))
+    await h.runtime.set_plan([PlanItem("Look", due=time.time() + 0.2)])
     await h.runtime.set_duty(Duty("Watch", min_interval_s=0.05, max_interval_s=0.1))
     await eventually(lambda: h.runtime.snapshot().state == AgentState.FAILED)
     await asyncio.sleep(0.3)
     assert len(h.core.requests) == 1 and h.runtime.snapshot().duty_wake_at is None
-
-
-# ── Goals ──
-
-
-async def test_a_goal_ends_when_the_agent_declares_it_reached(make):
-    h = await duty_harness(make, [
-        Step(calls=[call("TodoWrite", {"todos": [{"content": "Launch", "activeForm": "Launch", "status": "completed"}]})]),
-        Step(calls=[call("finish_goal", {"report": "Launched on Monday."}, id="f")]),
-        Step(text="All done.")])
-    await h.runtime.set_duty(Duty("Launch the campaign", DutyKind.GOAL,
-                                  min_interval_s=0.05, max_interval_s=0.1))
-    await idle(h, 3)
-    assert "finish_goal" in [t.name for t in h.core.requests[0].tools]
-    assert (await h.results())["f"].status == ToolStatus.OK
-    info = h.runtime.snapshot().conversation
-    assert info.duty is None and [i.text for i in info.plan] == ["Launch"]
-    await asyncio.sleep(0.3)
-    assert len(h.core.requests) == 3 and h.runtime.snapshot().duty_wake_at is None
 
 
 async def test_continue_from_does_not_copy_the_duty(make):
@@ -476,64 +445,6 @@ async def test_continue_from_does_not_copy_the_duty(make):
     assert seeded.duty is None and h.runtime.snapshot().duty_wake_at is None
 
 
-# ── Asking for help ──
-
-
-async def test_asking_for_help_pauses_the_duty_until_the_user_answers(make):
-    h = await duty_harness(make, [
-        Step(calls=[call("ask_for_help", {"question": "Which account should I post from?"},
-                         id="ask")]),
-        Step(text="Waiting for you."), Step(text="Posting from the main account.")])
-    await h.runtime.set_duty(Duty("Run socials", min_interval_s=0.05, max_interval_s=0.2))
-    await idle(h, 2)
-    assert "ask_for_help" in [t.name for t in h.core.requests[0].tools]
-    assert (await h.results())["ask"].status == ToolStatus.OK
-    await h.rec.wait_for(lambda r: HelpNeeded("Which account should I post from?")
-                         in r.of(HelpNeeded))
-    snap = h.runtime.snapshot()
-    assert snap.help_needed == "Which account should I post from?"
-    assert snap.duty_wake_at is None
-    await asyncio.sleep(0.4)
-    assert len(h.core.requests) == 2  # no check-ins while it waits
-    await h.turn("The main one.")
-    await h.rec.wait_for(lambda r: r.of(HelpNeeded)[-1] == HelpNeeded(None))
-    assert h.runtime.snapshot().help_needed is None
-    assert h.runtime.snapshot().duty_wake_at is not None  # the schedule is back
-
-
-async def test_finished_work_still_wakes_an_agent_waiting_for_help(make):
-    tools = FakeTools()
-    tools.slow("watch", 0.3)
-    h = await duty_harness(make, [
-        Step(calls=[call("watch", id="w"),
-                    call("ask_for_help", {"question": "Login code?"})]),
-        Step(text="Waiting."), Step(text="The watcher fired.")], tools=tools)
-    await h.runtime.set_duty(QUIET)
-    await idle(h, 3)
-    assert "Background work finished." in notices(h.core.requests[2])[-1]
-    assert h.runtime.snapshot().help_needed == "Login code?"  # still unanswered
-
-
-async def test_ask_for_help_needs_a_duty(make):
-    h = await duty_harness(make)
-    await h.runtime.set_plan([PlanItem("x")])  # a plan alone offers update_plan only
-    await h.turn("hi")
-    assert "ask_for_help" not in [t.name for t in h.core.requests[0].tools]
-
-
-async def test_the_task_stays_in_view_after_the_goal_is_finished(make):
-    h = await duty_harness(make, [
-        Step(calls=[call("finish_goal", {"report": "Launched."})]),
-        Step(text="All done.")])
-    await h.runtime.set_duty(Duty("Launch the campaign", DutyKind.GOAL, min_interval_s=0.05,
-                                  max_interval_s=30))
-    await idle(h, 2)
-    first, after = h.core.requests[0], h.core.requests[1]
-    assert "New goal: Launch the campaign" in notices(first)[0]
-    assert "Launch the campaign" not in after.system  # the goal has ended
-    assert any("Launch the campaign" in text for text in notices(after))  # still in view
-
-
 def test_the_agent_is_told_to_plan_first_whenever_a_task_is_more_than_one_action():
     """The rule is in the tool's description, which reaches the model whatever system
     prompt the user has written."""
@@ -542,46 +453,6 @@ def test_the_agent_is_told_to_plan_first_whenever_a_task_is_more_than_one_action
     told = DUTY_TOOLS["TodoWrite"].description
     assert "Every task that edits files, runs more than one command or has several steps" in told
     assert "with your very first tool call" in told
-
-
-async def test_finishing_a_goal_finishes_the_step_the_agent_was_on(make):
-    """The step in progress when the agent declares the goal reached is the one that
-    call completes (often "Report"): it is not sent back to tick it off. A step it never
-    began stays open, and for that it is sent back."""
-    plan = [{"content": "Launch", "activeForm": "Launch", "status": "completed"}, {"content": "Report", "activeForm": "Report", "status": "in_progress"}]
-    h = await duty_harness(make, [
-        Step(calls=[call("TodoWrite", {"todos": plan}),
-                    call("finish_goal", {"report": "Launched."})]),
-        Step(text="All done.")])
-    await h.runtime.set_duty(Duty("Launch the campaign", DutyKind.GOAL, min_interval_s=0.05,
-                                  max_interval_s=30))
-    await idle(h, 2)
-    await asyncio.sleep(0.2)
-    assert len(h.core.requests) == 2  # not sent back
-    assert [(i.text, i.status) for i in h.runtime.snapshot().conversation.plan] == [
-        ("Launch", PlanStatus.DONE), ("Report", PlanStatus.DONE)]
-
-    plan.append({"content": "Tell the press", "activeForm": "Tell the press", "status": "pending"})
-    h = await duty_harness(make, [
-        Step(calls=[call("TodoWrite", {"todos": plan}),
-                    call("finish_goal", {"report": "Launched."})]),
-        Step(text="All done."), Step(text="The press is told.")])
-    await h.runtime.set_duty(Duty("Launch the campaign", DutyKind.GOAL, min_interval_s=0.05,
-                                  max_interval_s=30))
-    await idle(h, 3)
-    assert "still has open steps: Tell the press" in notices(h.core.requests[2])[-1]
-    assert [i.status for i in h.runtime.snapshot().conversation.plan] == [
-        PlanStatus.DONE, PlanStatus.DONE, PlanStatus.DONE]
-
-
-def test_the_agent_is_told_to_close_its_plan_when_it_finishes_a_goal():
-    """Else it is sent back after the goal, for one more request, to tick the steps off."""
-    from kaden.api import DUTY_TOOLS
-
-    told = DUTY_TOOLS["finish_goal"].description
-    assert "TodoWrite" in told and "in the same message" in told
-    assert "completed or left out" in told
-    assert "reporting" not in told  # the runtime closes the step in progress itself
 
 
 # ── A life ──
@@ -613,7 +484,7 @@ async def test_a_life_is_framed_as_its_own_not_as_work(make):
 
 def test_a_life_sleeps_until_something_wakes_it():
     """No time of Kaden's: with nothing due it is not woken; a time in its plan wakes it
-    then, however far; a duty with nothing due waits its longest."""
+    then, however far."""
     life = Duty("You are Mira.", DutyKind.LIFE, min_interval_s=60, max_interval_s=86_400)
     now = 1_000_000.0
     assert duties.next_wake(life, [], now) is None
@@ -621,8 +492,6 @@ def test_a_life_sleeps_until_something_wakes_it():
     assert duties.next_wake(life, resting, now) == (3 * 3600, duties.DUE)
     far = [PlanItem("Visit the archive", PlanStatus.TODO, now + 3 * 86_400)]
     assert duties.next_wake(life, far, now) == (3 * 86_400, duties.DUE)
-    duty = Duty("Watch the inbox", min_interval_s=60, max_interval_s=3600)
-    assert duties.next_wake(duty, [], now) == (3600, duties.CHECK_IN)
 
 
 async def test_time_passing_does_not_wake_a_life(make):
@@ -773,14 +642,19 @@ async def test_a_rest_until_a_time_ends_then(make):
 
 async def test_only_a_life_rests(make):
     h = await duty_harness(make, [Step(text="")])
-    await h.runtime.set_duty(QUIET)
-    await idle(h, 1)
+    await h.turn("hi")
     assert "Rest" not in {t.name for t in h.core.requests[0].tools}
 
 
 def test_a_lifes_prompt_names_resting_as_one_way_to_wait():
     section = duties.prompt(RESTFUL, [])
     assert "Rest" in section and "due time" in section
+
+
+def test_a_wake_up_without_a_life_says_only_that_time_has_passed():
+    """Reminders have their own message (duties.reminder); nothing else wakes a
+    conversation without a life by itself."""
+    assert duties.notice(duties.FINISHED, None) == "Time has passed."
 
 
 def test_a_lifes_check_in_says_how_long_it_rested_and_the_time():

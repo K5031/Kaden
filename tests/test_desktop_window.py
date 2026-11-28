@@ -1011,67 +1011,15 @@ async def test_a_memory_update_after_an_answer_is_shown_with_a_link(make, qapp):
     window.close()
 
 
-async def test_the_duty_dialog_turns_a_duty_on_and_off(make, qapp):
-    from kaden.api import Duty, DutyKind, PlanStatus
-    from kaden.frontends.desktop.dialogs import DutyDialog
-
-    h: Harness = await make(budget=Budget(max_cost_usd=5))
-    h.core.add(Step(text="on it"))
-    await h.start()
-    window, _controller, _ = await open_window(h)
-    window.show()
-    window.duty_action.trigger()
-    [dialog] = window.findChildren(DutyDialog)
-    assert dialog.save_button.text() == "Turn on"
-    dialog.instruction.setPlainText("Keep the inbox answered")
-    dialog.kind.setCurrentIndex(dialog.kind.findData(DutyKind.GOAL))
-    dialog.max_minutes.setValue(30)
-    dialog.plan.setPlainText("[doing] Read mail\nReply | due 2030-01-07 09:00")
-    dialog.save_button.click()
-    await eventually(lambda: h.runtime.snapshot().conversation.duty is not None)
-    info = h.runtime.snapshot().conversation
-    assert info.duty == Duty("Keep the inbox answered", DutyKind.GOAL, 60, 1800)
-    assert [(i.text, i.status) for i in info.plan] == [
-        ("Read mail", PlanStatus.DOING), ("Reply", PlanStatus.TODO)]
-    await eventually(lambda: "Goal" in window.duty_label.text())
-    window.open_duty()
-    dialog = [d for d in window.findChildren(DutyDialog) if d.isVisible()][-1]
-    [off] = buttons(dialog, "Turn off")
-    off.click()
-    await eventually(lambda: h.runtime.snapshot().conversation.duty is None)
-    assert len(h.runtime.snapshot().conversation.plan) == 2  # the plan stays
-
-
-async def test_the_duty_dialog_shows_why_it_cannot_save(make, qapp):
-    from kaden.frontends.desktop.dialogs import DutyDialog
-
-    h: Harness = await make()
-    await h.start()
-    window, _controller, _ = await open_window(h)
-
-    async def refuse(duty: object) -> None:
-        raise ValueError("this duty cannot run")
-
-    h.runtime.set_duty = refuse  # type: ignore[method-assign]
-    window.show()
-    window.open_duty()
-    [dialog] = window.findChildren(DutyDialog)
-    dialog.instruction.setPlainText("Watch")
-    dialog.save_button.click()
-    await eventually(lambda: dialog.error.isVisible())
-    assert "cannot run" in dialog.error.text()
-    assert dialog.isVisible() and dialog.save_button.isEnabled()
-
-
 async def test_a_sub_session_sits_under_its_conversation_and_opens_in_place(
         make, qapp, tmp_path, child_env):
     from kaden.frontends.desktop.widgets import KIND_ROLE
-    from tests.test_sub_sessions import finish, parent
+    from tests.test_sub_sessions import parent
 
     h, sessions = await parent(make, tmp_path, [
         Step(calls=[call("Agent", {"description": "Write a haiku", "prompt": "Write a haiku", "run_in_background": True}, id="s")]),
         Step(text="Started."), Step(text="Got it.")],
-        [finish("Haiku written."), {"text": "Here is the haiku."}, {"text": "Shorter now."}])
+        [{"text": "Here is the haiku."}, {"text": "Shorter now."}])
     controller = Controller(h.runtime, ConversationModel())
     window = MainWindow(h.runtime, controller, sessions=sessions)
     asyncio.create_task(controller.run())
@@ -1113,12 +1061,12 @@ async def test_the_windows_own_conversation_is_heard_while_a_sub_session_shows(
     """What is the window's (the list of conversations, whether a new chat can start)
     follows its own conversation, whatever the conversation area shows."""
     from kaden.frontends.desktop.widgets import KIND_ROLE
-    from tests.test_sub_sessions import finish, parent
+    from tests.test_sub_sessions import parent
 
     h, sessions = await parent(make, tmp_path, [
         Step(calls=[call("Agent", {"description": "Write a haiku", "prompt": "Write a haiku", "run_in_background": True}, id="s")]),
         Step(text="Started.")],
-        [finish("Haiku written."), {"text": "Here is the haiku."}])
+        [{"text": "Here is the haiku."}])
     controller = Controller(h.runtime, ConversationModel())
     window = MainWindow(h.runtime, controller, sessions=sessions)
     asyncio.create_task(controller.run())
@@ -1208,12 +1156,12 @@ async def test_projects_group_the_sidebar_and_fold(make, qapp, tmp_path):
 
 async def test_child_rows_have_a_menu(make, qapp, tmp_path, child_env):
     from kaden.frontends.desktop.widgets import KIND_ROLE
-    from tests.test_sub_sessions import finish, parent
+    from tests.test_sub_sessions import parent
 
     h, sessions = await parent(make, tmp_path, [
         Step(calls=[call("Agent", {"description": "Tidy the notes", "prompt": "Tidy the notes", "run_in_background": True}, id="s")]),
         Step(text="Started."), Step(text="Thanks.")],
-        [finish("Tidied."), {"text": "Done."}])
+        [{"text": "Done."}])
     controller = Controller(h.runtime, ConversationModel())
     window = MainWindow(h.runtime, controller, sessions=sessions)
     asyncio.create_task(controller.run())
@@ -1303,11 +1251,11 @@ async def test_a_long_notice_is_folded(make, qapp):
     h: Harness = await make()
     await h.start()
     window, _controller, _ = await open_window(h)
-    brief = "New goal: Research Gen.G's path through Worlds.\n\nFind every series they played."
+    brief = "Your life: You are Mira, who follows Gen.G.\n\nYou like old maps and bad puns."
     assert isinstance(window.conversation._widget_for(NoticeItem(brief)), Detail)
     folded = window.conversation._widget_for(NoticeItem(brief))
-    assert folded.label.text() == "New goal: Research Gen.G's path through Worlds.…"
-    assert isinstance(window.conversation._widget_for(NoticeItem("Time to check in.")), NoticeLine)
+    assert folded.label.text() == "Your life: You are Mira, who follows Gen.G.…"
+    assert isinstance(window.conversation._widget_for(NoticeItem("Time has passed.")), NoticeLine)
 
 
 async def test_the_menus_live_behind_two_buttons_and_their_shortcuts_still_work(make, qapp):
@@ -1318,7 +1266,7 @@ async def test_the_menus_live_behind_two_buttons_and_their_shortcuts_still_work(
     window, _controller, _ = await open_window(h)
     assert not window.findChildren(QMenuBar)
     texts = [a.text() for a in window.menu_button.menu().actions() if a.text()]
-    assert texts == ["&New chat", "New chat in another &folder…", "Set a &duty…", "S&top",
+    assert texts == ["&New chat", "New chat in another &folder…", "S&top",
                      "&View", "&Model"]
     profile = window.profile_button.menu()
     window._fill_profile_header()
@@ -1431,12 +1379,12 @@ async def test_the_permission_picker_tightens_at_once_and_asks_before_loosening(
 
 
 async def test_deleting_a_conversation_deletes_its_sub_sessions(make, qapp, tmp_path, child_env):
-    from tests.test_sub_sessions import finish, parent
+    from tests.test_sub_sessions import parent
 
     h, sessions = await parent(make, tmp_path, [
         Step(calls=[call("Agent", {"description": "Write a haiku", "prompt": "Write a haiku", "run_in_background": True}, id="s")]),
         Step(text="Started."), Step(text="Got it.")],
-        [finish("Haiku written."), {"text": "Done."}])
+        [{"text": "Done."}])
     controller = Controller(h.runtime, ConversationModel())
     window = MainWindow(h.runtime, controller, sessions=sessions)
     asyncio.create_task(controller.run())
@@ -1595,11 +1543,11 @@ async def test_leaving_a_sub_session_for_its_parent_never_shows_the_old_chat(
     from PySide6.QtWidgets import QListWidgetItem
 
     from kaden.frontends.desktop.widgets import KIND_ROLE
-    from tests.test_sub_sessions import finish, parent
+    from tests.test_sub_sessions import parent
 
     h, sessions = await parent(make, tmp_path, [
         Step(calls=[call("Agent", {"description": "Research", "prompt": "Research", "run_in_background": True}, id="s")]),
-        Step(text="Started."), Step(text="Noted.")], [finish("Done.")])
+        Step(text="Started."), Step(text="Noted.")], [{"text": "Done."}])
     await h.turn("Start research")
     parent_id = h.conversation.id
     await eventually(lambda: sessions.sessions and sessions.sessions[0].state == "done",
@@ -1692,11 +1640,11 @@ async def test_a_failed_load_does_not_stop_later_switches(make, qapp):
 
 async def test_a_sub_session_still_opening_gives_way_to_a_later_click(
         make, qapp, tmp_path, child_env):
-    from tests.test_sub_sessions import finish, parent
+    from tests.test_sub_sessions import parent
 
     h, sessions = await parent(make, tmp_path, [
         Step(calls=[call("Agent", {"description": "Research", "prompt": "Research", "run_in_background": True}, id="s")]),
-        Step(text="Started."), Step(text="Noted.")], [finish("Done.")])
+        Step(text="Started."), Step(text="Noted.")], [{"text": "Done."}])
     await h.turn("Start research")
     await eventually(lambda: sessions.sessions and sessions.sessions[0].state == "done"
                      and len(h.core.requests) == 3
@@ -1729,11 +1677,11 @@ async def test_a_sub_session_still_opening_gives_way_to_a_later_click(
 async def test_the_open_chat_clicked_while_a_sub_session_opens_stays(
         make, qapp, tmp_path, child_env):
     """What was asked for last is what shows, also when it is already on screen."""
-    from tests.test_sub_sessions import finish, parent
+    from tests.test_sub_sessions import parent
 
     h, sessions = await parent(make, tmp_path, [
         Step(calls=[call("Agent", {"description": "Research", "prompt": "Research", "run_in_background": True}, id="s")]),
-        Step(text="Started."), Step(text="Noted.")], [finish("Done.")])
+        Step(text="Started."), Step(text="Noted.")], [{"text": "Done."}])
     await h.turn("Start research")
     await eventually(lambda: sessions.sessions and sessions.sessions[0].state == "done"
                      and len(h.core.requests) == 3
@@ -1803,9 +1751,6 @@ async def test_a_new_chat_offers_its_folder_and_recent_ones(make, qapp, tmp_path
     assert refused == [True] and menu.isVisible()  # nor by voice, which listens again
     await asyncio.sleep(0.1)
     assert not h.core.requests and controller.model.items == []
-    menu.hide()
-    window.open_duty()  # nor a duty before the chat has its folder
-    assert menu.isVisible()
     menu.hide()
     next(a for a in menu.actions() if a.text() == "project").trigger()
     await eventually(lambda: controller.model.conversation.folder == str(project))

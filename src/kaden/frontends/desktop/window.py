@@ -88,7 +88,6 @@ from kaden.frontends.desktop import app_menu, theme
 from kaden.frontends.desktop.composer import AttachmentStrip, MessageBox
 from kaden.frontends.desktop.conversation import ConversationView
 from kaden.frontends.desktop.dialogs import (
-    DutyDialog,
     LifeDialog,
     MemoryDialog,
     WelcomeDialog,
@@ -403,7 +402,7 @@ class MainWindow(QMainWindow):
         self.title_label = ElidedLabel()
         self.title_label.setProperty("role", "header")
         self.duty_label = text_label(wrap=False, selectable=False, role="small")
-        self.duty_label.hide()  # only with a duty: when it checks in next, or paused
+        self.duty_label.hide()  # only with a reminder due, or while the life is busy
         titles = self.title_row = QHBoxLayout()
         titles.setContentsMargins(0, 14, 0, 14)  # the header's height
         titles.setSpacing(4)
@@ -724,8 +723,8 @@ class MainWindow(QMainWindow):
             self.showMaximized()
 
     def _build_menus(self) -> None:
-        """No menu bar. The ☰ menu holds what is about the conversation (new chat, duty,
-        stop, view, model); the profile menu at the bottom holds the app (settings, memory,
+        """No menu bar. The ☰ menu holds what is about the conversation (new chat, stop,
+        view, model); the profile menu at the bottom holds the app (settings, memory,
         tool servers, help, quit). Every action is also the window's, so its shortcut works
         with the menus closed."""
         settings = QAction("&Settings…", self)
@@ -737,10 +736,6 @@ class MainWindow(QMainWindow):
         quit_action.triggered.connect(self.quit)
         self.memory_action = QAction("&Memory…", self)
         self.memory_action.triggered.connect(self.open_memory)
-        self.duty_action = QAction("Set a &duty…", self)
-        self.duty_action.setStatusTip("Give this conversation standing work it carries on "
-                                      "by itself.")
-        self.duty_action.triggered.connect(self.open_duty)
         servers = QAction("&Tool servers (MCP)…", self)
         servers.triggered.connect(self.open_tool_servers)
         self.app_menu_action = QAction("&Add to App Menu", self)
@@ -755,7 +750,7 @@ class MainWindow(QMainWindow):
         main_menu = QMenu(self)
         self.menu_button.setMenu(main_menu)
         self.view_menu_button.setMenu(main_menu)
-        main_menu.addActions([self.new_action, self.folder_action, self.duty_action, stop])
+        main_menu.addActions([self.new_action, self.folder_action, stop])
         main_menu.addSeparator()
         view_menu = main_menu.addMenu("&View")
         for text, keys, steps in (
@@ -980,10 +975,10 @@ class MainWindow(QMainWindow):
                     self._show_duty()
 
     def _show_duty(self) -> None:
-        """The note beside the title: the duty's next check-in, or what the life does."""
+        """The note beside the title: the next reminder, or what the life does."""
         model = self.model
-        duty = (duty_status(model.conversation.duty, model.duty_wake_at, model.state,
-                            model.help_needed) if model.conversation is not None else None)
+        duty = (duty_status(model.conversation.duty, model.duty_wake_at, model.state)
+                if model.conversation is not None else None)
         if self._life_on and model.busy and (doing := self._doing()):
             duty = doing  # its life: what it does now, not just that it is busy
         self.duty_label.setText(duty or "")
@@ -1448,15 +1443,6 @@ class MainWindow(QMainWindow):
             return
         for text in self.life.take_messages():
             self.model.notify(f"{self.life.name}: {text}")
-
-    def open_duty(self) -> None:
-        if self.model.conversation is None:
-            self.model.notify("Open a conversation first.")
-            return
-        if self.controller.needs_folder:
-            self._offer_folders()
-            return
-        DutyDialog(self, self.controller, self.model.conversation).open()
 
     def open_tool_servers(self) -> None:
         self.open_settings("Tool servers")

@@ -12,7 +12,14 @@ from typing import Any
 import pytest
 import tomli_w
 
-from kaden.api import AgentState, OperationResult, PermissionPolicy, ToolResult, ToolStatus
+from kaden.api import (
+    AgentState,
+    OperationResult,
+    PermissionPolicy,
+    Role,
+    ToolResult,
+    ToolStatus,
+)
 from kaden.frontends.sessions import SubSessions
 from kaden.runtime import InstanceConfig, ModuleSpec, RuntimeConfig, run_instance
 from tests.conftest import Harness, eventually
@@ -21,22 +28,21 @@ from tests.fakes.core import ScriptedCore, Step, call
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def finish(report: str) -> dict[str, Any]:
-    return {"calls": [{"name": "finish_goal", "arguments": {"report": report}}]}
-
-
 async def parent(make: Any, tmp_path: Path, steps: list[Step], child_script: list[Any],
                  child_runtime: dict[str, Any] | None = None, folder: Path | None = None
                  ) -> tuple[Harness, SubSessions]:
     data = tmp_path / "parent"
     data.mkdir()
     (data / "config.toml").write_text(tomli_w.dumps({
-        "core": {"factory": "tests.fakes.core:factory", "options": {"script": child_script}},
-        "tools": {"factory": "tests.fakes.tools:factory", "options": {"instant": ["lookup"]}},
+        "core": {"factory": "tests.fakes.core:factory",
+                 "options": {"script": child_script, "resume": True}},
+        "tools": {"factory": "tests.fakes.tools:factory",
+                  "options": {"instant": ["lookup"], "backgrounded": {"slow": 1.0}}},
         **(child_runtime or {})}))
-    sessions = SubSessions(data, check_in_s=(0.05, 0.2))
+    sessions = SubSessions(data)
     h: Harness = await make(core=ScriptedCore(steps), data_dir=data, more_tools=[sessions],
-                            permissions=PermissionPolicy.ASK)
+                            # The children's ceiling: their read-only calls run.
+                            permissions=PermissionPolicy.ALLOW_READ_ONLY)
     h.auto_approve()
     await h.start(folder=str(folder or tmp_path))
     return h, sessions
@@ -49,20 +55,28 @@ def outcome(transcript: list[Any], call_id: str) -> OperationResult | ToolResult
                  and b.status != ToolStatus.BACKGROUNDED), None)
 
 
-async def test_a_child_works_on_its_task_and_reports_back(make, tmp_path, child_env):
+async def test_a_child_works_on_its_task_and_its_final_reply_is_the_result(
+        make, tmp_path, child_env):
+    """As Claude Code's subagents: the task is its first message, and the whole of its
+    last reply, however long, is what the parent gets."""
+    haiku = "Haiku written. " + "Old pond, a frog. " * 40
     h, sessions = await parent(make, tmp_path, [
         Step(calls=[call("Agent", {"description": "Write a haiku", "prompt": "Write a haiku", "run_in_background": True, "budget_usd": 0.5},
                          id="s")]),
         Step(text="A sub-session is on it."),
         Step(text="Here is the haiku.")],
-        [{"text": "Drafting."}, finish("Haiku written."), {"text": "Done."}])
+        [{"text": "Drafting.", "calls": [{"name": "lookup"}]}, {"text": haiku}])
     await h.turn("Get me a haiku")
     result = await eventually(lambda: outcome(h.store.conversations[h.conversation.id]
                                               .messages, "s"), timeout=30)
-    assert result.status == ToolStatus.OK and "Haiku written." in result.content
+    assert result.status == ToolStatus.OK and haiku.strip() in result.content
+    assert "Drafting." not in result.content
     [child] = sessions.sessions
     assert child.task == "Write a haiku" and child.state == "done"
+    assert child.report == haiku.strip()
     assert child.conversation_id == h.conversation.id
+    first = child.messages[0]
+    assert first.role == Role.USER and "Write a haiku" in str(first.blocks)
     assert any("Drafting." in str(m.blocks) for m in child.messages)
     settings = tomllib.loads((child.data_dir / "settings.toml").read_text())
     assert settings["budget"] == {"max_cost_usd": 0.5}
@@ -70,19 +84,19 @@ async def test_a_child_works_on_its_task_and_reports_back(make, tmp_path, child_
     await eventually(lambda: child.returncode is not None, timeout=10)  # it quit
 
 
-async def test_a_question_comes_back_and_an_answer_lets_it_finish(make, tmp_path, child_env):
+async def test_a_question_in_its_reply_is_answered_with_send_message(
+        make, tmp_path, child_env):
     h, sessions = await parent(make, tmp_path, [
         Step(calls=[call("Agent", {"description": "Write a poem", "prompt": "Write a poem", "run_in_background": True}, id="s")]),
         Step(text="Started."),
         Step(calls=[call("SendMessage", {"to": "1", "message": "A sonnet."}, id="m")]),
         Step(text="Answered."),
         Step(text="Got the sonnet.")],
-        [{"calls": [{"name": "ask_for_help", "arguments": {"question": "Which form?"}}]},
-         {"text": "Waiting."}, finish("Wrote a sonnet."), {"text": "Done."}])
+        [{"text": "Which form?"}, {"text": "Wrote a sonnet."}])
     await h.turn("Get me a poem")
     asked = await eventually(lambda: outcome(h.store.conversations[h.conversation.id]
                                              .messages, "s"), timeout=30)
-    assert "Which form?" in asked.content and "SendMessage" in asked.content
+    assert "Which form?" in asked.content
     answered = await eventually(lambda: outcome(h.store.conversations[h.conversation.id]
                                                 .messages, "m"), timeout=30)
     assert "Wrote a sonnet." in answered.content
@@ -105,24 +119,22 @@ async def test_cancelling_the_call_stops_the_child(make, tmp_path, child_env):
     assert child.state == "stopped"
 
 
-async def test_an_answer_given_where_the_child_is_open_clears_its_question(
+async def test_background_work_keeps_a_child_from_counting_as_done(
         make, tmp_path, child_env):
+    """Its turn ended, but work it started still runs: it is done once that finished and
+    it replied to it."""
     h, sessions = await parent(make, tmp_path, [
-        Step(calls=[call("Agent", {"description": "Write a poem", "prompt": "Write a poem", "run_in_background": True}, id="s")]),
-        Step(text="Started."), Step(text="It asks."), Step(text="Noted.")],
-        [{"calls": [{"name": "ask_for_help", "arguments": {"question": "Which form?"}}]},
-         {"text": "Waiting."}, {"text": "A sonnet, then."}, finish("Wrote a sonnet."),
-         {"text": "Done."}])
-    await h.turn("Get me a poem")
-    child = await eventually(lambda: sessions.sessions and sessions.sessions[0].state
-                             == "waiting" and sessions.sessions[0], timeout=30)
-    assert child.question == "Which form?" and child.has_goal
-    remote = await sessions.open(child)
-    await remote.send("A sonnet.")  # the user answers it directly
-    await eventually(lambda: child.question is None, timeout=20)
-    await eventually(lambda: child.state == "done", timeout=30)  # it went on to its goal
-    assert child.report == "Wrote a sonnet." and not child.has_goal
-    sessions.release(child, remote)
+        Step(calls=[call("Agent", {"description": "Slow work", "prompt": "Do the slow work"},
+                         id="s")]),
+        Step(text="Got it.")],
+        [{"calls": [{"name": "slow", "arguments": {"run_in_background": True}}]},
+         {"text": "Started the slow work."}, {"text": "The slow work is done."}])
+    await asyncio.wait_for(h.turn("Go"), 60)
+    result = (await h.results())["s"]
+    assert result.status == ToolStatus.OK and "The slow work is done." in result.content
+    assert "Started the slow work." not in result.content
+    [child] = sessions.sessions
+    assert child.state == "done" and child.report == "The slow work is done."
 
 
 async def test_a_childs_permission_prompt_waits_for_the_user(make, tmp_path, child_env):
@@ -131,7 +143,7 @@ async def test_a_childs_permission_prompt_waits_for_the_user(make, tmp_path, chi
     h, sessions = await parent(make, tmp_path, [
         Step(calls=[call("Agent", {"description": "Look it up", "prompt": "Look it up", "run_in_background": True}, id="s")]),
         Step(text="Started."), Step(text="Reported.")],
-        [{"calls": [{"name": "lookup"}]}, finish("Looked it up."), {"text": "Done."}],
+        [{"calls": [{"name": "lookup"}]}, {"text": "Looked it up."}],
         child_runtime={"runtime": {"permissions": "ask"}})
     await h.turn("Go")
     child = await eventually(lambda: sessions.sessions and sessions.sessions[0].approvals
@@ -155,7 +167,7 @@ async def test_a_child_is_listed_after_a_restart_and_opens_again(make, tmp_path,
     h, sessions = await parent(make, tmp_path, [
         Step(calls=[call("Agent", {"description": "Write a haiku", "prompt": "Write a haiku", "run_in_background": True}, id="s")]),
         Step(text="Started."), Step(text="Got it.")],
-        [finish("Haiku written."), {"text": "Done."}])
+        [{"text": "Haiku written."}])
     await h.turn("Go")
     await eventually(lambda: sessions.sessions and sessions.sessions[0].state == "done",
                      timeout=30)
@@ -164,10 +176,13 @@ async def test_a_child_is_listed_after_a_restart_and_opens_again(make, tmp_path,
     [child] = again.sessions
     assert (child.task, child.state, child.report) == ("Write a haiku", "done",
                                                        "Haiku written.")
+    assert not child.resumable  # done: there is nothing to carry on with
     remote = await again.open(child)  # starts it again on its conversation
     history = await remote.history(child.child_conversation_id)
-    assert any("Done." in str(m.blocks) for m in history)
-    assert remote.snapshot().conversation.id == child.child_conversation_id
+    assert any("Haiku written." in str(m.blocks) for m in history)
+    conversation = remote.snapshot().conversation
+    assert conversation.id == child.child_conversation_id
+    assert conversation.duty is None  # a plain task: it never goes on by itself
     again.release(child, remote)
     await again.aclose()
     assert child.returncode is not None
@@ -240,7 +255,7 @@ async def test_an_idea_of_the_agents_is_proposed_and_starts_on_approval(
                                                             "prompt": "Tidy the notes"}},
                                      "reason": "They are messy"}, id="p")]),
         Step(text="Proposed."), Step(text="It is done.")],
-        [finish("Tidied."), {"text": "Done."}])
+        [{"text": "Tidied."}])
     await h.turn("Hi")
     assert sessions.sessions == []  # nothing starts before the user approves
     await h.runtime.respond("p", True)
@@ -254,7 +269,7 @@ async def test_a_turn_nobody_waited_for_becomes_a_notice_for_the_parent(
     h, sessions = await parent(make, tmp_path, [
         Step(calls=[call("Agent", {"description": "Write a haiku", "prompt": "Write a haiku", "run_in_background": True}, id="s")]),
         Step(text="Started."), Step(text="Got it.")],
-        [finish("Haiku written."), {"text": "Done."}, {"text": "Made it shorter."}])
+        [{"text": "Haiku written."}, {"text": "Made it shorter."}])
     await h.turn("Go")
     child = await eventually(lambda: sessions.sessions and sessions.sessions[0].state == "done"
                              and sessions.sessions[0], timeout=30)
@@ -263,12 +278,13 @@ async def test_a_turn_nobody_waited_for_becomes_a_notice_for_the_parent(
     await remote.send("Shorter, please")  # the user talks to it directly
     [note] = await eventually(lambda: sessions.notes.get(h.conversation.id), timeout=20)
     assert note.startswith("Sub-session 1 (Write a haiku) ended a turn")
+    assert "Made it shorter." in note
     assert sessions.take_notes(h.conversation.id) == [note]
     assert sessions.take_notes(h.conversation.id) == []
     sessions.release(child, remote)
 
 
-async def test_a_stopped_child_resumes_its_goal(make, tmp_path, child_env):
+async def test_a_stopped_child_resumes(make, tmp_path, child_env):
     h, sessions = await parent(make, tmp_path, [
         Step(calls=[call("Agent", {"description": "Keep at it", "prompt": "Keep at it", "run_in_background": True}, id="s")]),
         Step(text="Started.")],
@@ -399,6 +415,37 @@ async def test_a_childs_limit_changes_while_it_runs_and_after(make, tmp_path, ch
         await sessions.set_child_limit(child, 0)
 
 
+async def test_opening_a_stopped_child_to_look_leaves_it_resumable(tmp_path):
+    from kaden.frontends.sessions import SubSession
+
+    sessions = SubSessions(tmp_path)
+    child = SubSession("1", "Task", "conv", tmp_path / "c", state="stopped",
+                       child_conversation_id="x")
+
+    class Live:
+        attached = True
+        channel = None
+
+    async def running(session: SubSession) -> Any:
+        session.live = Live()  # type: ignore[assignment]
+        return Live(), True
+
+    async def attach(self: Any) -> Any:
+        return self
+
+    sessions._running = running  # type: ignore[method-assign]
+    import kaden.frontends.sessions as module
+
+    original = module.RemoteRuntime
+    module.RemoteRuntime = type("R", (), {"__init__": lambda self, ch: None,  # type: ignore
+                                          "attach": attach, "detach": lambda self: None})
+    try:
+        await sessions.open(child)
+    finally:
+        module.RemoteRuntime = original  # type: ignore[misc]
+    assert child.state == "stopped" and child.resumable
+
+
 async def test_a_snapshot_has_the_events_read_while_it_was_awaited():
     """The reply and the events after it can be read in one go, before attach() goes on."""
     import asyncio
@@ -433,7 +480,7 @@ async def test_an_agent_in_the_foreground_is_waited_for_and_named_by_its_descrip
         Step(calls=[call("Agent", {"description": "Haiku", "prompt": "Write a haiku"},
                          id="s")]),
         Step(text="Got it.")],
-        [finish("Haiku written.")])
+        [{"text": "Haiku written."}])
     await asyncio.wait_for(h.turn("Get me a haiku"), 60)
     result = (await h.results())["s"]
     assert result.status == ToolStatus.OK and "Haiku written." in result.content
@@ -469,7 +516,7 @@ async def test_a_subagent_that_changes_nothing_leaves_no_worktree(make, tmp_path
     h, sessions = await parent(make, tmp_path, [
         Step(calls=[call("Agent", isolated("Read the code"), id="s")]),
         Step(text="Read.")],
-        [finish("Nothing to change."), {"text": "Done."}], folder=repo / "sub")
+        [{"text": "Nothing to change."}], folder=repo / "sub")
     await asyncio.wait_for(h.turn("Read it"), 60)
     [child] = sessions.sessions
     name = f"agent-{h.conversation.id[:8]}-1"
@@ -493,26 +540,29 @@ async def test_a_subagent_that_changes_nothing_leaves_no_worktree(make, tmp_path
 
 
 async def test_a_subagents_changes_stay_in_its_worktree(make, tmp_path, child_env):
+    from kaden.api import Decision
+
     repo = repository(tmp_path)
     h, sessions = await parent(make, tmp_path, [
         Step(calls=[call("Agent", isolated("Change the code", run_in_background=True),
                          id="s")]),
         Step(text="Started."),
-        Step(calls=[call("SendMessage", {"to": "1", "message": "Go on."}, id="m")]),
-        Step(text="Answered."),
         Step(text="Changed.")],
-        [{"calls": [{"name": "ask_for_help", "arguments": {"question": "Ready?"}}]},
-         {"text": "Waiting."}, finish("Changed a.txt."), {"text": "Done."}],
-        folder=repo)
+        [{"calls": [{"name": "lookup"}]}, {"text": "Changed a.txt."}],
+        child_runtime={"runtime": {"permissions": "ask"}}, folder=repo)
     await h.turn("Change it")
-    child = await eventually(lambda: sessions.sessions and sessions.sessions[0].state
-                             == "waiting" and sessions.sessions[0], timeout=30)
+    child = await eventually(lambda: sessions.sessions and sessions.sessions[0].approvals
+                             and sessions.sessions[0], timeout=30)
     name = f"agent-{h.conversation.id[:8]}-1"
     worktree = repo / ".claude" / "worktrees" / name
     (worktree / "sub" / "a.txt").write_text("b\n")  # what the subagent changed
     assert (repo / "sub" / "a.txt").read_text() == "a\n"  # not in the parent's checkout
+    remote = await sessions.open(child)
+    [request] = remote.snapshot().prompts
+    await remote.respond(request.id, Decision.ALLOW_ONCE)
+    sessions.release(child, remote)
     answered = await eventually(lambda: outcome(h.store.conversations[h.conversation.id]
-                                                .messages, "m"), timeout=30)
+                                                .messages, "s"), timeout=30)
     assert "Changed a.txt." in answered.content
     assert str(worktree) in answered.content and f"worktree-{name}" in answered.content
     await eventually(lambda: child.returncode is not None, timeout=15)
@@ -574,7 +624,7 @@ async def test_concurrent_opens_start_one_process(make, tmp_path, child_env):
         Step(calls=[call("Agent", {"description": "Write a haiku", "prompt": "Write a haiku",
                                    "run_in_background": True}, id="s")]),
         Step(text="Started."), Step(text="Got it.")],
-        [finish("Haiku written."), {"text": "Done."}])
+        [{"text": "Haiku written."}])
     await h.turn("Go")
     await eventually(lambda: sessions.sessions and sessions.sessions[0].returncode
                      is not None, timeout=30)
@@ -591,12 +641,12 @@ async def test_concurrent_opens_start_one_process(make, tmp_path, child_env):
 
 
 async def test_a_reopened_child_keeps_the_state_another_caller_gave_it(tmp_path):
-    """open() marks a child it started again as idle, unless meanwhile something else
-    (a SendMessage, a resume) set it working."""
+    """open() marks a done child it started again as idle, unless meanwhile something
+    else (a SendMessage) set it working."""
     from kaden.frontends.sessions import SubSession
 
     sessions = SubSessions(tmp_path)
-    child = SubSession("1", "Task", "conv", tmp_path / "c", state="stopped",
+    child = SubSession("1", "Task", "conv", tmp_path / "c", state="done",
                        child_conversation_id="x")
 
     class Live:
@@ -713,18 +763,66 @@ async def test_a_broken_pipe_is_a_closed_channel():
     await channel.ended.wait()
 
 
-def test_a_child_that_ended_its_turn_says_so_with_its_last_reply(tmp_path):
+def test_a_childs_result_is_its_reply_since_the_last_message_it_was_sent():
+    """A turn that ends without text has no reply: an earlier turn's is not its result."""
     import time
 
-    from kaden.api import Message, Role, Text
+    from kaden.api import Message, Role, Text, ToolCall
+    from kaden.frontends.sessions import SubSession
+
+    def said(role: Role, *blocks: Any) -> Message:
+        return Message(str(time.monotonic_ns()), role, blocks, time.time())
+
+    child = SubSession("4", "Task", "conv", Path("c"), messages=[
+        said(Role.USER, Text("Task")), said(Role.ASSISTANT, Text("First answer.")),
+        said(Role.USER, Text("More, please")),
+        said(Role.ASSISTANT, Text("Working on it."), ToolCall("c", "lookup", {})),
+        said(Role.TOOL), said(Role.ASSISTANT, Text("Second answer."))])
+    assert child.final_reply == "Second answer."
+    child.messages += [said(Role.USER, Text("Once more")),
+                       said(Role.ASSISTANT, ToolCall("d", "lookup", {}))]
+    assert child.final_reply == ""
+
+
+async def test_a_childs_answer_survives_being_sent_back_to_close_its_plan(
+        make, tmp_path, child_env):
+    """Kaden's own notices are user-role too: the one that sends the agent back to close
+    its plan does not hide the answer it gave before it."""
+    todos = [{"content": "Write it", "activeForm": "Writing it", "status": "in_progress"}]
+    h, sessions = await parent(make, tmp_path, [
+        Step(calls=[call("Agent", {"description": "Haiku", "prompt": "Write a haiku"},
+                         id="s")]),
+        Step(text="Got it.")],
+        [{"calls": [{"name": "TodoWrite", "arguments": {"todos": todos}}]},
+         {"text": "Old pond, a frog."}, {"text": ""}])
+    await asyncio.wait_for(h.turn("Go"), 60)
+    result = (await h.results())["s"]
+    assert "Old pond, a frog." in result.content
+    assert sessions.sessions[0].report == "Old pond, a frog."
+
+
+def test_a_child_done_without_a_reply_says_so(tmp_path):
     from kaden.frontends.sessions import SubSession
 
     sessions = SubSessions(tmp_path)
-    child = SubSession("4", "Task", "conv", tmp_path / "c", state="idle", messages=[
-        Message("m", Role.ASSISTANT, (Text("Nothing more to do here."),), time.time())])
+    child = SubSession("4", "Task", "conv", tmp_path / "c", state="done", report="")
     text = sessions._outcome(child)
-    assert "failed" not in text and "None" not in text
-    assert "Sub-session 4" in text and "Nothing more to do here." in text
+    assert text == "Sub-session 4 finished without a reply."
+
+
+async def test_a_child_that_ends_its_turn_with_a_proposal_is_done(make, tmp_path, child_env):
+    """A wrap-up option that carries a call is a pending proposal, not work that runs."""
+    wrap = {"question": "Look it up too?",
+            "options": [{"label": "Yes", "call": {"name": "lookup", "arguments": {}}},
+                        {"label": "No"}]}
+    h, sessions = await parent(make, tmp_path, [
+        Step(calls=[call("Agent", {"description": "Draft", "prompt": "Draft it"}, id="s")]),
+        Step(text="Got it.")],
+        [{"text": "Drafted.", "calls": [{"name": "wrap_up", "arguments": wrap}]}])
+    await asyncio.wait_for(h.turn("Go"), 60)
+    result = (await h.results())["s"]
+    assert result.status == ToolStatus.OK and "Drafted." in result.content
+    assert sessions.sessions[0].state == "done"
 
 
 async def test_send_message_reaches_only_the_conversations_own_subagents(tmp_path):

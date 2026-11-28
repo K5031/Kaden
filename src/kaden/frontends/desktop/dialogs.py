@@ -1,5 +1,5 @@
-"""Dialogs: long-term memory, notes, Continuous's life, saved answers, a
-duty, and the welcome.
+"""Dialogs: long-term memory, notes, Continuous's life, saved answers and the
+welcome.
 
 Dialogs use open() and signals, never exec(): exec() would run a nested event loop inside
 the qasync loop that also runs the runtime.
@@ -14,10 +14,8 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
-    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
@@ -33,22 +31,13 @@ from PySide6.QtWidgets import (
 )
 
 from kaden.api import (
-    ConversationInfo,
-    Duty,
     MemoryNote,
     PermissionRule,
     RuntimeAPI,
     Settings,
     SettingsUpdate,
 )
-from kaden.frontends.common import (
-    DUTY_HINT,
-    DUTY_KIND_LABELS,
-    MEMORY_HINT,
-    PLAN_HINT,
-    parse_plan_text,
-    plan_text,
-)
+from kaden.frontends.common import MEMORY_HINT
 from kaden.frontends.desktop.sidebar import RowDelegate
 from kaden.frontends.desktop.viewmodel import (
     Controller,
@@ -260,72 +249,6 @@ class SavedAnswers(QWidget):
     def kept(self) -> tuple[PermissionRule, ...]:
         return tuple(self.rules.item(i).data(Qt.ItemDataRole.UserRole)
                      for i in range(self.rules.count()))
-
-
-class DutyDialog(QDialog):
-    """The open conversation's duty and plan."""
-
-    def __init__(self, parent: QWidget, controller: Controller, info: ConversationInfo) -> None:
-        super().__init__(parent)
-        self.controller = controller
-        duty = info.duty or Duty("")
-        self.setWindowTitle("Duty")
-        self.setMinimumSize(600, 520)
-        form = QFormLayout(self)
-        form.setContentsMargins(20, 18, 20, 16)
-        form.addRow(text_label("Duty", selectable=False, role="heading"))
-        form.addRow(text_label(DUTY_HINT, tone="muted"))
-        self.instruction = QPlainTextEdit(duty.instruction)
-        self.instruction.setPlaceholderText("e.g. Keep my inbox answered")
-        self.instruction.setMaximumHeight(90)
-        self.kind = QComboBox()
-        for kind, label in DUTY_KIND_LABELS.items():
-            self.kind.addItem(label, kind)
-        self.kind.setCurrentIndex(self.kind.findData(duty.kind))
-        self.max_minutes, self.min_minutes = QDoubleSpinBox(), QDoubleSpinBox()
-        for box, seconds in ((self.max_minutes, duty.max_interval_s),
-                             (self.min_minutes, duty.min_interval_s)):
-            box.setRange(0.1, 7 * 24 * 60)
-            box.setDecimals(1)
-            box.setSuffix(" minutes")
-            box.setValue(seconds / 60)
-        self.plan = QPlainTextEdit(plan_text(info.plan))
-        self.plan.setPlaceholderText("[todo] A step | due 2026-11-12 09:00 | a note")
-        self.error = error_label()
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
-        self.save_button = primary(buttons.addButton(
-            "Save" if info.duty else "Turn on", QDialogButtonBox.ButtonRole.AcceptRole))
-        buttons.accepted.connect(self._save)
-        buttons.rejected.connect(self.reject)
-        if info.duty is not None:
-            off = buttons.addButton("Turn off", QDialogButtonBox.ButtonRole.DestructiveRole)
-            off.clicked.connect(lambda: self._apply(None))
-        form.addRow("What to do", self.instruction)
-        form.addRow("How long", self.kind)
-        form.addRow("Check in at least every", self.max_minutes)
-        form.addRow("and at most every", self.min_minutes)
-        form.addRow(text_label(PLAN_HINT, tone="muted"))
-        form.addRow("Plan", self.plan)
-        form.addRow(self.error)
-        form.addRow(buttons)
-
-    def _save(self) -> None:
-        instruction = self.instruction.toPlainText().strip()
-        self._apply(Duty(instruction, self.kind.currentData(), self.min_minutes.value() * 60,
-                         self.max_minutes.value() * 60) if instruction else None)
-
-    def _fail(self, error: Exception) -> None:
-        self.save_button.setEnabled(True)
-        say(self.error, user_message(error))
-
-    def _apply(self, duty: Duty | None) -> None:
-        try:
-            plan = parse_plan_text(self.plan.toPlainText())
-        except ValueError as e:
-            self._fail(e)
-            return
-        self.save_button.setEnabled(False)
-        self.controller.save_duty(duty, plan, failed=self._fail, done=lambda _: self.accept())
 
 
 # ── settings ──────────────────────────────────────────────────────────────

@@ -10,7 +10,6 @@ from kaden.api import (
     AgentState,
     Decision,
     Duty,
-    HelpNeeded,
     McpServer,
     PermissionRule,
     PlanItem,
@@ -70,10 +69,9 @@ async def test_the_log_holds_no_content(make: Any) -> None:
 
 
 
-async def test_settings_duties_plans_and_questions_are_logged_by_kind_and_count(
+async def test_settings_lives_and_plans_are_logged_by_kind_and_count(
         make: Any, installed: Any) -> None:
-    core = ScriptedCore([Step(calls=[call("ask_for_help", {"question": "SECRET-ASK"})]),
-                         Step(text="ok")], default=Step(text="ok"))
+    core = ScriptedCore([Step(text="ok")], default=Step(text="ok"))
     state = ModuleState(running={"core": "first", "memory": "fake-memory",
                                  "tools": "fake-tools", "frontend": "scripted"})
     h: Harness = await make(core=core, modules=state)
@@ -83,7 +81,7 @@ async def test_settings_duties_plans_and_questions_are_logged_by_kind_and_count(
         permission_rules=[PermissionRule("Bash", "SECRET-RULE")]))
     await h.runtime.set_plan([PlanItem("SECRET-STEP", PlanStatus.TODO, note="SECRET-NOTE")])
     await h.runtime.set_duty(Duty("SECRET-DUTY", min_interval_s=60, max_interval_s=600))
-    await eventually(lambda: h.rec.of(HelpNeeded))
+    await eventually(lambda: h.core.requests)
     await h.close()
 
     path = h.data_dir / "events.jsonl"
@@ -93,6 +91,5 @@ async def test_settings_duties_plans_and_questions_are_logged_by_kind_and_count(
     assert any(s["mcp_servers"] == 1 and s["permission_rules"] == 1 for s in settings)
     infos = [u["info"] for u in of(lines, "ConversationUpdated")]
     assert any(i["plan"] == 1 for i in infos)
-    assert any(i["duty"] == {"kind": "duty", "min_interval_s": 60, "max_interval_s": 600,
+    assert any(i["duty"] == {"kind": "life", "min_interval_s": 60, "max_interval_s": 600,
                              "model": None} for i in infos)
-    assert {"asked": True} in of(lines, "HelpNeeded")

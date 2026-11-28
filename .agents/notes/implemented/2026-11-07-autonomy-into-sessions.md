@@ -50,12 +50,14 @@ data folder: `instance.lock`, `usage.json` and `events.jsonl`.
 
 There is no autonomy setting. When a cycle ends, the wake set is every outstanding
 operation; once all of them have terminated the runtime starts the next cycle by itself,
-so the agent reports on work it started without the user asking whether it is done. This
-is the only time the agent acts without a user message.
+so the agent reports on work it started without the user asking whether it is done.
+Besides this, only a step of its plan falling due (a reminder) and a life
+([Continuous](2026-11-23-continuous.md)) wake the agent without a user message.
 
 - The system prompt and the tools are the same for a conversation's whole life.
 - `start()` always leaves the agent IDLE. A resumed conversation has no pending wake-up,
-  so it never runs before the user sends a message or activates it.
+  so it never runs before the user sends a message or activates it; a life's is woken
+  again at the times it chose.
 - Stop clears a pending wake-up.
 - `activate()` is allowed in IDLE for every conversation.
 - Permissions and budgets apply to a woken cycle exactly as to a user-started one.
@@ -165,7 +167,8 @@ command-line flags of the per-mode versions.
   is that the agent waits for all of its background work, never a part of it.
 - **A goal loop** (the runtime checks after each turn whether a stated goal is met and
   sends the agent back to work). The one thing that would make an autonomous mode differ
-  in behavior without touching permissions; not built, to be judged on real use.
+  in behavior without touching permissions. Built later as goals, and removed with them
+  ([duties](../rejected/2026-11-11-duties.md)).
 - **Loosening permissions for hands-off runs** (read freely, or anything inside the work
   folder). The shell tool is not a sandbox, and the permission level stays one setting, in
   Settings.

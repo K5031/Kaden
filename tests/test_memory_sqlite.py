@@ -768,11 +768,11 @@ def test_a_summary_and_a_search_hit_say_which_words_are_kadens():
     from kaden.memory.tools import _line
 
     said = Message("u", Role.USER, (Text("Watch my inbox"),), 0.0)
-    notice = Message("n", Role.USER, (Text("Time to check in on your duty."),), 60.0,
+    notice = Message("n", Role.USER, (Text("A step in your plan is due."),), 60.0,
                      Author.KADEN)
     assert _render_transcript([said, notice]).splitlines() == [
         "[1970-01-01 00:00 user] Watch my inbox",
-        "[1970-01-01 00:01 notice from Kaden, not the user] Time to check in on your duty."]
+        "[1970-01-01 00:01 notice from Kaden, not the user] A step in your plan is due."]
     assert " user " in _line("c", said) and " notice " in _line("c", notice)
 
 

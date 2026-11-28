@@ -39,7 +39,7 @@ for a conversation, with a stable id (`w1`, `w2`, …).
   the watch that is already there.
 - **A firing** goes into the conversation as a notice of Kaden's (`notify`'s path):
   `[Watch w3, BiliFeed] New videos: …`. It wakes the conversation:
-  - a watch the life started, as its own time (a new duty cause, `duties.WATCH`): within
+  - a watch the life started, as its own time (a new cause, `duties.WATCH`): within
     its daily amount, held to the next day once the day's share is spent;
   - a watch a module keeps for the user (below), as the user's own message does: at once,
     and not its own time.
@@ -65,12 +65,11 @@ for a conversation, with a stable id (`w1`, `w2`, …).
 
 ### Watches a module keeps
 
-- A Tools module may name watches it keeps on a conversation with a duty (a life
-  included), whatever the conversation does (`Tools.standing_watches()`), read when a
+- A Tools module may name watches it keeps on a conversation with a life, whatever the conversation does (`Tools.standing_watches()`), read when a
   conversation is opened and after each cycle, as `list_tools` is. The runtime starts each
   named one that is not running and stops one the module no longer names.
 - `StandingWatch.as_user` says how one wakes it: as the user's own message (at once, not
-  the duty's own time), for the user's messages by another way in; otherwise as the duty's
+  the life's own time), for the user's messages by another way in; otherwise as the life's
   own time, within its day.
 - The built-in module keeps one: `BiliWatchMessages`, the account's inbox, while the
   instance is logged in to Bilibili, as the life's own time: anyone can write to an

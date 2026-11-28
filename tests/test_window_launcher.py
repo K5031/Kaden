@@ -115,12 +115,12 @@ def test_a_bad_config_is_shown_by_the_launchers_own_frontend(tmp_path, monkeypat
 
 def test_the_window_launcher_has_the_flags_of_an_app_and_no_others(tmp_path):
     """What `kaden` was told of models and permissions goes on to it; what is for a
-    program (headless, a duty, printing the configuration) does not exist here."""
+    program (headless, printing the configuration) does not exist here."""
     assert window.parse_args(["--data-dir", str(tmp_path), "--conversation", "c1"]) == (
         launcher.Launch(tmp_path, conversation="c1"))
     assert window.parse_args(["--data-dir", str(tmp_path), "--model", "m"]) == (
         launcher.parse_args(["--data-dir", str(tmp_path), "--model", "m"]))
-    for flag in (["--headless"], ["--show-config"], ["--duty", "watch"]):
+    for flag in (["--headless"], ["--show-config"]):
         with pytest.raises(SystemExit):
             window.parse_args(flag)
 

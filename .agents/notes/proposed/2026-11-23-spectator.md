@@ -37,9 +37,9 @@ off nothing about what they do reaches the life.
   (`Tools.standing_watches()`, as `BiliWatchMessages` is), not `as_user`: a firing is the
   life's own time, within its daily amount. Turning it off stops naming it; the runtime
   stops the watch.
-- Only on the life: `standing_watches` learns the conversation's duty kind (a contract
-  change, below), and the module names `ScreenWatch` for `DutyKind.LIFE` alone, not for a
-  KFM duty or a goal that happens to run in the same instance.
+- Only on the life: a module's standing watches are kept only on a conversation with a
+  life, the one kind there is ([no duty mode](../implemented/2026-11-28-no-duty-mode.md)),
+  so naming `ScreenWatch` among them is enough.
 - The setting shows wherever the module's settings do, as `bilibili_wake` already does:
   in the life's settings (the gear), where it applies, and in the user's Settings, where
   no conversation is a life and it changes nothing.
@@ -131,15 +131,12 @@ Nothing fires because time passed: an unchanged screen costs captures, not reque
 Contract changes (`api.py`, Spec 16.4):
 - A watch firing keeps its output's attachments in the notice (today `_watch_loop` turns
   them into `attachment_text`). The notice becomes a message with text and images.
-- `Tools.standing_watches(kind: DutyKind)`: the kind of the conversation's duty, so a
-  module can keep a watch on a life alone. The built-in module's Bilibili inbox keeps
-  ignoring it.
 
 Files:
 - `src/kaden/tools/shell_files/screen.py`: `ScreenWatch` spec and its loop; thumbnail
   and comparison helpers; downscaling for delivery.
 - `src/kaden/tools/shell_files/__init__.py`: the `spectator` ToolSetting;
-  `standing_watches(kind)` names `ScreenWatch` for a life while it is on and a capture
+  `standing_watches()` names `ScreenWatch` while it is on and a capture
   exists.
 - `src/kaden/runtime/orchestrator.py`: firing notices carry attachments.
 - `.agents/notes/implemented/2026-11-23-continuous.md`: its declined "it sees the
@@ -158,9 +155,9 @@ Tests first:
 - `tests/test_watches.py`: a firing with an image attachment reaches the conversation
   with the image.
 - `tests/test_tools_shell_files.py`: setting off → no standing watch, no spec; on →
-  named for a LIFE conversation, not for a DUTY or GOAL one.
+  named.
 
-Steps: attachments in firings; the duty kind for standing watches; the watch and its
+Steps: attachments in firings; the watch and its
 tests with fakes; the setting; docs and the Continuous note; then a real day on KDE, reading the logs for cost and firing count.
 
 Open questions for the user:

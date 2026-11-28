@@ -10,7 +10,7 @@ what it is doing. Kaden could not do this. An agent can only work in its one con
 long side task fills its context and blocks the conversation while it runs.
 
 [Headless units](2026-11-11-headless-units.md) made the child easy: a
-Kaden started with `--headless` takes a goal and reports when it is done. What is
+Kaden started with `--headless` takes a task as its first message and answers it. What is
 missing is the host. In the Claude app the app itself starts and holds every session, so
 listing and peeking are trivial. In Kaden the user-facing host is the frontend.
 
@@ -32,15 +32,16 @@ desktop app creates and offers. It offers:
 - `Agent(description, prompt, run_in_background, budget_usd, isolation)`, Claude Code's
   subagent tool ([all of Claude Code's tools](2026-11-22-all-of-claude-codes-tools.md)):
   starts a child, a separate Kaden agent with its own context, in the conversation's
-  work folder, on `prompt` as a goal, titled `description`. The agent calls it when the
+  work folder, with `prompt` as its first message, titled `description`. The agent calls it when the
   user asked for the work; when it is its own idea it proposes the call
   ([proposals](2026-11-11-proposals.md)), as the Claude app asks before a session the agent
   proposes. The call waits for the child, or with `run_in_background` runs in the
-  background, and returns the child's report when the goal is reached, or its question
-  when it asks for help.
+  background, and returns the child's last reply, whole, once it is done: its turn has
+  ended and no background work of its own still runs. A child that needs something says
+  so in that reply ([no duty mode](2026-11-28-no-duty-mode.md)).
   With `isolation: "worktree"` it works in a git worktree of its own
   ([subagents in worktrees](2026-11-22-subagents-in-worktrees.md)).
-- `SendMessage(to, message)`: answers a question or adds an instruction, then waits
+- `SendMessage(to, message)`: answers the child or gives it more to do, then waits
   the same way.
 - A child is stopped with `TaskStop` on the call that waits for it.
 
@@ -51,17 +52,17 @@ How a child runs:
   `budget_usd` when it has one (none by default, never the parent's) and its work folder
   set to the conversation's. Keys come from the same OS
   keychain. The permission ceiling passes down as for any child process.
-- The manager starts its conversation and gives it the task as a goal, with short
-  intervals (it checks in at least every 2 minutes), so a child that ends its turn
-  without finishing continues soon.
+- The manager starts its conversation and sends it the task. The child has no life
+  ([duty](../rejected/2026-11-11-duties.md)): it does not go on by itself after its turn,
+  as Claude Code's subagents do not.
 - A permission prompt in the child waits for the user, as in the parent; the parent's call
   keeps waiting meanwhile.
 - Cancelling the call (Stop, `TaskStop`) stops the child; closing the
   parent stops every child that is working. A child that is done or stopped is closed
   once no view has it open.
 - Each child's record (`session.json` in its folder) keeps it listed after a restart.
-  Opening one that is not running starts it again on its own conversation; **Resume** also
-  lets it carry on with its goal. Nothing resumes by itself after a restart (SPEC 11).
+  Opening one that is not running starts it again on its own conversation; **Resume** lets
+  one that was stopped or failed carry on with its task. Nothing resumes by itself after a restart (SPEC 11).
 - When a child stops working and no call of the parent's waits for it (the user talked to
   it), the parent gets a notice in its conversation, as the Claude app sends a note when a
   session ends a turn.
@@ -85,7 +86,7 @@ therefore shows a child with the same code as its own conversation.
   permission cards, Stop, and a message box that talks to it. Clicking a conversation goes
   back; the child keeps working. Memory, tool servers and settings stay the window's own.
 - **Row actions:** open, resume, stop, rename, archive and delete.
-- The parent conversation shows each child as a step, with its report as the result.
+- The parent conversation shows each child as a step, with its final reply as the result.
 
 Choices are in `.agents/decisions.md` (Sub-sessions).
 
@@ -110,8 +111,10 @@ Choices are in `.agents/decisions.md` (Sub-sessions).
 - **Resuming children by themselves after a restart,** as long-running app sessions do.
   Convenient, but SPEC 11 keeps a crash from quietly repeating an action; one click is the
   price.
-- **A notice for every turn,** including a goal's check-ins. Closest to the Claude app's
-  notes, but a child between check-ins would wake its parent every few minutes for nothing.
+- **Children that go on by themselves,** on a goal with check-ins until they declared it
+  reached. Built first; a child that ended its turn unfinished carried on, but goals went
+  with duty mode ([no duty mode](2026-11-28-no-duty-mode.md)), and Claude Code's subagents
+  work until their turn ends.
 - **A real tree widget** for the sidebar. Native folding, but the rows' drawing, menus and
   shortcuts are built on a list; headings and indented rows in the same list keep them.
 
@@ -122,6 +125,8 @@ Choices are in `.agents/decisions.md` (Sub-sessions).
 - **Cost.** Each child is a full agent with its own context. A spending limit caps it only
   when the user or the agent sets one, as with Claude's sub-agents; the parent's own limit
   does not include it.
+- **A child's work fits in its turns.** One that ends its turn before the task is done
+  stops there; the parent reads its reply and sends it on.
 - **Children wait for approvals.** A child whose step needs the user's OK waits until the
   user opens it; the sidebar says so. Routing prompts to a supervisor agent is the KFM's
   escalation, not built.

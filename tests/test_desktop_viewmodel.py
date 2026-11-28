@@ -879,22 +879,6 @@ async def test_a_tool_the_provider_ran_is_a_finished_step(make):
     assert "w.example" in step.content
 
 
-async def test_a_question_for_help_is_shown_until_it_is_answered(make):
-    from kaden.api import Budget, Duty
-
-    h: Harness = await make(budget=Budget(max_cost_usd=5))
-    h.core.add(Step(calls=[call("ask_for_help", {"question": "Which account?"})]),
-               Step(text="Waiting for you."))
-    await h.start()
-    model, controller, _ = await attach(h)
-    await h.runtime.set_duty(Duty("Run socials"))
-    await eventually(lambda: any("Which account?" in n.text for n in of(model, NoticeItem)))
-    await until_state(h, controller, AgentState.IDLE)
-    assert model.help_needed == "Which account?"
-    controller.send("The main one.")
-    await eventually(lambda: model.help_needed is None)
-
-
 async def test_a_runtime_notice_is_shown_as_a_notice_not_as_the_users_words(make):
     from kaden.api import Budget, Duty
     from kaden.frontends.desktop.viewmodel import conversation_label
@@ -904,11 +888,11 @@ async def test_a_runtime_notice_is_shown_as_a_notice_not_as_the_users_words(make
     info = await h.start()
     model, _controller, _ = await attach(h)
     await h.runtime.set_duty(Duty("Watch the inbox"))
-    await eventually(lambda: any("New duty: Watch the inbox" in n.text
+    await eventually(lambda: any("Your life: Watch the inbox" in n.text
                                  for n in of(model, NoticeItem)))
-    assert not any("New duty" in u.text for u in of(model, UserItem))
-    [notice] = [n for n in of(model, NoticeItem) if "New duty" in n.text]
-    assert notice.text == "New duty: Watch the inbox"
+    assert not any("Your life" in u.text for u in of(model, UserItem))
+    [notice] = [n for n in of(model, NoticeItem) if "Your life" in n.text]
+    assert notice.text == "Your life: Watch the inbox"
     [stored] = await h.runtime.list_conversations()
     assert stored.id == info.id and conversation_label(stored) == "New chat"
 

@@ -158,8 +158,8 @@ question gets no plan.
   the agent works and is gone when the agent stops.
 - **The agent finishes its plan before it stops.** If it ends a turn with steps open, Kaden
   sends it back once to do them or close them. When the turn ends, Kaden ticks off any
-  step still open. A step stays open only when it waits for a reminder's time, for
-  background work, or for its next check-in when it has a duty.
+  step still open. A step stays open only when it waits for a reminder's time or for
+  background work.
 
 ### Reminders
 
@@ -172,8 +172,6 @@ is woken when the time comes, without a message from you. Next to the conversati
   while it was closed, or while Kaden was not running, is not sent late by itself: the
   agent sees it with your next message.
 - **Stop** puts reminders off until your next message.
-- For work that keeps going on its own, give the conversation a
-  [duty](concepts.md#duties) instead.
 
 ### Questions
 
@@ -345,7 +343,7 @@ has a card with **Cancel**.
 
 ## Quitting
 
-Closing the window keeps Kaden running in the system tray, so Continuous, duties and
+Closing the window keeps Kaden running in the system tray, so Continuous, reminders and
 background work go on; click its icon there to open the window again. **Quit** (in ☰,
 your name's menu or the tray icon's), or Ctrl+Q, quits: tools still running are
 cancelled, and your conversations are saved and can be continued later. On a desktop

@@ -12,8 +12,7 @@ either sends a reply or runs an action (commit, create a PR) directly, and typin
 else still works. Its own ideas for later are separate cards.
 
 [Proposals](2026-11-11-proposals.md) are Kaden's separate cards: one tool call, Approve or
-Dismiss, pending while the agent works on. `ask_for_help` asks a question but offered no
-answers to pick.
+Dismiss, pending while the agent works on.
 
 ## Decision
 
@@ -33,7 +32,7 @@ answers to pick.
   its cancelled outcome is appended before the message, and the request that answers the
   message is the only one.
 - **Frontends read the card from the transcript.** `common.card_of(call)` gives a `Card`
-  for `wrap_up` and for `ask_for_help` with `replies`. A frontend shows the newest one while
+  for `wrap_up`. A frontend shows the newest one while
   no user message follows it, so it survives a restart and shows again on reopening. The
   `wrap_up` call is not shown as a step, and a card proposal is not shown as its own card.
 - **A click on an option sends its label as an ordinary message,** unless it is the option

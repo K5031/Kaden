@@ -22,8 +22,8 @@ have had to think of opening.
   delivered from the inbox (`notify`, a kept watch's firing), and the firings of the
   conversation's own watches, at the start of a cycle or mid-cycle (a queued message).
   Recall (`Runtime._recall`) runs once for what came in, after memory upkeep and right before the next
-  inference. Not for the runtime's own prompts (the activation notice, a duty's generic
-  "time to work" notice): they ask nothing memory could answer. Claude Code recalls for
+  inference. Not for the runtime's own prompts (the activation notice, a life's
+  "time has passed" notice): they ask nothing memory could answer. Claude Code recalls for
   the user's messages; recalling for notices too is Kaden's own, for a life woken by the
   world.
 - **What is chosen from:** the notes `Memory.notes()` lists, less those every request

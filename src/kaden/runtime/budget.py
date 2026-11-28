@@ -114,7 +114,7 @@ class Totals:
     tool_calls: int = 0
     elapsed_s: float = 0.0
     day: str = ""  # the local calendar day day_cost_usd is for (ISO date)
-    day_cost_usd: float = 0.0  # of what a duty started by itself, that day
+    day_cost_usd: float = 0.0  # of what a life started by itself, that day
 
 
 def _read_totals(path: Path) -> Totals:
@@ -236,7 +236,7 @@ class BudgetTracker:
         return None
 
     def charge(self, usage: Usage, cost: float, *, own_time: bool = False) -> None:
-        """Count what a request used; `own_time`: of a cycle a duty started by itself,
+        """Count what a request used; `own_time`: of a cycle a life started by itself,
         which alone counts toward the day's cost (Budget.max_cost_usd_per_day)."""
         self.totals.input_tokens += usage.input_tokens
         self.totals.output_tokens += usage.output_tokens
@@ -248,7 +248,7 @@ class BudgetTracker:
         self.save()
 
     def day_cost(self) -> float:
-        """What a duty's own cycles have cost today (the local calendar day)."""
+        """What a life's own cycles have cost today (the local calendar day)."""
         return self.totals.day_cost_usd if self.totals.day == _today() else 0.0
 
     def day_spent(self) -> bool:

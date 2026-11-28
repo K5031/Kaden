@@ -14,7 +14,7 @@ Message conventions:
   late outcome of a backgrounded call; Cores render it as text for providers), and what
   the user attached: Image, Document and File blocks, after the Text.
 - A USER message says who wrote it (Message.author): the user, or Kaden itself, for
-  the model (an activation, a duty's wake-up, a due step, a sub-session's report,
+  the model (an activation, a life's wake-up, a due step, a sub-session's report,
   background outcomes). Its stored text is what was written and nothing else; in a
   request the runtime starts a message of Kaden's with "[Runtime notice] ", so the
   model can tell them apart. Frontends show Kaden's as a notice, never as something
@@ -70,9 +70,9 @@ Runtime guarantees to modules:
   authorize the next turn and the cycle continues. A message queued after a cycle's last
   boundary starts the next cycle when that one ends, however it ended, unless Stop ended
   it, an append failed or a budget is exhausted. The wake set (every operation
-  outstanding then) is computed at that boundary: when all of them have terminated (with
-  a duty, the first of them), the runtime starts the next cycle by itself, so the agent can
-  report on work it started. A duty also wakes it on its schedule (see Duty).
+  outstanding then) is computed at that boundary: when all of them have terminated (in
+  a life, the first of them), the runtime starts the next cycle by itself, so the agent can
+  report on work it started. A life also wakes it at the times it chose (see Duty).
 - Budgets: a tool start checks every dimension and counts the call in one atomic step.
   Inference checks every dimension before it starts (nothing is reserved, since its cost
   is unknown) and is cancelled as soon as in-flight usage exhausts one.
@@ -536,32 +536,30 @@ class ConversationInfo:
     seed_from: ConversationId | None = None  # "Continue from" source; None once deleted
     preview: str | None = None  # start of the first message the user wrote, for display
     folder: str | None = None  # work folder, an absolute path; None = the Tools' default
-    duty: Duty | None = None  # standing work the conversation does by itself
-    plan: Sequence[PlanItem] = ()  # kept when the duty ends
+    duty: Duty | None = None  # its life: the conversation goes on by itself
+    plan: Sequence[PlanItem] = ()  # kept when the life ends
 
 
 class DutyKind(StrEnum):
-    DUTY = "duty"  # runs until a person turns it off
-    GOAL = "goal"  # also ends when the agent declares it reached (finish_goal)
-    # The agent's own time, not work: someone's life (Continuous). No ask_for_help or finish_goal;
-    # woken again when its conversation is resumed (a restart does not pause it); held to
+    # The agent's own time, not work: someone's life (Continuous). Woken again when its
+    # conversation is resumed (a restart does not pause it); held to
     # Budget.max_cost_usd_per_day.
     LIFE = "life"
 
 
 @dataclass(frozen=True, slots=True)
 class Duty:
-    """Standing work: a conversation with a duty continues by itself. Only a person sets
+    """A life (Continuous): a conversation with one goes on by itself. Only a person sets
     one (RuntimeAPI.set_duty). While the agent is idle it wakes on the first operation to
-    finish (not the whole batch), on a message, and at the earliest due open plan item,
-    held between min_interval_s and max_interval_s after the cycle ends; with nothing due,
-    at max_interval_s, or a life (DutyKind.LIFE) at min_interval_s."""
+    finish (not the whole batch), on a message, and at a time it chose (a due open plan
+    item, or Rest, held to max_interval_s ahead), at the earliest min_interval_s after the
+    cycle ends; with no time chosen, time does not wake it."""
 
     instruction: str
-    kind: DutyKind = DutyKind.DUTY
+    kind: DutyKind = DutyKind.LIFE
     min_interval_s: float = 60.0
     max_interval_s: float = 3600.0
-    # The model of the cycles the duty starts by itself (None: the conversation's); a
+    # The model of the cycles the life starts by itself (None: the conversation's); a
     # message from the user is answered with the conversation's model. One the Core does
     # not offer is not used.
     model: str | None = None
@@ -910,9 +908,6 @@ _QUESTION = {
 # before a restart are unknown, their outcome is the INTERRUPTED OperationResult from
 # resume repair. TaskStop waits for termination (bounded by the grace period) and
 # reports the final status; the outcome still arrives as an OperationResult.
-_REPLIES = {"type": "array", "minItems": 1, "maxItems": 3,
-            "items": {"type": "string", "minLength": 1, "maxLength": 80}}
-
 BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
     "TaskOutput": ToolSpec(
         "TaskOutput",
@@ -1062,8 +1057,8 @@ _PLAN_ITEM = {
     "required": ["content", "status", "activeForm"],
 }
 
-# Runtime built-ins offered with an open conversation (TodoWrite), while it has a duty
-# (ask_for_help) or a goal (finish_goal). Like BUILTIN_TOOLS, never gated and not counted.
+# Runtime built-ins offered with an open conversation (TodoWrite), and while it has a life
+# (Rest). Like BUILTIN_TOOLS, never gated and not counted.
 DUTY_TOOLS: Mapping[str, ToolSpec] = {
     "TodoWrite": ToolSpec(
         "TodoWrite",
@@ -1081,17 +1076,6 @@ DUTY_TOOLS: Mapping[str, ToolSpec] = {
          "properties": {"todos": {"type": "array", "items": _PLAN_ITEM}},
          "required": ["todos"]},
     ),
-    "ask_for_help": ToolSpec(
-        "ask_for_help",
-        "When you are blocked and only your supervisor can unblock you (a decision, an "
-        "approval, access you lack): ask one clear question. Your duty's check-ins pause "
-        "until they answer; finished background work still wakes you. Optionally offer 1 to "
-        "3 replies they can click, written as they would say them.",
-        {"type": "object",
-         "properties": {"question": {"type": "string", "minLength": 1}, "replies": _REPLIES},
-         "required": ["question"]},
-    ),
-    # A life's only (DutyKind.LIFE).
     "Rest": ToolSpec(
         "Rest",
         "Rest: time does not wake you until then, at most your longest wait ahead. Give "
@@ -1105,16 +1089,6 @@ DUTY_TOOLS: Mapping[str, ToolSpec] = {
             "minutes": {"type": "number", "minimum": 0,
                         "description": "Instead of until: minutes from now."}}},
         read_only=True,
-    ),
-    "finish_goal": ToolSpec(
-        "finish_goal",
-        "Declare your goal reached, with a short report for the user. Your duty then ends. "
-        "Bring your todo list up to date first, with TodoWrite in the same message, before "
-        "this call: every step completed or left out, as it really is. The step you are on "
-        "counts as done with this call; a step you never began stays open and sends you "
-        "back to close it.",
-        {"type": "object", "properties": {"report": {"type": "string", "minLength": 1}},
-         "required": ["report"]},
     ),
 }
 
@@ -1151,15 +1125,15 @@ TOOL_SEARCH = ToolSpec(
     read_only=True,
 )
 
-# Calls frontends show as a card under the answer (wrap_up: recap, question, options;
-# ask_for_help: question, replies), while no user message follows it. A click on an option
+# Calls frontends show as a card under the answer (wrap_up: recap, question, options),
+# while no user message follows it. A click on an option
 # sends its label as the user's message, or approves its call's PROPOSAL prompt.
-SUGGESTION_TOOLS = frozenset({"wrap_up", "ask_for_help"})
+SUGGESTION_TOOLS = frozenset({"wrap_up"})
 
 # What runs in plan mode besides read-only tools: the runtime's built-ins that change
 # nothing outside the conversation.
 PLAN_MODE_TOOLS = frozenset({"EnterPlanMode", "ExitPlanMode", "AskUserQuestion", "TodoWrite",
-                             "wrap_up", "TaskStop", "ask_for_help", "finish_goal"})
+                             "wrap_up", "TaskStop"})
 
 # No module may declare these names.
 RESERVED_TOOL_NAMES = (frozenset(BUILTIN_TOOLS) | frozenset(DUTY_TOOLS)
@@ -1208,10 +1182,10 @@ class ToolOutput:
 
 @dataclass(frozen=True, slots=True)
 class StandingWatch:
-    """A watch a Tools module keeps on a conversation with a duty (Tools.standing_watches):
+    """A watch a Tools module keeps on a conversation with a life (Tools.standing_watches):
     its tool and arguments. `as_user`: its outcomes are the user's own messages by another
     way in, which wake the conversation as the user's message does; otherwise they count
-    as the duty's own time (an inbox anyone can write to)."""
+    as the life's own time (an inbox anyone can write to)."""
 
     name: str
     arguments: Mapping[str, Any] = field(default_factory=dict)
@@ -1254,7 +1228,7 @@ class Tools(abc.ABC):
 
     async def standing_watches(self) -> Sequence[StandingWatch]:
         """Optional: watches (of its ToolSpec.watch tools) the module keeps on a
-        conversation with a duty, a life's included, whatever the conversation does: an
+        conversation with a life, whatever the conversation does: an
         account's inbox, say. Read when a conversation opens and after each cycle; the
         runtime starts each named one that is not running and ends one no longer named.
         StandingWatch.as_user says how their outcomes wake it."""
@@ -1586,8 +1560,8 @@ class Budget:
     committed (text only, as with Stop) and the agent fails with Failure(BUDGET). An
     abandoned call stops counting toward max_duration_s when it is abandoned.
 
-    max_cost_usd_per_day holds back only the cycles a life (DutyKind.LIFE) starts by
-    itself, and counts only theirs: once the day's cost of what the duty started (local
+    max_cost_usd_per_day holds back only the cycles a life (Duty) starts by
+    itself, and counts only theirs: once the day's cost of what the life started (local
     calendar day) reaches it, the life wakes again the next day. It exhausts nothing: a
     message from the user is answered, within the other dimensions.
     """
@@ -1808,7 +1782,6 @@ class RuntimeSnapshot:
     queued_messages: Sequence[MessageQueued]
     duty_wake_at: float | None = None  # see DutyScheduled
     prompts: Sequence[Prompt] = ()  # what waits on the person (PromptOpened)
-    help_needed: str | None = None  # see HelpNeeded
     plan_mode: bool = False  # see PlanModeChanged
     # The offered tools' titles by name (ToolSpec.title), from the latest listing: what
     # frontends name a step without a sentence by. ToolTitles says when they change; a
@@ -1925,22 +1898,12 @@ class MemoriesChanged:
 
 @dataclass(frozen=True, slots=True)
 class DutyScheduled:
-    """When the open conversation's agent is next woken by itself (Unix time): by its duty,
+    """When the open conversation's agent is next woken by itself (Unix time): by its life,
     or without one for a step of its plan that falls due. None: it is not, because the
-    agent is working, nothing is due, or the duty is paused (Stop, a failure, a restart
-    other than a life's) until a person sends a message or activates it."""
+    agent is working, nothing is due, or the life is paused (Stop, a failure) until a
+    person sends a message or activates it."""
 
     wake_at: float | None
-
-
-@dataclass(frozen=True, slots=True)
-class HelpNeeded:
-    """The agent asked its supervisor (the user, or whoever drives this instance) for help
-    with ask_for_help: the duty's check-ins pause until a message, an activation or a change
-    of duty. None: the question is answered or dropped. Not kept across a restart, which
-    pauses the duty anyway."""
-
-    question: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2054,7 +2017,6 @@ type RuntimeEvent = (
     | ConversationDeleted
     | MemoriesChanged
     | DutyScheduled
-    | HelpNeeded
     | PromptOpened
     | PromptClosed
     | PlanModeChanged
@@ -2117,8 +2079,8 @@ class RuntimeAPI(Protocol):
     module does not support them; frontends then hide those controls.
 
     start() leaves the agent IDLE. A resumed conversation has no pending
-    wake-up, so it never runs before the user sends a message or activates it; one whose
-    duty is a life (DutyKind.LIFE) is woken again on its schedule. The
+    wake-up, so it never runs before the user sends a message, activates it or a step of
+    its plan still ahead falls due; one with a life (Duty) is woken again on its schedule. The
     runtime is built holding the data dir lock, taken before any module is built and held
     until shutdown; where another process holds it (InstanceLockedError), the frontend
     runs on a runtime that only shows why. send() in IDLE authorizes a
@@ -2266,11 +2228,11 @@ class RuntimeAPI(Protocol):
         conversation is deleted."""
 
     async def set_duty(self, duty: Duty | None) -> None:
-        """Give the open conversation a duty, change it, or end it (None); the plan stays.
+        """Give the open conversation a life, change it, or end it (None); the plan stays.
         Allowed in any state after start(); a change during a cycle applies when it ends.
-        Turning a duty on in IDLE, STOPPED or FAILED (not by budget) starts a cycle.
-        ValueError for an empty instruction, intervals that are not 0 < min <= max, or
-        no cost limit (Budget.max_cost_usd). Emits ConversationUpdated."""
+        Turning a life on in IDLE, STOPPED or FAILED (not by budget) starts a cycle.
+        ValueError for an empty instruction or intervals that are not 0 < min <= max; a
+        life needs no cost limit. Emits ConversationUpdated."""
 
     async def set_plan(self, plan: Sequence[PlanItem]) -> None:
         """Replace the open conversation's plan as the user. Emits ConversationUpdated."""

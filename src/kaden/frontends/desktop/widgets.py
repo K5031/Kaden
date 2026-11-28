@@ -161,7 +161,7 @@ def detach(widget: QWidget) -> None:
 
 class Detail(QWidget):
     """Text that may run long, folded to its start with Show all: a call's arguments on a
-    card (a sub-session's brief, a long command), or a long notice (a new goal)."""
+    card (a sub-session's brief, a long command), or a long notice (a life turned on)."""
 
     def __init__(self, text: str, *, lines: int = 3, chars: int = 240) -> None:
         super().__init__()

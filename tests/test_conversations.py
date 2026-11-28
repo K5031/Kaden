@@ -342,7 +342,7 @@ async def test_leaving_an_unused_chat_leaves_nothing_behind(make):
     assert await h.runtime.list_conversations() == []
 
 
-async def test_naming_a_new_chat_or_giving_it_a_duty_stores_it(make):
+async def test_naming_a_new_chat_or_giving_it_a_life_stores_it(make):
     from kaden.api import Budget, Duty
 
     h: Harness = await make(budget=Budget(max_cost_usd=5.0))

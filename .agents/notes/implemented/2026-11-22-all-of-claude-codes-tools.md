@@ -18,8 +18,8 @@ features Kaden does not have (`EnterWorktree` and `ExitWorktree`, scheduled agen
 teams, Monitor, workflows) are out of scope, `EnterPlanMode` and `ExitPlanMode` come with
 [plan mode](2026-11-22-plan-mode.md), and `Agent`'s `isolation` with
 [subagents in worktrees](2026-11-22-subagents-in-worktrees.md); so are the Claude app's own tools, which `propose` and
-`wrap_up` already mirror, and Kaden's duty tools (`ask_for_help`, `finish_goal`), the
-Memory tools and `screenshot`, which have no counterpart.
+`wrap_up` already mirror, and a life's `Rest`, the Memory tools and `screenshot`, which
+have no counterpart.
 
 Where Kaden has a feature a Claude Code tool lacks, the tool keeps it as an extra
 optional parameter: a plan step's due time and note, a subagent's budget.
@@ -57,8 +57,8 @@ Two mechanisms in the runtime carry this:
 - **TaskCreate, TaskUpdate, TaskList and TaskGet for the plan,** Claude Code's newest
   task-list tools. `TodoWrite` is the one models have the longest training on, and it
   replaces the whole list in one call, as Kaden's plan always has.
-- **Drop the extras** (due times, notes, budgets) for an exact schema. Reminders, duties'
-  schedules and sub-session limits depend on them.
+- **Drop the extras** (due times, notes, budgets) for an exact schema. Reminders, a life's
+  chosen times and sub-session limits depend on them.
 - **A stop_session of its own.** `TaskStop` on the call that waits for a subagent stops
   it, as in Claude Code; a subagent that is done is closed by itself.
 

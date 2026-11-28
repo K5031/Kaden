@@ -47,7 +47,7 @@ MESSAGE = Message("m1", Role.ASSISTANT, (
     ToolResult("c1", ToolStatus.OK, "found"), OperationResult("c2", ToolStatus.ERROR, "no"),
     ServerToolUse("s1", "web_search", {"q": "x"}, "Searched", "pages")), 1.5)
 INFO = ConversationInfo("conv", "Title", 1.0, 2.0, folder="/w",
-                        duty=Duty("Watch", DutyKind.GOAL),
+                        duty=Duty("Watch", DutyKind.LIFE, model="m"),
                         plan=(PlanItem("Read", PlanStatus.DOING, 3.0, "n"),))
 
 
@@ -60,7 +60,7 @@ INFO = ConversationInfo("conv", "Title", 1.0, 2.0, folder="/w",
         seq=4, state=AgentState.IDLE, conversation=INFO, config=None, model="m",
         usage=UsageSnapshot(Usage(1, 2, cost_usd=0.5), 3, 4.0, {"max_cost_usd": 1.0}),
         operations=(OperationInfo(CALL, 1.0, "half", True),),
-        queued_messages=(), duty_wake_at=9.0, help_needed="?"),
+        queued_messages=(), duty_wake_at=9.0),
     SettingsUpdate(budget=Budget(max_cost_usd=2.0), permissions=PermissionPolicy.ASK),
     StartOptions(conversation_id="c"),
     ModelInfo("m", "M", context_window=10),

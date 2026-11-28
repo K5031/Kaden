@@ -817,7 +817,8 @@ was used.
 ## 14. Found while proposing duties
 
 ### D1 (C) The direction for fleets and the spec's scope
-- **Status:** Resolved (SPEC 1, 3, 4.4, 5, 10.1, 13): duties and the headless frontend.
+- **Status:** Resolved (SPEC 1, 3, 4.4, 5, 10.1, 13): the headless frontend. Duties, built
+  for it too, were removed ([no duty mode](notes/implemented/2026-11-28-no-duty-mode.md)).
 - **Where:** the user's direction of 2026-11-10 (Kaden as the base agent of a fleet
   manager with ranks, supervisors and duties, kept in that manager's own project) against
   SPEC 1 ("Kaden does not implement a bespoke multi-agent
@@ -828,7 +829,7 @@ was used.
 - **Assumed:** Both hold if the fleet manager is a separate program: the spec stays about
   one Kaden instance, and ranks and teams stay out of it. What a unit needs is added to
   the spec as it is built: duties
-  ([note](notes/implemented/2026-11-11-duties.md)),
+  ([note](notes/rejected/2026-11-11-duties.md)),
   then a headless frontend ([note](notes/implemented/2026-11-11-headless-units.md)).
 - **Fix:** SPEC 1 and 13 say that managing a fleet is a separate program's and name what
   Kaden provides toward it.
@@ -880,15 +881,14 @@ was used.
   as of that event (or let `MessageCommitted` be the only way a message after the
   snapshot arrives). The frontends' own lists of drawn ids then go.
 
-### P5 (S) `set_duty(None)` without a duty is not a no-op
+### P5 (S) `set_duty(None)` without a life is not a no-op
 - **Status:** Open.
 - **Where:** `RuntimeAPI.set_duty`; `orchestrator.set_duty`.
-- **Problem:** Turning off a duty that is not on saves the conversation, withdraws the
-  agent's open question and cancels the timer, which without a duty is the reminder for
-  a plan's next due step, just scheduled by `set_plan`.
-- **Assumed:** The terminal frontend's duty dialog calls `set_duty` only when a duty is
-  given or one is on.
-- **Proposed fix:** `set_duty(None)` with no duty does nothing; the frontend's test goes.
+- **Problem:** Turning off a life that is not on saves the conversation and cancels the
+  timer, which without a life is the reminder for a plan's next due step, just scheduled
+  by `set_plan`.
+- **Assumed:** Only Continuous calls `set_duty`, always with its life.
+- **Proposed fix:** `set_duty(None)` with no life does nothing.
 
 ### P6 (S) A secret a frontend writes for a Tools module
 - **Status:** Withdrawn: the login became a tool of the Tools module (`BiliLogin`), which keeps it itself; no frontend writes it.

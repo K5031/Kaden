@@ -19,7 +19,7 @@ session is always started on a folder the user picks, and asked for the same.
 - **A new chat asks.** `Controller.folder_picked` is true for a chat opened with a
   folder, a conversation id or `seed_from`, and false for a plain new chat. While it is
   false and the chat is unused, the folder button reads "Choose folder", the title has
-  no folder tooltip, and sending a message or opening the duty dialog opens the folder
+  no folder tooltip, and sending a message opens the folder
   menu instead (`MainWindow._offer_folders`); what was typed stays in the box.
 - **Choosing** is the existing menu: recent folders and "Choose folder…". The folder the
   draft happens to have can be chosen too.

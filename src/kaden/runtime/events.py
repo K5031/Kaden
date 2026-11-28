@@ -21,7 +21,6 @@ from kaden.api import (
     BLOCK_TYPES,
     ConversationUpdated,
     EventEnvelope,
-    HelpNeeded,
     MemoriesChanged,
     MessageCommitted,
     MessageQueued,
@@ -66,8 +65,6 @@ def _logged(event: RuntimeEvent) -> dict[str, Any]:
                     "name": prompt.call.name if prompt.call else None}
         case PromptClosed(prompt_id=prompt_id, reply=reply):
             return {"prompt_id": prompt_id, "answered": reply is not None}
-        case HelpNeeded(question=question):
-            return {"asked": question is not None}
     data = dataclasses.asdict(event)
     match event:
         case SettingsChanged():

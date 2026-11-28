@@ -88,7 +88,7 @@ async def test_without_notes_nothing_is_asked(make):
     assert chooser.asked == []
 
 
-async def test_a_duty_waking_by_itself_recalls_nothing(make):
+async def test_a_life_waking_by_itself_recalls_nothing(make):
     """Its own notice asks nothing memory could answer."""
     chooser = Chooser("Kyoto trip")
     h = await with_notes(make, chooser, steps=0)

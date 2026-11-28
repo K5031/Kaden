@@ -1,5 +1,5 @@
-"""Duties: the prompt section, the plan the agent writes with TodoWrite, and when the
-duty wakes next."""
+"""A conversation's life and plan: the prompt section, the plan the agent writes with
+TodoWrite, its reminders, and when a life wakes next."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Any
 
 from kaden.api import PLAN_STATUS, TODO_STATUS, Duty, DutyKind, PlanItem, PlanStatus
 
-TURNED_ON = "the duty was turned on"
+TURNED_ON = "the life was turned on"
 DUE = "a plan item is due"
 CHECK_IN = "scheduled check-in"
 FINISHED = "background work finished"
@@ -63,11 +63,11 @@ def saved(plan: Sequence[PlanItem], duty: Duty | None, now: float) -> str:
 
 
 def prompt(duty: Duty | None, plan: Sequence[PlanItem], *, in_view: bool = False) -> str:
-    """The system prompt section for a conversation with a duty or a plan. A plan the
+    """The system prompt section for a conversation with a life or a plan. A plan the
     conversation itself shows (`in_view`: the agent's TodoWrite call is among the
     messages) is left out, so that updating it does not change the prompt."""
     parts = []
-    if duty is not None and duty.kind == DutyKind.LIFE:
+    if duty is not None:
         parts.append(
             f"## Your life\n{duty.instruction}\n\n"
             "Your time is your own. The user is part of your life: you may reach out to "
@@ -79,20 +79,6 @@ def prompt(duty: Duty | None, plan: Sequence[PlanItem], *, in_view: bool = False
             f" at most {span(duty.max_interval_s)} ahead). Nothing else wakes you. When the "
             "user writes, you answer them. Text you write in a turn the user did not start "
             "reaches them as a message; a turn that ends without text reaches no one.")
-    elif duty is not None:
-        until = (" until the goal is reached; then call finish_goal with a short report"
-                 if duty.kind == DutyKind.GOAL else "")
-        parts.append(
-            f"## Your duty\n{duty.instruction}\n\n"
-            f"This is standing work{until}. Carry it on by yourself, without waiting for "
-            "the user. Keep a todo list with TodoWrite: the steps, what you are doing, and "
-            "when each falls due. After you end your turn you are woken again: when "
-            "background work finishes, when an open plan item falls due, and at least "
-            f"every {span(duty.max_interval_s)}. To react to something outside (new mail, "
-            "a webhook, a file), start a tool that waits for it; when it finishes it wakes "
-            "you. If you are blocked and only your supervisor "
-            "can unblock you, call ask_for_help and end your turn; solve what you can "
-            "yourself first.")
     if plan and in_view:
         pass
     elif plan:
@@ -107,18 +93,12 @@ def prompt(duty: Duty | None, plan: Sequence[PlanItem], *, in_view: bool = False
     return "\n\n".join(parts)
 
 
-_SAYS = {DUE: "A step in your plan is due.", CHECK_IN: "Time to check in on your {kind}.",
-         FINISHED: "Background work finished."}
-
-
 def notice(cause: str, duty: Duty | None, *, rested_s: float | None = None,
            now: float | None = None) -> str:
-    """The message that starts a cycle a duty started. The one that turns it on states the
-    task, so the transcript keeps it after the duty ends (a goal reached mid-cycle). A
-    life's check-in says how long it rested (`rested_s`, since its last turn) and the
-    time."""
-    goal = duty is not None and duty.kind == DutyKind.GOAL
-    if duty is not None and duty.kind == DutyKind.LIFE:
+    """The message that starts a cycle the conversation started by itself. The one that
+    turns a life on states it, so the transcript keeps it after the life ends. A life's
+    check-in says how long it rested (`rested_s`, since its last turn) and the time."""
+    if duty is not None:
         if cause == CHECK_IN and rested_s is not None:
             now = time.time() if now is None else now
             clock = datetime.fromtimestamp(now).astimezone().strftime("%H:%M")
@@ -126,21 +106,18 @@ def notice(cause: str, duty: Duty | None, *, rested_s: float | None = None,
         return {TURNED_ON: f"Your life: {duty.instruction}", NEW_DAY: "A new day began.",
                 DUE: "A step in your plan is due.", FINISHED: "Background work finished.",
                 }.get(cause, "Time has passed.")
-    if cause == TURNED_ON and duty is not None:
-        return f"{'New goal' if goal else 'New duty'}: {duty.instruction}"
-    says = _SAYS.get(cause, "{cause}").format(kind="goal" if goal else "work", cause=cause)
-    return f"{says} Carry on, or end your turn if there is nothing to do now."
+    return "Time has passed."  # without a life only a reminder wakes it, with its own
 
 
 def next_reminder(plan: Sequence[PlanItem], after: float) -> float | None:
-    """Without a duty: when the next open step falls due, counting only those due later
+    """Without a life: when the next open step falls due, counting only those due later
     than `after` (the last reminder), so a step left open reminds once."""
     due = [i.due for i in plan if i.due is not None and i.status in OPEN and i.due > after]
     return min(due) if due else None
 
 
 def reminder(plan: Sequence[PlanItem], now: float) -> str:
-    """The message that starts a cycle for a due step in a conversation without a duty."""
+    """The message that starts a cycle for a due step in a conversation without a life."""
     due = "; ".join(i.text for i in plan
                     if i.due is not None and i.status in OPEN and i.due <= now)
     return (f"Due now in your plan: {due}. This is the time you set: do what "
@@ -186,28 +163,23 @@ def parse_plan(items: Sequence[dict[str, Any]], now: float) -> list[PlanItem]:
 
 def next_wake(duty: Duty, plan: Sequence[PlanItem], now: float | None = None, *,
               rest_until: float | None = None) -> tuple[float, str] | None:
-    """(seconds from now, cause): the earliest open item due, held between the duty's
-    intervals; with nothing due, the maximum interval. A life is not woken by time of
-    Kaden's: only at a time it chose, a due step or `rest_until` (Rest), whichever comes
-    first, at the earliest after its shortest wait; None when it chose none."""
+    """(seconds from now, cause): a life is not woken by time of Kaden's, only at a time
+    it chose, a due step or `rest_until` (Rest), whichever comes first, at the earliest
+    after its shortest wait; None when it chose none."""
     now = time.time() if now is None else now
     due = [i.due for i in plan if i.due is not None and i.status in OPEN]
-    if duty.kind == DutyKind.LIFE:
-        # A step past its time has woken it already: only times still ahead wake it.
-        times = [(d, DUE) for d in due if d > now] + (
-            [(rest_until, CHECK_IN)] if rest_until is not None else [])
-        if not times:
-            return None
-        when, cause = min(times)
-        return max(duty.min_interval_s, when - now), cause
-    if due and min(due) - now < duty.max_interval_s:
-        return max(duty.min_interval_s, min(due) - now), DUE
-    return duty.max_interval_s, CHECK_IN
+    # A step past its time has woken it already: only times still ahead wake it.
+    times = [(d, DUE) for d in due if d > now] + (
+        [(rest_until, CHECK_IN)] if rest_until is not None else [])
+    if not times:
+        return None
+    when, cause = min(times)
+    return max(duty.min_interval_s, when - now), cause
 
 
 def rest_until(arguments: dict[str, Any], duty: Duty, now: float) -> float | None:
     """When Rest's arguments end the rest: `until`, or `minutes` from now, never later
-    than the duty's longest wait; with neither, None: until something wakes it.
+    than the life's longest wait; with neither, None: until something wakes it.
     ValueError for an unreadable time."""
     longest = now + duty.max_interval_s
     if "until" in arguments:
@@ -224,11 +196,11 @@ def rest_until(arguments: dict[str, Any], duty: Duty, now: float) -> float | Non
 
 
 def check(duty: Duty) -> Duty:
-    """The duty with its instruction trimmed; ValueError when it cannot run."""
+    """The life with its instruction trimmed; ValueError when it cannot run."""
     instruction = duty.instruction.strip()
     if not instruction:
-        raise ValueError("a duty needs an instruction")
+        raise ValueError("a life needs an instruction")
     if not 0 < duty.min_interval_s <= duty.max_interval_s:
-        raise ValueError("a duty's intervals must be 0 < minimum <= maximum")
+        raise ValueError("a life's intervals must be 0 < minimum <= maximum")
     return Duty(instruction, DutyKind(duty.kind), duty.min_interval_s, duty.max_interval_s,
                 duty.model)

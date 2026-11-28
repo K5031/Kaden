@@ -6,7 +6,6 @@ loosening needs the user's confirmation (api.py update_settings) has one impleme
 from __future__ import annotations
 
 import json
-import re
 from collections import Counter
 from collections.abc import Callable, Container, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -23,7 +22,6 @@ from kaden.api import (
     Author,
     Document,
     Duty,
-    DutyKind,
     File,
     Image,
     McpServer,
@@ -78,20 +76,15 @@ def card_of(call: ToolCall) -> Card | None:
         value = args.get(key)
         return value if isinstance(value, str) else ""
 
-    if call.name == "wrap_up":
-        raw = [o for o in args.get("options") or ()
-               if isinstance(o, dict) and isinstance(o.get("label"), str) and o["label"]]
-        options = tuple(o["label"] for o in raw)
-        action = next((i for i, o in enumerate(raw) if "call" in o), None)
-        if not options:
-            return None
-        return Card(call.id, text("recap"), text("question"), options, action)
-    if call.name in SUGGESTION_TOOLS:
-        replies = args.get("replies")
-        options = tuple(r for r in replies if isinstance(r, str) and r) if isinstance(
-            replies, list) else ()
-        return Card(call.id, "", text("question"), options, None) if options else None
-    return None
+    if call.name not in SUGGESTION_TOOLS:
+        return None
+    raw = [o for o in args.get("options") or ()
+           if isinstance(o, dict) and isinstance(o.get("label"), str) and o["label"]]
+    options = tuple(o["label"] for o in raw)
+    action = next((i for i, o in enumerate(raw) if "call" in o), None)
+    if not options:
+        return None
+    return Card(call.id, text("recap"), text("question"), options, action)
 
 
 def notice_of(message: Message | MessageQueued) -> str | None:
@@ -478,19 +471,6 @@ def provider_step(use: ServerToolUse) -> tuple[ToolCall, ToolResult]:
     return call, ToolResult(use.id, status, use.content)
 
 
-# ── Duties ──
-
-DUTY_KIND_LABELS = {
-    DutyKind.DUTY: "Keep doing it until I turn it off",
-    DutyKind.GOAL: "Until it is done",
-}
-DUTY_HINT = ("Kaden carries this on by itself. It pauses on Stop, on a restart, and at "
-             "your spending limit.")
-PLAN_HINT = ("One step per line: [todo], [doing], [done] or [dropped], the step, then "
-             "optionally | due YYYY-MM-DD HH:MM and | a note.")
-_PLAN_LINE = re.compile(r"\[(\w+)\]\s*(.*)")
-
-
 UNCHANGED: Any = object()  # in a form: a value the user left as it was
 
 
@@ -500,28 +480,14 @@ def raises_limit(old: float | None, new: float | None) -> bool:
     return old is not None and (new is None or new > old)
 
 
-def duty_status(duty: Duty | None, wake_at: float | None, state: AgentState,
-                help_needed: str | None = None) -> str | None:
-    """The duty's state for a status line; without a duty, when the agent is next woken
-    for a due step, else None. A life shows only that it is busy, never when it wakes
-    next: a schedule on show would make it a timer rather than someone living."""
+def duty_status(duty: Duty | None, wake_at: float | None, state: AgentState) -> str | None:
+    """For a status line: without a life, when the agent is next woken for a due step,
+    else None. A life shows only that it is busy, never when it wakes next: a schedule on
+    show would make it a timer rather than someone living."""
     if duty is None:
         return f"Reminder at {_when(wake_at)}" if wake_at is not None else None
-    if duty.kind == DutyKind.LIFE:
-        idle = state in (AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED)
-        return None if idle else "Busy"
-    what = "Goal" if duty.kind == DutyKind.GOAL else "Duty"
-    if help_needed is not None and state in (AgentState.IDLE, AgentState.STOPPED):
-        return f"{what}: waiting for your answer"
-    if wake_at is not None:
-        return f"{what}: next check-in {_when(wake_at)}"
-    if state in (AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED):
-        return f"{what}: paused, send a message to resume"
-    return f"{what}: working"
-
-
-def help_text(question: str) -> str:
-    return f"Kaden needs your help to carry on: {question}"
+    idle = state in (AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED)
+    return None if idle else "Busy"
 
 
 def _when(t: float) -> str:
@@ -576,47 +542,3 @@ def plan_steps(arguments: Any) -> tuple[PlanItem, ...]:
                     else item["content"])
             steps.append(PlanItem(text, status))
     return tuple(steps)
-
-
-def plan_text(plan: Sequence[PlanItem]) -> str:
-    """The plan as editable lines (PLAN_HINT)."""
-    lines = []
-    for item in plan:
-        line = f"[{item.status}] {item.text}"
-        if item.due is not None:
-            line += f" | due {datetime.fromtimestamp(item.due).strftime('%Y-%m-%d %H:%M')}"
-        if item.note:
-            line += f" | {item.note}"
-        lines.append(line)
-    return "\n".join(lines)
-
-
-def parse_plan_text(text: str) -> list[PlanItem]:
-    """plan_text's lines back to a plan; ValueError naming the line that cannot be read."""
-    plan = []
-    for number, line in enumerate(text.splitlines(), 1):
-        if not line.strip():
-            continue
-        status, rest = PlanStatus.TODO, line.strip()
-        if match := _PLAN_LINE.fullmatch(rest):
-            try:
-                status = PlanStatus(match[1].lower())
-            except ValueError:
-                raise ValueError(f"Line {number}: the status must be todo, doing, done or "
-                                 "dropped.") from None
-            rest = match[2]
-        step, *extras = (part.strip() for part in rest.split("|"))
-        if not step:
-            raise ValueError(f"Line {number} has no step.")
-        due, notes = None, []
-        for extra in extras:
-            if extra.lower().startswith("due "):
-                try:
-                    due = datetime.strptime(extra[4:].strip(), "%Y-%m-%d %H:%M").timestamp()
-                except ValueError:
-                    raise ValueError(f"Line {number}: write the due time as YYYY-MM-DD "
-                                     "HH:MM.") from None
-            elif extra:
-                notes.append(extra)
-        plan.append(PlanItem(step, status, due, " | ".join(notes)))
-    return plan

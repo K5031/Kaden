@@ -1033,7 +1033,7 @@ async def test_the_context_is_sized_after_the_whole_system_prompt(make: Any) -> 
     assert await budget(False) - await budget(True) >= estimate_tokens("\n".join(names[1:]))
 
 
-async def test_the_context_is_sized_after_the_duty_in_the_system_prompt(make: Any) -> None:
+async def test_the_context_is_sized_after_the_life_in_the_system_prompt(make: Any) -> None:
     from kaden.api import Duty
     from kaden.runtime.budget import estimate_tokens
 

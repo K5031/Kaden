@@ -197,7 +197,7 @@ class ConversationView(QScrollArea):
             case ChecklistItem():
                 return PlanCard(item)
             case NoticeItem() if item.link is None and is_long(item.text):
-                return Detail(item.text, lines=1, chars=140)  # a new goal's brief
+                return Detail(item.text, lines=1, chars=140)  # a life turned on, say
             case NoticeItem():
                 line = NoticeLine(item)
                 line.linkActivated.connect(self._notice_link)

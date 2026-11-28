@@ -5,10 +5,10 @@ stdout. Each request is a RuntimeAPI command of the same name (REQUESTS); every 
 event comes out as an `event` notification with its `seq`. API values are JSON objects
 with their class name under "type"; enums are their values. What waits on the program
 (PromptOpened: a permission, a question, a plan, a proposal) goes out as an event and is
-answered with respond; the agent's call for help (HelpNeeded) with send. A refusal is an error whose data names the exception ("type") and, for a
-RuntimeStateError, why ("reason", an api.Refusal). Closing stdin quits. Nothing else is written to stdout: the process's own stdout
-is pointed at stderr, and its stdin at /dev/null, so no library or subprocess can write to
-or read from the channel.
+answered with respond. A refusal is an error whose data names the exception ("type") and,
+for a RuntimeStateError, why ("reason", an api.Refusal). Closing stdin quits. Nothing else
+is written to stdout: the process's own stdout is pointed at stderr, and its stdin at
+/dev/null, so no library or subprocess can write to or read from the channel.
 """
 
 from __future__ import annotations
@@ -24,8 +24,6 @@ from collections.abc import AsyncIterator
 from typing import IO, Any
 
 from kaden.api import (
-    Duty,
-    DutyKind,
     Frontend,
     FrontendInfo,
     InstancePaths,
@@ -48,7 +46,8 @@ REQUESTS: frozenset[str] = COMMANDS - {"restart"}
 
 
 def _args(method: str, params: dict[str, Any]) -> dict[str, Any]:
-    """The command's arguments; TypeError or AttributeError when the params do not fit."""
+    """The command's arguments; TypeError, AttributeError or ValueError (a value no enum
+    has) when the params do not fit."""
     if method == "start" and "options" not in params:
         params = {"options": params}  # start's options may come as the request's params
     return command_args(method, params)
@@ -60,14 +59,12 @@ async def _call(runtime: RuntimeAPI, method: str, args: dict[str, Any]) -> Any:
 
 
 def factory(options: dict[str, Any], paths: InstancePaths | None) -> HeadlessFrontend:
-    """Options: start, conversation_id, model (as for every frontend); duty, with goal true
-    for a goal: start a new conversation on that duty."""
+    """Options: start, conversation_id, model (as for every frontend)."""
     start = None
     if options.get("start"):
         start = StartOptions(conversation_id=options.get("conversation_id"),
                              model=options.get("model"))
-    kind = DutyKind.GOAL if options.get("goal") else DutyKind.DUTY
-    return HeadlessFrontend(start=start, duty=options.get("duty"), kind=kind)
+    return HeadlessFrontend(start=start)
 
 
 factory.display_name = "Headless (for programs)"  # type: ignore[attr-defined]
@@ -75,10 +72,9 @@ factory.kind = "terminal"  # type: ignore[attr-defined]
 
 
 class HeadlessFrontend(Frontend):
-    def __init__(self, *, start: StartOptions | None = None, duty: str | None = None,
-                 kind: DutyKind = DutyKind.DUTY, stdin: IO[bytes] | None = None,
+    def __init__(self, *, start: StartOptions | None = None, stdin: IO[bytes] | None = None,
                  stdout: IO[bytes] | None = None) -> None:
-        self.start, self.duty, self.kind = start, duty, kind
+        self.start = start
         self._stdin, self._stdout = stdin, stdout
         self._write_lock = asyncio.Lock()
         self._writer: asyncio.StreamWriter | None = None
@@ -113,12 +109,10 @@ class HeadlessFrontend(Frontend):
     async def _open(self, runtime: RuntimeAPI) -> bool:
         """Start as the launch options say; False when the unit cannot run (said on
         stderr), which quits."""
-        if self.start is None and self.duty is None:
+        if self.start is None:
             return True
         try:
-            await runtime.start(self.start or StartOptions())
-            if self.duty is not None:
-                await runtime.set_duty(Duty(self.duty, self.kind))
+            await runtime.start(self.start)
         except Exception as e:  # noqa: BLE001 - reported to the spawner, then quit
             print(f"kaden: {e}", file=sys.stderr)
             return False
@@ -182,7 +176,7 @@ class HeadlessFrontend(Frontend):
             return
         try:
             args = _args(method, dict(params))
-        except (TypeError, AttributeError) as e:
+        except (TypeError, AttributeError, ValueError) as e:
             await self._error(request_id, INVALID_PARAMS, str(e))
             return
         try:

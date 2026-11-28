@@ -5,7 +5,7 @@ Status: implemented — closing the window keeps Kaden running in the system tra
 ## Problem
 
 Closing the desktop window quits Kaden, and with it everything that goes on by itself:
-[Continuous](2026-11-23-continuous.md), a conversation's duty, background work. The
+[Continuous](2026-11-23-continuous.md), a reminder, background work. The
 user wants them to go on with the window closed.
 
 ## Decision
@@ -19,14 +19,14 @@ user wants them to go on with the window closed.
 
 ## Alternatives considered
 
-- **Only while a duty runs.** Closing would mean two things depending on what runs
+- **Only while something goes on by itself.** Closing would mean two things depending on what runs
   elsewhere in the app; background work needs Kaden running as much.
 - **A setting.** One more choice for something with a clear default; Quit is always there.
 - **Minimize instead of hide.** The window stays in the taskbar, which is not "closed".
 
 ## Consequences
 
-- Continuous, duties and background work go on with the window closed, which is what
+- Continuous, reminders and background work go on with the window closed, which is what
   closing to the tray is for.
 - A user who expects closing to quit finds Kaden still running: the one-time message and
   the icon say so.

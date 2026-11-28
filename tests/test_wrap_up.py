@@ -211,16 +211,13 @@ async def test_closing_the_card_puts_it_away(make):
     assert controller.model.card is None and len(h.core.requests) == 1
 
 
-def test_cards_come_from_wrap_up_and_ask_for_help():
+def test_cards_come_from_wrap_up():
     assert card_of(ToolCall("a", "wrap_up", ACTION)) == Card(
         "a", RECAP, "Push it?", ("Yes, push", "Not now"), 0)
     card = card_of(ToolCall("a", "wrap_up", ACTION))
     assert card.runs(0, {"a"}) and not card.runs(1, {"a"}) and not card.runs(0, set())
     assert card_of(ToolCall("b", "wrap_up", {"question": "Push?", "options": [{"label": "Yes"}]})
                    ) == Card("b", "", "Push?", ("Yes",), None)
-    assert card_of(ToolCall("c", "ask_for_help", {"question": "Which?", "replies": ["A"]})) == (
-        Card("c", "", "Which?", ("A",), None))
-    assert card_of(ToolCall("d", "ask_for_help", {"question": "Which?"})) is None
     assert card_of(ToolCall("e", "read", WRAP)) is None
 
 

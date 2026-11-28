@@ -6,7 +6,7 @@ Status: implemented — beside the user's chats, one Kaden lives continuously: i
 
 The user wants Kaden to feel alive: someone who lives their own life, does their own
 things and is there between conversations, not a worker switched on by events. A chat
-only exists when something happens: a turn runs when the user writes or a duty falls due,
+only exists when something happens: a turn runs when the user writes or a reminder falls due,
 and everything is framed as work. Chats also need the opposite of a life: many fresh
 conversations whose context the user controls.
 
@@ -39,15 +39,19 @@ are in its settings (the gear). While its process starts, the view says so.
 
 ### Its life
 
-- **A duty of the kind `DutyKind.LIFE`** on its one conversation, set on every start: who
-  it is, its pace and its model as the app has them now. A life has neither
-  `ask_for_help` nor `finish_goal`, has `Rest`, and is woken again when it is resumed.
+- **A life (`api.Duty`, of the one kind `DutyKind.LIFE`)** on its one conversation, set
+  with `set_duty` on every start: who it is, its pace and its model as the app has them
+  now. A life has `Rest`, and is woken again when it is resumed. It is the one way a
+  conversation goes on by itself ([no duty mode](2026-11-28-no-duty-mode.md)).
 - **Asleep until something wakes it.** After a turn it rests until the user writes,
   something it watches happens, its own background work finishes, or a time it chose
   comes: `Rest` until a time or for some minutes, or a step of its plan with a due time,
   at most a day ahead. Kaden does not wake it because time passed. Its prompt states what
   wakes it as a fact. Woken at a time it chose, it is told how long it rested and the time
   ("1 minute passed; it is 22:15.").
+- **The first piece of its work to finish wakes it,** not the whole batch: a watcher is
+  any tool that waits in the background, and one that finishes while other work runs
+  still wakes it. Its plan stays open between turns: it is not sent back to close it.
 - **A question it puts to the user does not hold it.** A permission, question or plan
   prompt left unanswered for 3 minutes closes by itself, refused or unanswered, with a
   note that the user may be away; the user may be talking to it on Bilibili, where no
@@ -87,8 +91,12 @@ and facts (the user can see its folder), never routines, quotas, schedules or mo
   want its behaviour decided in advance.
 - **Routines, quotas, a share score and moods,** as Bilibili's "raising a fish" projects
   have. Declined by the user: the more constraints, the more it is faking a person.
-- **A duty with a persona** ("keep the user company"). Still a task on a schedule, with
-  no memory of its own and no view.
+- **Standing work with a persona** ("keep the user company", a
+  [duty](../rejected/2026-11-11-duties.md)). Still a task on a schedule, with no memory of
+  its own and no view.
+- **A watcher flag on `ToolSpec`,** so only watchers wake it early and other background
+  work keeps the batch rule. Fewer wake-ups with parallel jobs, but MCP servers cannot set
+  the flag, and waking early only costs a turn that ends at once.
 - **It sees the user's chats.** It could ask how the bug went without being told, but it
   would read everything the user does. Declined: it would feel watched.
 - **Switching views pauses it.** Cheaper, but then it lives only while watched.

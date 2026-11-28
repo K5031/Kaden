@@ -109,7 +109,7 @@ class RuntimeConfig:
     watch_retry_s: float = 60.0  # a watch that failed: first wait before it is run again
     watch_retry_max_s: float = 3600.0  # the wait doubles up to this
     cancel_grace_s: float = 5.0
-    reminder_min_s: float = 60.0  # the soonest a due step wakes the agent without a duty
+    reminder_min_s: float = 60.0  # the soonest a due step wakes the agent without a life
     # In a life, a prompt the user leaves unanswered this long closes by itself.
     life_prompt_timeout_s: float = 180.0
     subscriber_queue_size: int = 1000

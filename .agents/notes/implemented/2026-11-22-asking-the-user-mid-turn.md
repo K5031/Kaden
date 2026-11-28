@@ -28,9 +28,8 @@ the agent goes on in the same turn. The user asked for Claude Code's way.
   (`QuestionCard`): each question with its header and options, one to pick or several for
   a multiple choice, and Send once each question has an answer. A reply typed instead
   answers in words.
-- **KFM's harness** reports the question as the unit asking (`Asked`) and resting, as for
-  `ask_for_help`; the supervisor's next message reaches Kaden as a message, which
-  answers it.
+- **KFM's harness** reports the question as the unit asking (`Asked`) and resting; the
+  supervisor's next message reaches Kaden as a message, which answers it.
 
 ## Alternatives considered
 
@@ -43,6 +42,6 @@ the agent goes on in the same turn. The user asked for Claude Code's way.
 ## Consequences
 
 - The agent gets its answers in the same turn, as the result of its call.
-- An agent that asks while running unattended waits until someone answers. Its duty's
-  check-ins do not run meanwhile, since the turn has not ended.
+- An agent that asks while running unattended waits until someone answers; in a life, a
+  question left unanswered for a while closes by itself.
 - A message with attached files does not answer a question; it is queued for after it.

@@ -52,7 +52,7 @@ The shell, files and web module offers:
 - **Rename only, keep the parameters.** Half the benefit: the model reaches for `Read` and
   then has to learn that it takes `path`, not `file_path`.
 - **Match every Claude Code tool, the runtime's too** (`TodoWrite` for the plan, `Agent`
-  for sub-sessions). The plan has due times and notes and is a duty's to-do list, and a
+  for sub-sessions). The plan has due times and notes and is how a reminder is kept, and a
   sub-session is a conversation the user sees: the same name would promise behaviour
   these do not have.
 

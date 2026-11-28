@@ -222,8 +222,6 @@ class Launch:
     maintenance_model: str | None = None
     permissions: str | None = None
     headless: bool = False
-    duty: str | None = None
-    goal: str | None = None
     show_config: bool = False
 
 
@@ -242,10 +240,6 @@ def parse_args(argv: Sequence[str] | None = None) -> Launch:
                         help="tool permission policy (default: auto)")
     parser.add_argument("--headless", action="store_true",
                         help="be driven by another program: JSON-RPC on stdin and stdout")
-    duty = parser.add_mutually_exclusive_group()
-    duty.add_argument("--duty",
-                      help="with --headless: start a new conversation that carries this on")
-    duty.add_argument("--goal", help="with --headless: start a new conversation on this goal")
     parser.add_argument("--show-config", action="store_true",
                         help="print the effective config as TOML and exit")
     return Launch(**vars(parser.parse_args(argv)))
@@ -253,13 +247,6 @@ def parse_args(argv: Sequence[str] | None = None) -> Launch:
 
 def start_options(args: Launch) -> dict[str, Any] | None:
     """Frontend options that start right away, or None to let the frontend ask."""
-    if args.duty is not None or args.goal is not None:
-        if not args.headless:
-            raise SystemExit("kaden: --duty and --goal need --headless")
-        if args.conversation is not None:
-            raise SystemExit("kaden: --duty and --goal start a new conversation; "
-                             "leave out --conversation")
-        return {"start": True, "duty": args.duty or args.goal, "goal": args.goal is not None}
     if args.conversation is None:
         return None
     return {"start": True, "conversation_id": args.conversation}

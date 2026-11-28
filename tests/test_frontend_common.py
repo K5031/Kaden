@@ -189,24 +189,6 @@ def test_mcp_servers_from_the_form_and_back():
         mcp_server("x", "cmd", "just-a-name")
 
 
-def test_plan_text_round_trips_and_reports_bad_lines():
-    from datetime import datetime
-
-    import pytest
-
-    from kaden.api import PlanItem, PlanStatus
-    from kaden.frontends.common import parse_plan_text, plan_text
-
-    due = datetime(2030, 1, 7, 9, 0).timestamp()
-    plan = [PlanItem("Read mail", PlanStatus.DOING, due, "VIPs first"), PlanItem("Reply")]
-    assert plan_text(plan) == ("[doing] Read mail | due 2030-01-07 09:00 | VIPs first\n"
-                               "[todo] Reply")
-    assert parse_plan_text(plan_text(plan) + "\n\n") == plan
-    assert parse_plan_text("Call Sam") == [PlanItem("Call Sam")]
-    with pytest.raises(ValueError, match="Line 2"):
-        parse_plan_text("ok\n[todo] x | due tomorrow")
-
-
 def test_a_text_only_frontend_names_what_was_attached():
     from kaden.api import File, Image
     from kaden.frontends.common import with_attachments
@@ -227,21 +209,16 @@ def test_a_tool_result_names_what_it_returned_to_look_at():
     assert result_text(ToolResult("c", ToolStatus.OK, "done")) == "done"
 
 
-def test_duty_status_says_when_it_wakes_or_that_it_is_paused():
+def test_duty_status_says_when_a_reminder_is_due_or_that_the_life_is_busy():
     import time
 
-    from kaden.api import AgentState, Duty, DutyKind
+    from kaden.api import AgentState, Duty
     from kaden.frontends.common import duty_status
 
-    duty = Duty("x")
     assert duty_status(None, None, AgentState.IDLE) is None
     assert duty_status(None, 4102480800.0, AgentState.IDLE) == "Reminder at 2100-01-01 03:00" \
         or duty_status(None, 4102480800.0, AgentState.IDLE).startswith("Reminder at 2")
-    assert duty_status(duty, None, AgentState.STOPPED) == "Duty: paused, send a message to resume"
-    assert duty_status(duty, None, AgentState.THINKING) == "Duty: working"
-    assert duty_status(duty, time.time() + 60, AgentState.IDLE).startswith(
-        "Duty: next check-in ")
-    life = Duty("x", DutyKind.LIFE)  # its own time, not work
+    life = Duty("x")  # its own time, not work
     assert duty_status(life, None, AgentState.THINKING) == "Busy"
     # Not when it wakes next: a schedule on show makes it a timer, not someone alive.
     assert duty_status(life, time.time() + 60, AgentState.IDLE) is None
@@ -264,8 +241,8 @@ def test_a_notice_is_told_by_its_author_not_its_words():
         return Message("m", Role.USER, (Text(text),), 0.0, **fields)
 
     assert notice_of(message("[Runtime notice] I typed this myself")) is None
-    assert notice_of(message(" Woken for the duty. ", author=Author.KADEN)) == \
-        "Woken for the duty."
+    assert notice_of(message(" Woken for its life. ", author=Author.KADEN)) == \
+        "Woken for its life."
     assert notice_of(message("The user talks.", author=Author.KADEN, hidden=True)) == ""
     assert notice_of(Message("o", Role.USER, (OperationResult("c", ToolStatus.OK, "ok"),),
                              0.0, Author.KADEN)) == ""

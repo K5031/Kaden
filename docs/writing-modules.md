@@ -102,7 +102,7 @@ Optional: `list_tools` (tools your provider runs itself, such as its web search)
 `RuntimeAPI`:
 
 - **Commands**: `start` a conversation, `send` a message, `stop`, `respond` to what waits,
-  and about two dozen more for conversations, settings, memory and duties. Use the ones
+  and about two dozen more for conversations, settings, memory and the plan. Use the ones
   your interface offers.
 - **Events**: `runtime.events()` yields everything that happens, each with a sequence
   number. A small interface needs `MessageCommitted` (a finished message), `StateChanged`
@@ -138,7 +138,7 @@ long-term memory through its three hooks; `kaden.memory.files` is under 400 line
 of it.
 
 Optional: tools of your own (`list_tools`, `execute`), notes the user can edit (`notes`,
-`save_note`, `delete_note`), `save_duty`, `delete_conversation`, `inspect`, `aclose`.
+`save_note`, `delete_note`), `save_duty` (a conversation's life and plan), `delete_conversation`, `inspect`, `aclose`.
 
 ## Registering it
 

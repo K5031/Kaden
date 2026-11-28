@@ -172,7 +172,7 @@ Everything is in Kaden's data folder, `~/.kaden` (or `--data-dir`, or `$KADEN_DA
 | `memory-files.db`, `projects/` | The same, with the files-per-project memory |
 | `usage.json` | What has been spent so far; delete it, while Kaden is closed, to start counting from zero. One Kaden cannot read (another version, damaged) stops the first conversation from opening, and is left as it is |
 | `usage.json` | What has been spent so far; delete it, while Kaden is closed, to start counting from zero |
-| `events.jsonl` | Activity log of what Kaden did and when; it holds no message text, tool input or tool output, and no duty, plan, question, MCP command or permission rule text |
+| `events.jsonl` | Activity log of what Kaden did and when; it holds no message text, tool input or tool output, and no life, plan, question, MCP command or permission rule text |
 
 Settings from the screen override `config.toml`, and command-line options override both.
 To see the result, with defaults filled in and secrets hidden:
@@ -262,8 +262,8 @@ thinking off and refuse the request, so use it only with a maintenance model tha
 
 With Claude, Kaden asks Anthropic to cache each conversation, so every request after the
 first pays about a tenth or less for what was already sent. The cache lasts five minutes
-after the last request. For work with longer pauses (a conversation with a duty that checks in every half
-hour), keep it for an hour instead, at a higher price for the first request:
+after the last request. For work with longer pauses (Continuous, which may rest for half an
+hour between turns), keep it for an hour instead, at a higher price for the first request:
 
 ```toml
 [core.options.options]

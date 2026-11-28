@@ -6,8 +6,10 @@ a RuntimeAPI for it (kaden.frontends.remote). No UI code here.
 
 A child gets its own data folder (<data dir>/sessions/<conversation>-<id>) with the parent's
 config.toml and settings.toml, its spending limit and the conversation's work folder, and
-works on its task as a goal. Its permission prompts wait for the user, who answers them
-where the child is open. Each child's record (session.json) keeps it listed after a
+works on its task as Claude Code's subagents do: the task is its first message, and it is
+done when its turn has ended with no background work left; its last reply, whole, is the
+result. Its permission prompts wait for the user, who answers them where the child is
+open. Each child's record (session.json) keeps it listed after a
 restart; opening a child that is not running starts it again on its conversation.
 
 With `isolation: "worktree"` a child works in its own git worktree of the conversation's
@@ -34,8 +36,6 @@ from kaden.api import (
     DESCRIPTION_ARG,
     AgentState,
     Budget,
-    Duty,
-    DutyKind,
     EventEnvelope,
     Failure,
     Message,
@@ -69,7 +69,6 @@ from kaden.frontends.worktrees import GitError, Worktree
 
 logger = logging.getLogger(__name__)
 
-CHECK_IN_S = (5.0, 120.0)  # a child's duty intervals: it continues soon after a turn ends
 RECORD = "session.json"
 LIMIT_FILE = "limit.json"  # in <data dir>/sessions: the user's limit per sub-session
 ISSUED_FILE = "issued.json"  # in <data dir>/sessions: the last id given, never given again
@@ -83,15 +82,18 @@ START = ToolSpec(
     "Hand a self-contained task to a subagent: a separate agent with its own context, "
     "working in the same folder with your tools, so long side work does not fill your "
     "conversation. `description` is 3 to 5 words; `prompt` describes the task fully: it "
-    "sees nothing of this conversation. It returns the agent's report when done, or a "
-    "question if it needs one. With `run_in_background` you get on with other work and "
-    "are told the outcome when it ends; several can run at once. The user can open and "
-    "talk to each. Once the call has returned, you get a notice whenever it stops "
-    "working. With `isolation: \"worktree\"` it works in its own git worktree of the "
-    "repository, on a new branch, so its changes do not collide with yours or other "
-    "subagents'; a worktree it left unchanged is removed when it ends, and the result "
-    "names the path and branch of one it changed. Start one when the user asked for the "
-    "work; when it is your own idea, propose it (propose) instead.",
+    "sees nothing of this conversation. It returns the agent's final reply when it is "
+    "done: its turn has ended and nothing it started in the background still runs, so do "
+    "not ask it to leave a server or other long-running work going (stop one with "
+    "TaskStop on the call that waits for it). If it needs something from you, it says so "
+    "in that reply. With `run_in_background` you get on with other work and are told the "
+    "outcome when it ends; several can run at once. The user can open and talk to each. "
+    "Once the call has returned, you get a notice whenever it stops working. With "
+    "`isolation: \"worktree\"` it works in its own git worktree of the repository, on a "
+    "new branch, so its changes do not collide with yours or other subagents'; a worktree "
+    "it left unchanged is removed when it ends, and the result names the path and branch "
+    "of one it changed. Start one when the user asked for the work; when it is your own "
+    "idea, propose it (propose) instead.",
     {"type": "object",
      "properties": {
          "description": {"type": "string", "minLength": 1},
@@ -111,8 +113,8 @@ START = ToolSpec(
 )
 MESSAGE = ToolSpec(
     "SendMessage",
-    "Answer a subagent's question, or tell it more (starting it again if it stopped), "
-    "then wait for its report or next question. To stop one, use TaskStop on the call "
+    "Answer a subagent, or give it more to do (starting it again if it stopped), then "
+    "wait for its next final reply. To stop one, use TaskStop on the call "
     "that waits for it.",
     {"type": "object", "properties": {"to": _SESSION, "message": {"type": "string",
                                                                    "minLength": 1}},
@@ -120,16 +122,16 @@ MESSAGE = ToolSpec(
     timeout=math.inf,
 )
 
-STATE_LABELS = {"starting": "Starting", "working": "Working",
-                "waiting": "Waiting for an answer", "idle": "Ready", "done": "Done",
-                "failed": "Failed", "stopped": "Stopped"}
+STATE_LABELS = {"starting": "Starting", "working": "Working", "idle": "Ready",
+                "done": "Done", "failed": "Failed", "stopped": "Stopped"}
 NOTE_CHARS = 400  # of a child's last reply in a notice to its parent
 
 
 @dataclass
 class SubSession:
-    """One child as the frontend lists it. `state`: starting, working, waiting (for an
-    answer to its question), idle (reopened, nothing to do), done, failed or stopped."""
+    """One child as the frontend lists it. `state`: starting, working (background work
+    included), idle (reopened, nothing to do), done, failed or stopped. `report`: its last
+    reply, whole, once it is done."""
 
     id: str
     task: str
@@ -137,13 +139,11 @@ class SubSession:
     data_dir: Path
     state: str = "starting"
     report: str | None = None
-    question: str | None = None
     failure: str | None = None
     spent: float = 0.0
     child_conversation_id: str | None = None
     title: str | None = None  # the user's name for it; None: its task
     archived: bool = False
-    has_goal: bool = False  # its goal is not reached yet
     budget_usd: float | None = None  # its own spending limit; None: none
     worktree: Worktree | None = None  # with isolation "worktree"
     step: str | None = field(default=None, compare=False)  # what it is doing now
@@ -158,7 +158,7 @@ class SubSession:
 
     @property
     def running(self) -> bool:
-        return self.state in ("starting", "working", "waiting")
+        return self.state in ("starting", "working")
 
     @property
     def snapshot(self) -> RuntimeSnapshot | None:
@@ -184,8 +184,8 @@ class SubSession:
 
     @property
     def resumable(self) -> bool:
-        """Stopped, or ended with Kaden, before its goal was reached."""
-        return self.state in ("stopped", "failed", "idle") and self.has_goal
+        """Stopped, ended with Kaden, or failed before it was done."""
+        return self.state in ("stopped", "failed")
 
     @property
     def changed(self) -> asyncio.Event:
@@ -202,10 +202,23 @@ class SubSession:
         return self._spawning
 
     @property
+    def final_reply(self) -> str:
+        """The text of its last reply since the last message it was sent, whole; "" for
+        none (its turn ended without text). Kaden's own notices in between (a send-back,
+        background results) do not count as messages it was sent."""
+        for message in reversed(self.messages):
+            if message.from_user:
+                return ""
+            texts = [b.text.strip() for b in message.blocks
+                     if isinstance(b, Text) and b.text.strip()]
+            if message.role == Role.ASSISTANT and texts:
+                return "\n\n".join(texts)
+        return ""
+
+    @property
     def last_reply(self) -> str:
         """Its last reply this run, cut to NOTE_CHARS; "" for none."""
-        reply = next((b.text for m in reversed(self.messages) if m.role == Role.ASSISTANT
-                      for b in m.blocks if isinstance(b, Text) and b.text.strip()), "")
+        reply = self.final_reply
         return reply[:NOTE_CHARS] + "…" if len(reply) > NOTE_CHARS else reply
 
     @property
@@ -223,17 +236,16 @@ class SubSession:
     def record(self) -> dict[str, Any]:
         """What session.json keeps."""
         return {**{k: getattr(self, k) for k in (
-            "id", "task", "conversation_id", "state", "report", "question", "failure",
-            "spent", "child_conversation_id", "title", "archived", "has_goal", "budget_usd")},
+            "id", "task", "conversation_id", "state", "report", "failure", "spent",
+            "child_conversation_id", "title", "archived", "budget_usd")},
             "worktree": asdict(self.worktree) if self.worktree is not None else None}
 
 
 class SubSessions(Tools):
-    def __init__(self, data_dir: Path, command: Sequence[str] = (sys.executable, "-m", "kaden"),
-                 check_in_s: tuple[float, float] = CHECK_IN_S) -> None:
+    def __init__(self, data_dir: Path,
+                 command: Sequence[str] = (sys.executable, "-m", "kaden")) -> None:
         self.data_dir = data_dir
         self.command = list(command)
-        self.check_in_s = check_in_s
         self.listeners: list[Callable[[], None]] = []  # told of every change
         self.sessions = self._load()
         self._viewers: dict[str, int] = {}
@@ -268,8 +280,8 @@ class SubSessions(Tools):
         if session.child_conversation_id is None:
             raise RuntimeStateError("this sub-session has not started", Refusal.NOT_STARTED)
         live, started = await self._running(session)
-        if started and not session.running:  # nothing else set it working meanwhile
-            self._set(session, state="idle", failure=None)
+        if started and session.state == "done":  # nothing else set it working meanwhile
+            self._set(session, state="idle")
         self._viewers[session.id] = self._viewers.get(session.id, 0) + 1
         remote = RemoteRuntime(live.channel)
         try:
@@ -291,10 +303,11 @@ class SubSessions(Tools):
         self._close(session)
 
     async def resume(self, session: SubSession) -> None:
-        """Start it again on its conversation and let it carry on with its goal."""
+        """Start it again on its conversation and let it carry on with its task."""
         live, _ = await self._running(session)
-        self._set(session, state="working", failure=None)
         await live.activate()
+        if not session.running:  # its events have not said it works yet
+            self._set(session, state="working", failure=None)
 
     def rename(self, session: SubSession, title: str) -> None:
         self._set(session, title=title.strip() or None)
@@ -430,9 +443,8 @@ class SubSessions(Tools):
         session_id = str(self._next)
         self._next += 1
         folder = self.data_dir / "sessions" / f"{conversation_id[:8]}-{session_id}"
-        session = SubSession(session_id, task, conversation_id, folder, has_goal=True,
-                             budget_usd=budget, title=(title or "").strip() or None,
-                             worktree=worktree)
+        session = SubSession(session_id, task, conversation_id, folder, budget_usd=budget,
+                             title=(title or "").strip() or None, worktree=worktree)
 
         def make() -> None:
             folder.mkdir(parents=True)
@@ -447,15 +459,13 @@ class SubSessions(Tools):
         try:
             live = await self._spawn(session, resume=False)
             session.child_conversation_id = (await live.start(StartOptions())).id
-            await live.set_duty(Duty(session.task, DutyKind.GOAL, *self.check_in_s))
             await live.attach()
+            self._set(session, state="working")
+            await live.send(session.task)
         except (OSError, RuntimeError, RuntimeStateError, ValueError) as e:
             channel = session.live.channel if session.live is not None else None
             self._set(session, state="failed", failure=self._why(e, channel))
             self._close(session)
-            return
-        self._follow(session)
-        self._set(session)
 
     def _work_folder(self, session: SubSession) -> Path | None:
         """Where it works: its worktree's folder, else the conversation's."""
@@ -499,7 +509,7 @@ class SubSessions(Tools):
         return live
 
     async def _wait(self, session: SubSession, ctx: ToolContext) -> ToolOutput:
-        """Until it reports, asks, fails or stops; its current step is the progress line."""
+        """Until it is done, fails or stops; its current step is the progress line."""
         shown = None
         session.awaited += 1
         try:
@@ -527,16 +537,11 @@ class SubSessions(Tools):
     def _outcome(self, session: SubSession) -> str:
         match session.state:
             case "done":
-                return f"Sub-session {session.id} finished. Report: {session.report}"
-            case "waiting":
-                return (f"Sub-session {session.id} asks: {session.question}\nAnswer with "
-                        f"SendMessage(to=\"{session.id}\", message=...).")
+                return (f"Sub-session {session.id} finished"
+                        + (f". Its final reply:\n{session.report}" if session.report
+                           else " without a reply."))
             case "stopped":
                 return f"Sub-session {session.id} was stopped."
-            case "idle":
-                reply = session.last_reply
-                return (f"Sub-session {session.id} ended its turn"
-                        + (f". Its last reply: {reply}" if reply else " without a reply."))
         return f"Sub-session {session.id} failed: {session.failure}"
 
     def _event(self, session: SubSession, envelope: EventEnvelope | None) -> None:
@@ -553,8 +558,6 @@ class SubSessions(Tools):
                 session.messages.append(message)
                 for block in message.blocks:
                     if isinstance(block, ToolCall):
-                        if block.name == "finish_goal":
-                            session.report = block.arguments.get("report")
                         session.step = (block.arguments.get(DESCRIPTION_ARG)
                                         or tool_sentence(block.name, block.arguments,
                                                          session.titles.get(block.name)))
@@ -568,39 +571,33 @@ class SubSessions(Tools):
             case StateChanged():
                 was = session.state
                 self._follow(session)
-                # Between a goal's check-ins it is still working: no notice until it stops.
                 if was == "working" != session.state and not session.awaited:
                     self._note(session)
         self._set(session)
 
     def _follow(self, session: SubSession) -> None:
-        """Its state, and what its record keeps of its goal and question, from how its
-        runtime is now. Nothing while it has not answered yet, or once it is closed."""
+        """Its state, and its report once it is done, from how its runtime is now. Nothing
+        while it has not answered yet, or once it is closed."""
         if (snap := session.snapshot) is None:
             return
-        session.has_goal = snap.conversation is not None and snap.conversation.duty is not None
-        session.question = snap.help_needed
-        if snap.state in _ACTIVE:
+        if snap.state in _ACTIVE or (snap.state == AgentState.IDLE and (
+                snap.operations or snap.queued_messages)):  # background work, or more to say
             session.state = "working"
         elif snap.state == AgentState.FAILED:
             session.state = "failed"
-        elif snap.state in (AgentState.IDLE, AgentState.STOPPED):
-            if session.has_goal:  # working between a goal's check-ins, unless it asked
-                session.state = "waiting" if session.question is not None else "working"
-            else:
-                session.state = "done" if session.report is not None else "idle"
+        elif snap.state == AgentState.STOPPED:
+            session.state = "stopped"
+        elif session.state == "working":  # idle after its turn: done
+            session.state = "done"
+            session.report = session.final_reply
 
     def _note(self, session: SubSession) -> None:
         """A notice for the parent: the child ended a turn while no call of the parent's
-        waited for it (the user talked to it, or it carried on with its goal)."""
+        waited for it (the user talked to it there)."""
         reply = session.last_reply
         note = (f"Sub-session {session.id} ({session.name[:80]}) ended a "
                 f"turn: {STATE_LABELS[session.state].lower()}.")
-        if session.state == "waiting":
-            note += f" It asks: {session.question}"
-        elif session.state == "done":
-            note += f" Report: {session.report}"
-        elif reply:
+        if reply:
             note += f" Its last reply: {reply}"
         self.notes.setdefault(session.conversation_id, []).append(note)
 

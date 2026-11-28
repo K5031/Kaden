@@ -29,51 +29,24 @@ agent is woken with the results and carries on by itself, so you don't have to a
 it is done. It can check on a task or cancel it, and so can you (**Cancel** on its card). A task that runs
 over an hour (unless the tool allows longer) ends as timed out.
 
-Apart from [duties](#duties), that is the only time the agent acts without a message from
-you. Permissions and the spending limit apply as always, and after Kaden restarts it
+Apart from [reminders](#the-plan-and-reminders), that is the only time the agent acts
+without a message from you. Permissions and the spending limit apply as always, and after Kaden restarts it
 waits for you before doing anything.
 
 When you stop the agent or quit, running tasks are cancelled. If one does not stop in time,
 it is marked as abandoned: it may still be running, and the agent is told to check before
 assuming anything.
 
-## Duties
+## The plan and reminders
 
-A conversation can have a duty: you give it standing work, such as "keep my inbox
-answered", and the agent carries it on by itself: it keeps a plan of steps, works through them, and
-checks in again on its own. Any conversation can have a duty, at any time; you can
-change the work or turn it off, and the conversation keeps everything said so far.
-
-- **Keep doing it** runs until you turn it off. **Until it is done** also ends when the
-  agent says the goal is reached, with a short report.
 - **The plan** is a list of steps, each to do, doing, done or dropped, with an optional
   due time and note. The agent always has it in view, and you can edit it. Any
-  conversation can have one (see [The plan](using-kaden.md#the-plan)), and a step that
-  falls due wakes the agent, whether the conversation has a duty or not (see
-  [Reminders](using-kaden.md#reminders)).
-- **When it wakes:** when a background task finishes (the first one, not all of them),
-  when a step falls due, when you write, and otherwise at least every so often (an hour
-  unless you change it). It never checks in more often than the minimum you set (a
-  minute unless you change it); a finished task or your message wakes it at once.
-  To react to the outside world, the agent starts a tool that waits for something, for
-  example new mail through a tool server; when it finishes, the agent wakes.
-- **A spending limit is up to you.** A duty has none of its own. Since it can work for days,
-  setting one in Settings caps what it can cost; your provider's own spend limit is the
-  other guard.
-- **It pauses** when you press Stop, when the limit is reached, after an error, and after
-  Kaden restarts, so a crash never quietly repeats an action. Send a message to resume
-  it.
-- **It asks when it is stuck.** When only you can unblock it (a decision, an approval,
-  access it lacks), the agent asks you a question and stops checking in until you
-  answer. The question appears in the conversation, and the line next to its title says
-  it is waiting for you. Your reply resumes it; finished background tasks still wake it
-  meanwhile.
-- **Permissions still apply.** An action that would ask you waits for you, so a conversation that
-  runs unattended needs permissions that cover what it does.
-- **Continue in a new conversation** does not carry it over.
-
-Next to the conversation's title, a line says when it checks in next, or that it is
-paused (**Goal** instead of **Duty** for work that ends).
+  conversation can have one (see [The plan](using-kaden.md#the-plan)).
+- **A step that falls due wakes the agent** (see [Reminders](using-kaden.md#reminders)):
+  it is how you ask Kaden to do something later.
+- **Standing work of its own** is [Continuous](#continuous): a life that goes on by
+  itself. Your chats answer you, and act on their own only for a reminder or work they
+  started.
 
 ## Continuous
 
@@ -118,22 +91,27 @@ closed it.
 ## Sub-sessions
 
 The agent can hand a self-contained task to a sub-session: a separate agent with its own
-context, working in the same folder with the same tools and settings. The agent either
-waits for it or lets it run in the background while the conversation goes on; its report
-comes back as the result of that step. Several can run at once.
+context, working in the same folder with the same tools and settings, as Claude Code's
+subagents do. The task is its first message, and it works until its turn ends; its last
+reply, whole, comes back as the result of that step. It is not done while background work
+it started still runs: one left running a server or a watcher keeps working, and the
+step waits, until it or you stop it. The agent either waits for it or lets it run in the background while
+the conversation goes on. Several can run at once.
 
 - **You decide on the agent's own ideas.** When you asked for the work, the sub-session
   starts at once. When it is the agent's idea, it is a
   [proposal](using-kaden.md#proposals) you approve or dismiss.
-- **The agent hears back.** When a sub-session stops working (it is done, asks something,
-  or answered you) and the agent was not already waiting for it, the agent gets a short
+- **It does not go on by itself.** Once its turn has ended, it waits: if it needs
+  something, it says so in its reply, and the agent answers it or gives it more to do.
+- **The agent hears back.** When a sub-session stops working (it is done, or answered you)
+  and the agent was not already waiting for it, the agent gets a short
   notice in its conversation, which wakes it.
 - **It can work on its own branch.** In a git repository, the agent can give a sub-session
   a worktree of its own (`isolation: "worktree"`, as in Claude Code): a separate checkout in
   `.claude/worktrees/` of the repository, on a new branch from the last commit, so its
   changes don't mix with yours or another sub-session's. When it ends, a worktree it left
   unchanged is removed with its branch; one it changed is kept, and its path and branch come
-  back with its report. Deleting the sub-session keeps a changed worktree: the code is yours.
+  back with its reply. Deleting the sub-session keeps a changed worktree: the code is yours.
   Outside a git repository the agent is told it can't.
 - **A spending limit is up to you.** A sub-session has none unless you set a limit per
   sub-session in Settings, or the agent gives one a limit of its own. With yours set, a
@@ -142,13 +120,13 @@ comes back as the result of that step. Several can run at once.
   ran out, right-click it: **Change spending limit…** (0 for none), then **Resume** it.
 - **It asks you for approvals.** A step that needs your OK waits for you, as in your own
   conversation; the sidebar says the sub-session needs your approval. If it needs a
-  decision, its question comes back to the agent, which can answer it or ask you.
+  decision, its reply says so, and the agent can answer it or ask you.
 - **You can open it.** The desktop app lists each conversation's sub-sessions under it in
   the sidebar. Click one to open it in place of the conversation: its messages and steps,
   its approvals, Stop, and a message box that talks to it. Click the conversation to go
   back; the sub-session keeps working.
 - **It is kept.** Quitting Kaden stops sub-sessions that are working, but they stay listed,
-  and **Resume** lets one carry on with its task. Kaden never resumes one by itself after a
+  and **Resume** lets one that was stopped or failed carry on with its task. Kaden never resumes one by itself after a
   restart, so a crash cannot quietly repeat an action. Opening one that is not running
   starts it again on its own conversation. Their work is in `sessions/` in the data folder.
 - **Right-click one** to open, resume, stop, rename, archive or delete it.
