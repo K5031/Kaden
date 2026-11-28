@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -174,22 +173,14 @@ class LifeSettingsDialog(QDialog):
         self.settings, self.daily_usd, self.chosen_model = settings, daily_usd, model
         self.identity = (name, about)
         self.setWindowTitle(f"Settings · {name}")
-        self.setMinimumWidth(620)
-        column = QVBoxLayout(self)
-        column.setContentsMargins(20, 18, 20, 16)
-        column.addWidget(text_label(f"Settings · {name}", selectable=False, role="heading"))
+        self.resize(780, 600)  # pages scroll: it keeps this size however much they hold
         self.name = QLineEdit(name)
         self.name.setPlaceholderText(NAME)
-        column.addWidget(_setting("Name", "What they are called.", self.name))
         self.about = QPlainTextEdit(about)
         self.about.setPlaceholderText("Personality, interests, how they talk… or leave it to them")
-        self.about.setMaximumHeight(120)
-        column.addWidget(_setting("Who they are", "In your words. Applies at once.",
-                                  self.about, below=True))
+        self.about.setMaximumHeight(96)
         self.daily = QLineEdit("" if daily_usd is None else f"{daily_usd:g}")
         self.daily.setPlaceholderText("No limit")
-        column.addWidget(_setting("Daily amount (US$)", "What their own time may cost a day. "
-                                  "Your messages always reach them.", self.daily))
         self.model = QComboBox()
         self.model.addItem("Same as your chats", None)
         for info in models:
@@ -197,43 +188,56 @@ class LifeSettingsDialog(QDialog):
         if model is not None and self.model.findData(model) < 0:
             self.model.addItem(model, model)  # one the provider no longer lists
         self.model.setCurrentIndex(max(0, self.model.findData(model)))
-        column.addWidget(_setting("Model", "What all they do runs on: their replies, their "
-                                  "own time and their memory's upkeep. A change restarts "
-                                  "them.", self.model))
         self.tool_rows = ToolSettingRows(settings.tool_settings)
-        for row in self.tool_rows.rows:
-            column.addWidget(row)
-        if self.tool_rows.rows:
-            column.addWidget(text_label(f"A change to their tools restarts {name}.",
-                                        selectable=False, role="small"))
         self.answers = SavedAnswers(settings.permission_rules)
-        column.addWidget(_setting("Saved answers", "What you said always or never to in their "
-                                  "view. Theirs, apart from your chats'.", self.answers,
-                                  below=True))
+        pages: dict[str, QWidget] = {"General": _page(
+            "General",
+            _setting("Name", "What they are called.", self.name),
+            _setting("Who they are", "In your words. Applies at once.", self.about,
+                     below=True),
+            _setting("Model", "Runs all they do: replies, their own time, upkeep. A change "
+                     "restarts them.", self.model),
+            _setting("Daily amount (US$)", "What their own time may cost a day. Your "
+                     "messages always reach them.", self.daily))}
+        if self.tool_rows.rows:
+            pages["Tools"] = _page("Tools", *self.tool_rows.rows, text_label(
+                f"A change to their tools restarts {name}.", selectable=False, role="small"))
+        pages["Saved answers"] = _page("Saved answers", _setting(
+            "Saved answers", "What you said always or never to in their view. Theirs, apart "
+            "from your chats'.", self.answers, below=True))
+        self.nav = QListWidget(objectName="settingsNav")
+        self.nav.setFixedWidth(170)
+        self.stack = QStackedWidget()
+        for title, page in pages.items():
+            item = QListWidgetItem(title)
+            item.setSizeHint(QSize(0, 34))
+            self.nav.addItem(item)
+            self.stack.addWidget(page)
+        self.nav.currentRowChanged.connect(self.stack.setCurrentIndex)
+        self.nav.setCurrentRow(0)
         self.error = error_label()
-        column.addWidget(self.error)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
                                    | QDialogButtonBox.StandardButton.Cancel)
         self.save_button = primary(buttons.button(QDialogButtonBox.StandardButton.Save))
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
-        column.addWidget(buttons)
+        body = QHBoxLayout()
+        body.setSpacing(12)
+        body.addWidget(self.nav)
+        body.addWidget(self.stack, 1)
+        footer = QHBoxLayout()
+        footer.addWidget(self.error, 1)
+        footer.addWidget(buttons)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(16, 14, 16, 14)
+        outer.addLayout(body, 1)
+        outer.addLayout(footer)
         # Called with the new name and who they are (None if unchanged), the new daily
         # amount (UNCHANGED if it is not), the tool settings changed, the saved answers
         # kept (None if unchanged), and the model (UNCHANGED if it is not).
         self.saved: Callable[[tuple[str, str] | None, Any, dict[str, bool | str],
                               tuple[PermissionRule, ...] | None, Any],
                              Awaitable[None]] | None = None
-
-    def resizeEvent(self, event: QResizeEvent) -> None:
-        """Never shorter than its text needs at this width: a window's minimum size knows
-        nothing of wrapped text, which would be cut off."""
-        super().resizeEvent(event)
-        layout = self.layout()
-        if layout is not None and layout.hasHeightForWidth():
-            need = layout.totalHeightForWidth(self.width())
-            if need > self.minimumHeight():
-                self.setMinimumHeight(need)
 
     def _save(self) -> None:
         changes = tool_changes(self.settings, self.tool_rows.values())
@@ -243,6 +247,7 @@ class LifeSettingsDialog(QDialog):
             if daily is not None and daily < 0:
                 raise ValueError
         except ValueError:
+            self.nav.setCurrentRow(0)  # where the amount is
             say(self.error, "Write the daily amount as dollars, like 1 or 2.50, or leave "
                              "it empty for no limit.")
             return

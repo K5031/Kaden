@@ -2770,6 +2770,30 @@ async def test_the_lifes_model_is_chosen_in_its_settings(make, qapp):
     await eventually(lambda: life.model == "fake-2" and life.restarted == 1)
 
 
+async def test_the_lifes_settings_are_pages_that_do_not_grow(make, qapp):
+    """As your own Settings: a page each for who they are and what they run on, their
+    tools and their saved answers; however many answers there are, the window keeps its
+    size and the page scrolls."""
+    from kaden.api import PermissionRule
+    from tests.fakes.tools import configurable
+
+    rules = tuple(PermissionRule.parse(f"Bash(echo {i})", allow=True) for i in range(60))
+    h: Harness = await make(modules=ModuleState(tool_settings=tuple(configurable.user_config)),
+                            permission_rules=rules)
+    await h.start()
+    window, _, _ = await open_window(h)
+    dialog = LifeSettingsDialog(window, window.home, "Ahri", "", await h.runtime.settings(), 1.0)
+    dialog.show()
+    for _ in range(3):
+        qapp.processEvents()
+    assert [dialog.nav.item(i).text() for i in range(dialog.nav.count())] == [
+        "General", "Tools", "Saved answers"]
+    assert dialog.height() < 800  # not one row more per answer
+    dialog.nav.setCurrentRow(2)
+    assert dialog.stack.currentWidget().isVisible()
+    dialog.close()
+
+
 async def test_the_lifes_settings_show_their_descriptions_whole(make, qapp):
     from PySide6.QtWidgets import QLabel
 
@@ -2780,9 +2804,8 @@ async def test_the_lifes_settings_show_their_descriptions_whole(make, qapp):
     window, _, _ = await open_window(h)
     dialog = LifeSettingsDialog(window, window.home, "Ahri", "", await h.runtime.settings(), 1.0)
     dialog.show()
-    # A window manager may give it less height than wrapped text needs: Qt's minimum size
-    # for a window knows nothing of wrapping.
-    dialog.resize(dialog.minimumWidth(), 200)
+    # A window manager may give it little height: its pages scroll rather than cut text off.
+    dialog.resize(780, 200)
     for _ in range(3):
         qapp.processEvents()
         await asyncio.sleep(0.02)
