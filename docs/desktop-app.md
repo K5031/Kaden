@@ -33,18 +33,18 @@ colour Kaden does not know is skipped, and the theme's menu item says which.
 |---|---|
 | `bg` | The conversation, dialogs, menus, tooltips and plain buttons |
 | `side` | The sidebar |
-| `card` | Step groups and cards, a button under the pointer, disabled fields |
-| `field` | Text fields and lists |
+| `card` | Step groups and cards, a button or a conversation under the pointer, disabled fields |
+| `field` | Text fields and drop-downs |
 | `composer` | The message box |
-| `bubble` | Your messages |
-| `select` | Code in replies (its background), and small buttons under the pointer |
-| `line` | Hairlines, outlines and dividers |
+| `bubble` | Your messages, and a code block's Copy under the pointer |
+| `select` | Code in replies (its background); small buttons, the title bar's and Settings' list under the pointer or chosen |
+| `line` | Hairlines, outlines, dividers, progress bars and pressed buttons |
 | `track` | A switch that is off, scroll bars, the thinking rule, the message box while typing |
 | `text`, `muted` | Text, and secondary text (hints, times, disabled text) |
 | `accent`, `accent_hover` | Main buttons, links, focus and selected text, and a main button under the pointer |
 | `on_accent` | Text on `accent` |
-| `accent_soft`, `accent_text` | The chosen item (the open conversation, a menu or list choice) and its text |
-| `ok`, `warning`, `error` | Success, warnings and errors |
+| `accent_soft`, `accent_text` | The chosen item (the open conversation, a menu or list choice) and its text; a main button you cannot use yet |
+| `ok`, `warning`, `error` | Success, warnings and errors; `error` also delete buttons and the window's close button under the pointer |
 | `error_bg`, `error_text` | An error banner and its text |
 | `code.keyword`, `code.string`, `code.comment`, `code.number`, `code.name`, `code.builtin` | Kinds of words in code in replies |
 

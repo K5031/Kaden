@@ -10,6 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import asyncio
 import itertools
 import json
+import shutil
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -3094,4 +3095,34 @@ async def test_custom_themes_are_in_the_menu_and_follow_their_files(
     changed(watch.directoryChanged, folder)
     await eventually(lambda: "custom:moss" in window.theme_actions)
     assert str(folder / "moss.json") in watch.files()
+    theme.set_custom({})
+
+
+async def test_a_theme_change_restyles_only_when_the_chosen_theme_changed(
+        make, qapp, system_theme, tmp_path):
+    """Editing another theme, or a stray file in the folder, leaves the look alone;
+    deleting the chosen theme's file goes back to System. A deleted folder comes back."""
+    folder = tmp_path / "themes"
+    folder.mkdir()
+    (folder / "fox.json").write_text(json.dumps(FOX))
+    (folder / "moss.json").write_text('{"name": "Moss", "base": "light"}')
+    await window_module.load_themes(folder)
+    h: Harness = await make()
+    await h.start()
+    controller = Controller(h.runtime, ConversationModel())
+    window = MainWindow(h.runtime, controller, tmp_path / "desktop.json")
+    asyncio.create_task(controller.run())
+    window.theme_actions["custom:fox"].trigger()
+    painted = theme.current()
+    (folder / "moss.json").write_text('{"name": "Moss", "base": "dark"}')
+    window._reload_themes()
+    await eventually(lambda: theme.custom()["moss"].palette.dark)  # read
+    assert theme.current() is painted  # not restyled
+    (folder / "fox.json").unlink()
+    window._reload_themes()
+    await eventually(lambda: theme.choice() == "system")
+    assert window.theme_actions["system"].isChecked()
+    shutil.rmtree(folder)
+    window._reload_themes()
+    await eventually(lambda: str(folder) in window._themes_watch.directories())  # again
     theme.set_custom({})

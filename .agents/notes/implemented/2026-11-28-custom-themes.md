@@ -32,8 +32,9 @@ As Claude Code does it (`~/.claude/themes/<slug>.json`):
   chosen (`window.load_themes`); the window watches the folder and each theme file read
   (`QFileSystemWatcher`). A burst of changes (one save can change a file and the folder)
   starts one read 150 ms on, off the event loop; a read that finishes after a newer one
-  is dropped. The new files are then watched too, and the app restyles if the chosen theme
-  changed. A `themes/` folder deleted and made again is watched from the next start.
+  is dropped. Each read makes the folder again if it was deleted, the new files are then
+  watched too, and the app restyles only if the chosen theme changed (another theme or a
+  stray file leaves the look alone). Closing the window stops the watching.
 - **Sharing** is the file. `docs/desktop-app.md` lists the names with what each colours.
 - Continuous's view uses the window's theme.
 

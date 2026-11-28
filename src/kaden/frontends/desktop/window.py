@@ -864,15 +864,21 @@ class MainWindow(QMainWindow):
         self._themes_read += 1
         read = self._themes_read
 
+        def read_folder() -> dict[str, theme.CustomTheme]:
+            folder.mkdir(parents=True, exist_ok=True)  # made again if it was deleted
+            return theme.read_themes(folder)
+
         async def reload() -> None:
-            themes = await asyncio.to_thread(theme.read_themes, folder)
+            themes = await asyncio.to_thread(read_folder)
             if read != self._themes_read:
-                return  # a newer read is under way
+                return  # a newer read is under way, or the window closed
+            chosen = theme.choice().removeprefix(theme.CUSTOM)
+            before = theme.custom().get(chosen)
             theme.set_custom(themes)
             self._watch_themes()  # a file saved by replacing it is a new one to watch
             self._fill_custom_themes()
-            if theme.choice().startswith(theme.CUSTOM):
-                self.set_theme(theme.choice())
+            if theme.choice().startswith(theme.CUSTOM) and themes.get(chosen) != before:
+                self.set_theme(theme.choice())  # changed, or gone: System
         self.home.command(reload())
 
     # ── startup ───────────────────────────────────────────────────────────
@@ -1640,6 +1646,9 @@ class MainWindow(QMainWindow):
         if self.tray is not None:
             self.tray.hide()
         self.voice.stop()
+        self._themes_watch.blockSignals(True)  # nothing reads the themes for it any more
+        self._themes_due.stop()
+        self._themes_read += 1  # a read under way is dropped
         if self._pasted is not None:
             shutil.rmtree(self._pasted, ignore_errors=True)
         self.closed.emit()
