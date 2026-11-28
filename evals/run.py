@@ -36,6 +36,7 @@ from kaden.api import (
     StartOptions,
     StateChanged,
     Text,
+    ToolCall,
 )
 from kaden.frontends import child
 from kaden.frontends.common import prompt_summary
@@ -167,12 +168,20 @@ async def run_task(task: Path, parent: Path, *, model: str | None, budget_usd: f
 
 
 def _reply(history: list) -> str:  # type: ignore[type-arg]
-    """All it said after the task was sent: an answer may come before a closing "Done"."""
+    """All it said after the task was sent: an answer may come before a closing "Done", and
+    a turn may end with a card asking the user (wrap_up), whose recap and question count."""
     start = max((i for i, m in enumerate(history) if m.from_user), default=-1)
-    return "\n\n".join(
-        " ".join(b.text for b in m.blocks if isinstance(b, Text)).strip()
-        for m in history[start + 1:] if m.role is Role.ASSISTANT
-        and any(isinstance(b, Text) and b.text.strip() for b in m.blocks))
+    said = []
+    for message in history[start + 1:]:
+        if message.role is not Role.ASSISTANT:
+            continue
+        for block in message.blocks:
+            if isinstance(block, Text) and block.text.strip():
+                said.append(block.text.strip())
+            elif isinstance(block, ToolCall) and block.name == "wrap_up":
+                said += [str(block.arguments.get(k, "")) for k in ("recap", "question")
+                         if block.arguments.get(k)]
+    return "\n\n".join(said)
 
 
 def _check(task: Path):  # type: ignore[no-untyped-def]

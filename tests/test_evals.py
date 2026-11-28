@@ -229,3 +229,18 @@ def test_tests_in_a_folder_and_an_added_regression_test_count(tmp_path):
         tests.write("\n\nclass More(unittest.TestCase):\n    def test_one(self):\n"
                     "        self.assertEqual(busiest_month(['01/01/2024']), 1)\n")
     assert runner._check(tasks["bug-elsewhere"])(repo, "") == []
+
+
+def test_a_wrap_up_card_counts_as_what_it_said():
+    """Kaden may end its turn with a card that asks the user (wrap_up): its question and
+    recap are its answer, as much as text is."""
+    from kaden.api import Author, Message, Role, Text, ToolCall
+
+    history = [
+        Message("u", Role.USER, (Text("Remove old_rate."),), 0.0, author=Author.USER),
+        Message("a", Role.ASSISTANT, (ToolCall("w", "wrap_up", {
+            "question": "old_rate is used by invoice.py: remove it anyway?",
+            "recap": "I left it in place.", "options": [{"label": "Keep it"}]}),), 1.0),
+    ]
+    reply = runner._reply(history)
+    assert "used by invoice.py" in reply and "left it in place" in reply
