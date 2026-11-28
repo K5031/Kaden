@@ -81,6 +81,16 @@ def test_kaden_comes_with_a_memory_cleanup_skill():
     assert "consolidate-memory" in found
 
 
+def test_kaden_comes_with_a_coding_skill():
+    """A trade's guidance is a skill, loaded for a coding task, not in every request."""
+    found, problems = skills.load([skills.BUILTIN])
+    assert problems == [] and "coding" in found
+    coding = found["coding"].skill
+    assert "code" in coding.description
+    text = found["coding"].text
+    assert "tests nearest the change" in text and "Never rewrite shared" in text
+
+
 # ── In the runtime ───────────────────────────────────────────────────────
 
 

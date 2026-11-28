@@ -183,6 +183,9 @@ each), so having many costs little.
 - **Kaden comes with** `consolidate-memory`: the agent rereads its long-term memory,
   merges duplicates, fixes or deletes what is out of date and tells you what it changed.
   It runs only when you ask.
+- **And with** `coding`: how to work on code (read the project first, small changes in its
+  style, tests, debugging, careful git). The agent loads it by itself when a task is about
+  code; `/coding` loads it on purpose.
 - **Add your own** as a folder with a `SKILL.md` file:
 
   ```markdown
