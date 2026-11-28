@@ -276,7 +276,8 @@ It can also have an account of its own, for example Continuous:
    posted from then on is new.
 
 Logged in, it can also send private messages, to an account by its UID or a link to its
-space page, and read the messages people send it. Its inbox is watched for it: while a
+space page, and read the messages people send it. A message it sends is its last word for
+that turn: it writes nothing after it, so a reply on Bilibili is not repeated in Kaden. Its inbox is watched for it: while a
 conversation is going (a message either way in the last five minutes) it gets a new
 message within about 5 seconds, otherwise within 30. Whose messages wake it is a
 setting, **Woken by Bilibili messages** (Settings → Tools, or for Continuous the gear in

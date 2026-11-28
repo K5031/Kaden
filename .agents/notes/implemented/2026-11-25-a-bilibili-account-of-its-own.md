@@ -60,7 +60,7 @@ the tools are listed, so a login reaches the life on its next turn); until then 
 | `BiliFollowing` | The channels the account follows; deferred |
 | `BiliFeed` | New videos from followed channels since it last looked |
 | `BiliWatchFeed` | A [standing watch](2026-11-25-standing-watches.md): told of each burst of new videos, until stopped |
-| `BiliMessage` | Send a private message to an account by its UID or a link to its space page |
+| `BiliMessage` | Send a private message to an account by its UID or a link to its space page; a sent message ends the turn ([tools that end the turn](2026-11-28-tools-that-end-the-turn.md)) |
 | `BiliMessages` | Messages people sent the account since it last looked, with who sent them |
 | `BiliWatchMessages` | A watch of the inbox, kept by the module while logged in |
 

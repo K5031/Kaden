@@ -366,6 +366,9 @@ class ToolSpec:
     answers_prompt: bool = False  # True: a call with a `prompt` argument (Claude Code's
     #   WebFetch) gets, in place of a successful output, the model's answer to the prompt
     #   from that output, from the maintenance model.
+    ends_turn: bool = False  # True: a call of it is the agent's last word (LangChain's
+    #   return_direct): once it succeeds, with every other call of its message, the turn
+    #   ends and no request follows. A message to the user, wrap_up.
     title: str | None = None  # a short name for people ("Add numbers"), which frontends
     #   show for a call that has no sentence of its own (DESCRIPTION_ARG): a tool
     #   server's own title for its tool. Never sent to the model.
@@ -999,9 +1002,9 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
          "required": ["plan"]},
         deferred=True,  # occasional, as Claude Code defers it
     ),
-    # Ends the turn when it is the only call in its message (no request follows); frontends
-    # show it as a card from the transcript (see SUGGESTION_TOOLS). An option with a call is
-    # a PROPOSAL prompt with card true and the wrap_up call's id.
+    # Called alone in its message (the runtime refuses it otherwise), it ends the turn;
+    # frontends show it as a card from the transcript (see SUGGESTION_TOOLS). An option
+    # with a call is a PROPOSAL prompt with card true and the wrap_up call's id.
     "wrap_up": ToolSpec(
         "wrap_up",
         "Only when your turn leaves the user a decision (go ahead or not, which option): end "
@@ -1037,6 +1040,7 @@ BUILTIN_TOOLS: Mapping[str, ToolSpec] = {
             },
             "required": ["question", "options"],
         },
+        ends_turn=True,
     ),
 }
 

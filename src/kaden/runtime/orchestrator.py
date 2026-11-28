@@ -1680,8 +1680,9 @@ class Runtime:
                 return
             await self._flush_results()
             delivered = await self._deliver_inbox()
-            ended = (len(calls) == 1 and calls[0].name == "wrap_up"
-                     and results[0].status in (ToolStatus.OK, ToolStatus.BACKGROUNDED))
+            ended = (calls and any(specs[c.name].ends_turn for c in calls if c.name in specs)
+                     and all(r.status in (ToolStatus.OK, ToolStatus.BACKGROUNDED)
+                             for r in results))
             if (calls and not ended) or delivered:  # a queued message authorizes the next turn
                 continue
             if not calls and await self._send_back():

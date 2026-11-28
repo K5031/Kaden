@@ -1068,3 +1068,30 @@ async def test_the_compact_window_narrows_the_window_memory_compacts_in(make: An
     # fake-1: a 100K window, 1K of it kept for the output
     assert await budget(None) - await budget(60_000) == 39_000
     assert await budget(200_000) == await budget(None)  # never wider than the model's
+
+
+async def test_a_tool_that_ends_the_turn_is_the_last_word(make: Any) -> None:
+    """ToolSpec.ends_turn, as LangChain's return_direct: once such a call succeeds, with
+    every other call of its message, no request follows; a failure lets the model react."""
+    from dataclasses import replace
+
+    def tools() -> FakeTools:
+        t = FakeTools()
+        t.add(replace(t.instant("send"), ends_turn=True), t.fns["send"])
+        t.instant("look")
+        t.failing("broken")
+        return t
+
+    async def requests(*calls: Any) -> int:
+        core = ScriptedCore([Step(calls=list(calls)), Step(text="I sent it.")])
+        h: Harness = await make(core=core, tools=tools())
+        await h.start()
+        await h.turn("tell them")
+        n = len(core.requests)
+        await h.close()
+        return n
+
+    assert await requests(call("send", {}, id="a")) == 1
+    assert await requests(call("look", {}, id="a"), call("send", {}, id="b")) == 1
+    assert await requests(call("broken", {}, id="a"), call("send", {}, id="b")) == 2
+    assert await requests(call("look", {}, id="a")) == 2

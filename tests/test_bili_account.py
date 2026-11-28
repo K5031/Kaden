@@ -277,6 +277,8 @@ def test_the_watches_are_watches_and_following_is_not_read_only(tmp_path):
 
     assert LOGIN.deferred  # named in every request, described only once wanted
     assert not specs["BiliFollow"].read_only and specs["BiliFollowing"].read_only
+    # A message sent is the agent's last word: no recap of it follows.
+    assert specs["BiliMessage"].ends_turn and not specs["BiliMessages"].ends_turn
 
 
 @pytest.mark.parametrize("channel", ["77", "https://space.bilibili.com/77/video", "UID:77"])

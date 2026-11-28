@@ -22,9 +22,10 @@ answers to pick.
   a `label` written as the user would say it and, for at most one of them, a `call` to run;
   `recap` is one or two sentences when the decision needs them. The description says to
   call it alone, last.
-- **It ends the turn.** When it is the only call in its message, the cycle ends as after an
-  answer that calls no tool: no further request is paid for. Called with other tools, it is
-  an error result and the cycle goes on.
+- **It ends the turn.** It declares `ToolSpec.ends_turn` ([tools that end the
+  turn](2026-11-28-tools-that-end-the-turn.md)): when it is the only call in its message,
+  the cycle ends as after an answer that calls no tool, and no further request is paid
+  for. Called with other tools, it is an error result and the cycle goes on.
 - **An option with a call is a proposal.** The runtime validates the call as `propose`
   does and starts a `Proposal` with `card=True` and the `wrap_up` call's id; the wrap-up
   result is BACKGROUNDED. Clicking the option approves it (`respond`), so exactly

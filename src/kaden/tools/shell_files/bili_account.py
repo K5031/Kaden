@@ -120,13 +120,14 @@ MESSAGE_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="BiliMessage",
         description=("Send a private message on Bilibili, to an account by its UID or a link "
-                     "to its space page."),
+                     "to its space page. Sending ends your turn: do your other work first, "
+                     "and send several messages in one go."),
         parameters={"type": "object", "properties": {
             "to": {"type": "string", "description": "Their UID, or a link to their space page"},
             "text": {"type": "string", "minLength": 1, "maxLength": 1000},
             DESCRIPTION_ARG: DESCRIPTION_SCHEMA},
             "required": ["to", "text"], "additionalProperties": False},
-        read_only=False),
+        read_only=False, ends_turn=True),
     ToolSpec(
         name="BiliMessages",
         description=("Private messages to your Bilibili account since you last looked, with "
