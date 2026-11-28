@@ -32,7 +32,8 @@ The life is a headless Kaden in `<data dir>/life/` that the app starts with itse
 drives over JSON-RPC (`frontends/life.py`), as it does sub-sessions: its memory, its one
 conversation, usage and settings are its own, so it never sees the user's chats or their
 memory, and they never see its life. Its view is the window's own, on that runtime,
-without the chat list: its name, the step it is on as the status line,
+without the chat list: its name, the step it is on as the status line (nothing while it
+rests: when it wakes next is not shown, which would make it a timer),
 Journal for `home/journal.md`; its name and who it is are in its settings (the gear). While its process starts, the view says so.
 
 ### Its life

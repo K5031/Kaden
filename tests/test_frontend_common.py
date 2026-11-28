@@ -243,7 +243,9 @@ def test_duty_status_says_when_it_wakes_or_that_it_is_paused():
         "Duty: next check-in ")
     life = Duty("x", DutyKind.LIFE)  # its own time, not work
     assert duty_status(life, None, AgentState.THINKING) == "Busy"
-    assert duty_status(life, time.time() + 60, AgentState.IDLE).startswith("Next at ")
+    # Not when it wakes next: a schedule on show makes it a timer, not someone alive.
+    assert duty_status(life, time.time() + 60, AgentState.IDLE) is None
+    assert duty_status(life, None, AgentState.IDLE) is None
 
 
 def test_delete_details_name_the_sub_sessions():

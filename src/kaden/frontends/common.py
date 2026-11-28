@@ -497,13 +497,13 @@ def raises_limit(old: float | None, new: float | None) -> bool:
 def duty_status(duty: Duty | None, wake_at: float | None, state: AgentState,
                 help_needed: str | None = None) -> str | None:
     """The duty's state for a status line; without a duty, when the agent is next woken
-    for a due step, else None."""
+    for a due step, else None. A life shows only that it is busy, never when it wakes
+    next: a schedule on show would make it a timer rather than someone living."""
     if duty is None:
         return f"Reminder at {_when(wake_at)}" if wake_at is not None else None
     if duty.kind == DutyKind.LIFE:
-        if state not in (AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED):
-            return "Busy"
-        return f"Next at {_when(wake_at)}" if wake_at is not None else "Resting"
+        idle = state in (AgentState.IDLE, AgentState.STOPPED, AgentState.FAILED)
+        return None if idle else "Busy"
     what = "Goal" if duty.kind == DutyKind.GOAL else "Duty"
     if help_needed is not None and state in (AgentState.IDLE, AgentState.STOPPED):
         return f"{what}: waiting for your answer"
