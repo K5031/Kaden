@@ -893,7 +893,7 @@ was used.
 ### P6 (S) A secret a frontend writes for a Tools module
 - **Status:** Withdrawn: the login became a tool of the Tools module (`BiliLogin`), which keeps it itself; no frontend writes it.
 - **Where:** `api.py` (no contract for it); proposed
-  [a Bilibili account of its own](notes/proposed/2026-11-25-a-bilibili-account-of-its-own.md).
+  [a Bilibili account of its own](notes/implemented/2026-11-25-a-bilibili-account-of-its-own.md).
 - **Problem:** The desktop app logs the life into Bilibili (a QR code the user scans) and
   keeps the login for the life's built-in Tools module to use. Secrets reach modules only
   through the runtime today (`update_settings` writes a Core's `key_name`, MCP servers

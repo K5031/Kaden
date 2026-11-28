@@ -5,7 +5,7 @@ Status: implemented — a watch the runtime keeps, apart from operations: run ag
 ## Problem
 
 Continuous needs input from the world ([Following things](../../todo.md),
-[a Bilibili account of its own](../proposed/2026-11-25-a-bilibili-account-of-its-own.md)): new videos
+[a Bilibili account of its own](2026-11-25-a-bilibili-account-of-its-own.md)): new videos
 from the channels it follows, and the user's messages to its Bilibili account. Today the
 only way something outside wakes it is a tool call that waits (`BiliFeed` or
 `BiliMessages` with `wait`), runs in the background, and wakes it when it finishes.

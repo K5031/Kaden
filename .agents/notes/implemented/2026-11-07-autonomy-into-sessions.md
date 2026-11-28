@@ -142,7 +142,7 @@ command-line flags of the per-mode versions.
 
 - **Desktop app.** The sidebar shows titles and offers rename, continue from, archive and
   delete; the spending is shown above the conversation; a Memory window lists, adds, edits and forgets entries. See
-  [Desktop app](../proposed/2026-11-07-desktop-app.md).
+  [Desktop app](2026-11-07-desktop-app.md).
 
 ## Alternatives considered
 
