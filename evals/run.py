@@ -77,7 +77,7 @@ def tasks(names: list[str] | None = None) -> list[Path]:
 
 
 def prepare(task: Path, root: Path, parent: Path, model: str | None,
-            budget_usd: float) -> tuple[Path, Path]:
+            budget_usd: float, base_prompt: str | None = None) -> tuple[Path, Path]:
     """Blocking: the task's repository as a git repository, and Kaden's data folder."""
     repo = root / "repo"
     shutil.copytree(task / "repo", repo)
@@ -99,6 +99,8 @@ def prepare(task: Path, root: Path, parent: Path, model: str | None,
                     permissions="allow_workspace", system_prompt="")
     if model is not None:
         settings["model"] = model
+    if base_prompt is not None:  # to compare another base prompt with Kaden's own
+        settings["base_prompt"] = base_prompt
     child.write_settings(data / "settings.toml", settings)
     return repo, data
 
@@ -134,11 +136,12 @@ async def finished(live: RemoteRuntime, watch: Watch, timeout_s: float) -> None:
 
 
 async def run_task(task: Path, parent: Path, *, model: str | None, budget_usd: float,
-                   command: list[str], timeout_s: float = TIMEOUT_S) -> Result:
+                   command: list[str], timeout_s: float = TIMEOUT_S,
+                   base_prompt: str | None = None) -> Result:
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix=f"kaden-eval-{task.name}-") as tmp:
         repo, data = await asyncio.to_thread(prepare, task, Path(tmp), parent, model,
-                                             budget_usd)
+                                             budget_usd, base_prompt)
         watch = Watch()
         live = await child.spawn(command, data, cwd=repo, on_event=watch.heard)
         reply, cost, problems = "", 0.0, []
@@ -198,6 +201,8 @@ async def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tasks", help="comma-separated task names; all by default")
     parser.add_argument("--budget", type=float, default=1.0, help="US$ per task (1.0)")
     parser.add_argument("--runs", type=int, default=1, help="runs of each task (1)")
+    parser.add_argument("--base-prompt-file", type=Path,
+                        help="a base prompt to use instead of Kaden's own, to compare")
     parser.add_argument("--data-dir", type=Path, default=Path.home() / ".kaden",
                         help="whose configuration and keys to use (~/.kaden)")
     args = parser.parse_args(argv)
@@ -207,12 +212,14 @@ async def main(argv: list[str] | None = None) -> int:
               "a Kaden session's shell", file=sys.stderr)
         return 2
     names = args.tasks.split(",") if args.tasks else None
+    base_prompt = args.base_prompt_file.read_text() if args.base_prompt_file else None
     command = [sys.executable, "-m", "kaden"]
     results: list[Result] = []
     for task in tasks(names):
         for _ in range(args.runs):
             result = await run_task(task, args.data_dir.expanduser(), model=args.model,
-                                    budget_usd=args.budget, command=command)
+                                    budget_usd=args.budget, command=command,
+                                    base_prompt=base_prompt)
             results.append(result)
             mark = "pass" if result.passed else "FAIL"
             print(f"{mark}  {result.task:20} ${result.cost_usd:.3f}  {result.seconds:5.0f} s")

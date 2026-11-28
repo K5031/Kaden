@@ -130,6 +130,9 @@ uv run python -m evals.run                      # every task, the configured mod
 uv run python -m evals.run --tasks fix-a-bug --runs 3 --model claude-sonnet-5-5
 ```
 
+`--base-prompt-file` runs the tasks with another base prompt in place of Kaden's own, to
+compare the two.
+
 Kaden runs headless in a temporary data folder with your model and keys, but none of your
 own instructions, base prompt, tool servers, saved answers, tools' settings or hooks, so
 runs measure Kaden itself. It may change the task's folder without asking, spends at most

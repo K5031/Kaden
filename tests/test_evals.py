@@ -170,6 +170,7 @@ def test_the_users_own_settings_do_not_change_the_runs(tmp_path):
         "core": {"factory": "f"}}))
     task = runner.tasks()[0]
     _, data = runner.prepare(task, tmp_path / "run", parent, None, 1.0)
+    _, other = runner.prepare(task, tmp_path / "other", parent, None, 1.0, "Be brief.")
     import tomllib
 
     settings = tomllib.loads((data / "settings.toml").read_text())
@@ -178,6 +179,7 @@ def test_the_users_own_settings_do_not_change_the_runs(tmp_path):
     assert not set(settings) & set(runner.DROPPED)
     assert "hooks" not in config and "system_prompt_file" not in config.get("runtime", {})
     assert config["core"] == {"factory": "f"}
+    assert tomllib.loads((other / "settings.toml").read_text())["base_prompt"] == "Be brief."
 
 
 def test_a_question_ends_the_run_at_once(tmp_path, child_env):
