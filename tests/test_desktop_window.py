@@ -2275,6 +2275,7 @@ class FakeLife:
         self.said: list[str] = []
         self.asked: list[Any] = []
         self.has_lived, self.name, self.about = has_lived, "Kaden", ""
+        self.model: str | None = None
 
     async def set_identity(self, name: str, about: str) -> None:
         self.name, self.about = name, about
@@ -2297,6 +2298,9 @@ class FakeLife:
 
     async def set_daily_usd(self, usd: float | None) -> None:
         self.daily_usd = usd
+
+    async def set_model(self, model: str | None) -> None:
+        self.model = model
 
     def take_messages(self) -> list[str]:
         said, self.said = self.said, []
@@ -2740,6 +2744,30 @@ async def test_the_lifes_daily_amount_is_set_in_its_settings(make, qapp):
     window._dialog.daily.setText("")
     window._dialog._save()
     await eventually(lambda: life.daily_usd is None)
+
+
+async def test_the_lifes_model_is_chosen_in_its_settings(make, qapp):
+    """A model of its own for all it does, or the chats'; a change restarts it."""
+    h: Harness = await make()
+    await h.start()
+    them: Harness = await make()
+    await them.start()
+    life = FakeLife(them.runtime)
+    controller = Controller(h.runtime, ConversationModel())
+    window = MainWindow(h.runtime, controller, life=life)
+    asyncio.create_task(controller.run())
+    window.continuous_switch.click()
+    await eventually(lambda: window.showing_life)
+    window.open_settings()
+    await eventually(lambda: isinstance(window._dialog, LifeSettingsDialog)
+                     and window._dialog.isVisible())
+    dialog = window._dialog
+    choices = [dialog.model.itemData(i) for i in range(dialog.model.count())]
+    assert choices[0] is None and "fake-2" in choices  # the chats', then the provider's
+    assert dialog.model.currentData() is None
+    dialog.model.setCurrentIndex(dialog.model.findData("fake-2"))
+    dialog._save()
+    await eventually(lambda: life.model == "fake-2" and life.restarted == 1)
 
 
 async def test_the_lifes_settings_show_their_descriptions_whole(make, qapp):

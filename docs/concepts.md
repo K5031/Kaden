@@ -83,9 +83,10 @@ closed it.
   not pause them. Closing the window keeps Kaden running in the tray; only Quit stops
   them.
 - **Their own time costs at most a daily amount**, US$1 unless you change it (the gear
-  in their view), on your cheaper model (Settings →
-  Model for memory upkeep). Talking with you does not count toward it, and is answered
-  with your chosen model. Once a day's share is spent, they rest until the next day and
+  in their view), on your cheaper model (Settings → Model for memory upkeep). Talking
+  with you does not count toward it, and is answered with your chosen model. Choose a
+  model of their own under the gear, and it runs all they do instead: replies, their own
+  time and their memory's upkeep. Once a day's share is spent, they rest until the next day and
   still answer you. Your spending limit in Settings covers it too.
 - **Voice** talks with whatever is on screen, so you can talk with them too.
 

@@ -1604,7 +1604,7 @@ class MainWindow(QMainWindow):
 
         async def saved(identity: tuple[str, str] | None, daily: Any,
                         changes: dict[str, bool | str],
-                        rules: tuple[PermissionRule, ...] | None) -> None:
+                        rules: tuple[PermissionRule, ...] | None, model: Any) -> None:
             if rules is not None:
                 await life.runtime.update_settings(SettingsUpdate(permission_rules=rules))
             if identity is not None:
@@ -1615,11 +1615,19 @@ class MainWindow(QMainWindow):
                 await life.set_daily_usd(daily)
             if changes:
                 await life.runtime.update_settings(SettingsUpdate(tool_settings=changes))
+            if model is not UNCHANGED:
+                await life.set_model(model)
+            if changes or model is not UNCHANGED:
                 self.home.command(restart())
 
         async def load() -> None:
+            try:  # the chats' provider is its too
+                models: Sequence[ModelInfo] = await self.runtime.list_models()
+            except Exception:  # noqa: BLE001 - offline, say: its settings open all the same
+                models = ()
             dialog = LifeSettingsDialog(self, self.home, life.name, life.about,
-                                        await life.runtime.settings(), life.daily_usd)
+                                        await life.runtime.settings(), life.daily_usd,
+                                        models=models, model=life.model)
             dialog.saved = saved
             self._dialog = dialog
             dialog.open()

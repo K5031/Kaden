@@ -88,6 +88,8 @@ class Life:
         self.conversation_id: str | None = record.get("conversation_id")
         # What its own time may cost a day, as the user set it (None: no limit).
         self.daily_usd: float | None = record.get("daily_usd", self.daily_usd)
+        # The model all it does runs on, as the user chose it (None: as the chats').
+        self.model: str | None = record.get("model")
 
     @property
     def runtime(self) -> RemoteRuntime:
@@ -186,6 +188,11 @@ class Life:
             await self._live.update_settings(SettingsUpdate(
                 budget=replace(budget, max_cost_usd_per_day=usd)))
 
+    async def set_model(self, model: str | None) -> None:
+        """The model all it does runs on (None: as the chats'): kept, from its next start."""
+        self.model = model
+        await asyncio.to_thread(self._write)
+
     async def restart(self) -> None:
         """Its process closed and started again, on the same life: what was saved in its
         folder (its tool settings) applies."""
@@ -247,8 +254,11 @@ class Life:
             settings.pop(key, None)
             if key in mine:
                 settings[key] = mine[key]
-        # Its own time on the model the user chose for upkeep: the cheaper one.
-        self._own_model = settings.get("maintenance_model") or None
+        if self.model is not None:  # a model of its own, for all it does, upkeep too
+            settings["model"] = settings["maintenance_model"] = self.model
+            self._own_model = self.model
+        else:  # as the chats', its own time on the model chosen for upkeep: the cheaper
+            self._own_model = settings.get("maintenance_model") or None
         settings["budget"] = ({} if self.daily_usd is None
                               else {"max_cost_usd_per_day": self.daily_usd})
         settings["work_folder"] = str(self.home)
@@ -266,4 +276,4 @@ class Life:
         self.folder.mkdir(parents=True, exist_ok=True)
         (self.folder / RECORD).write_text(json.dumps(
             {"conversation_id": self.conversation_id, "name": self.name,
-             "about": self.about, "daily_usd": self.daily_usd}))
+             "about": self.about, "daily_usd": self.daily_usd, "model": self.model}))

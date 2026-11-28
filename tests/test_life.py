@@ -124,6 +124,23 @@ async def test_starting_it_twice_at_once_starts_one_life(tmp_path, child_env):
         await life.aclose()
 
 
+async def test_a_model_of_its_own_runs_all_it_does(tmp_path, child_env):
+    """Continuous may run on a model other than the chats': its replies and its own time
+    both; without one it follows the chats' (its own time on their cheaper model)."""
+    data = home(tmp_path, [{"text": ""}])
+    life = Life(data, pace_s=(0.05, 30))
+    await life.set_model("fake-2")
+    assert Life(data).model == "fake-2"  # kept
+    try:
+        await life.start()
+        snapshot = await eventually(lambda: life.snapshot)
+        settings = tomllib.loads((data / "life" / "settings.toml").read_text())
+        assert settings["model"] == settings["maintenance_model"] == "fake-2"  # upkeep too
+        assert snapshot.conversation.duty.model == "fake-2"
+    finally:
+        await life.aclose()
+
+
 async def test_the_user_can_see_its_folder_and_no_file_is_named_for_it(tmp_path, child_env):
     """Its prompt says the user can see the files in its folder, and names none: what it
     keeps there, a journal or anything else, is its own choice."""

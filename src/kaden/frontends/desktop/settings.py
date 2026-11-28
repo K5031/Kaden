@@ -163,14 +163,15 @@ class ToolSettingRows:
 
 class LifeSettingsDialog(QDialog):
     """The life's own settings: its name and who it is, and what its own time may cost a
-    day (at once); what its tools declare (when its process starts again). Its provider
-    and models follow the user's chats."""
+    day (at once); its model and what its tools declare (when its process starts again).
+    Its provider follows the user's chats."""
 
     def __init__(self, parent: QWidget, controller: Controller, name: str, about: str,
-                 settings: Settings, daily_usd: float | None) -> None:
+                 settings: Settings, daily_usd: float | None, *,
+                 models: Sequence[ModelInfo] = (), model: str | None = None) -> None:
         super().__init__(parent)
         self._controller = controller  # runs the save
-        self.settings, self.daily_usd = settings, daily_usd
+        self.settings, self.daily_usd, self.chosen_model = settings, daily_usd, model
         self.identity = (name, about)
         self.setWindowTitle(f"Settings · {name}")
         self.setMinimumWidth(620)
@@ -189,12 +190,22 @@ class LifeSettingsDialog(QDialog):
         self.daily.setPlaceholderText("No limit")
         column.addWidget(_setting("Daily amount (US$)", "What their own time may cost a day. "
                                   "Your messages always reach them.", self.daily))
+        self.model = QComboBox()
+        self.model.addItem("Same as your chats", None)
+        for info in models:
+            self.model.addItem(info.name or info.id, info.id)
+        if model is not None and self.model.findData(model) < 0:
+            self.model.addItem(model, model)  # one the provider no longer lists
+        self.model.setCurrentIndex(max(0, self.model.findData(model)))
+        column.addWidget(_setting("Model", "What all they do runs on: their replies, their "
+                                  "own time and their memory's upkeep. A change restarts "
+                                  "them.", self.model))
         self.tool_rows = ToolSettingRows(settings.tool_settings)
         for row in self.tool_rows.rows:
             column.addWidget(row)
         if self.tool_rows.rows:
-            column.addWidget(text_label(f"A change to their tools restarts {name}. Their model "
-                                    "is in your Settings.", selectable=False, role="small"))
+            column.addWidget(text_label(f"A change to their tools restarts {name}.",
+                                        selectable=False, role="small"))
         self.answers = SavedAnswers(settings.permission_rules)
         column.addWidget(_setting("Saved answers", "What you said always or never to in their "
                                   "view. Theirs, apart from your chats'.", self.answers,
@@ -208,10 +219,10 @@ class LifeSettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         column.addWidget(buttons)
         # Called with the new name and who they are (None if unchanged), the new daily
-        # amount (UNCHANGED if it is not), the tool settings changed, and the saved answers
-        # kept (None if unchanged).
+        # amount (UNCHANGED if it is not), the tool settings changed, the saved answers
+        # kept (None if unchanged), and the model (UNCHANGED if it is not).
         self.saved: Callable[[tuple[str, str] | None, Any, dict[str, bool | str],
-                              tuple[PermissionRule, ...] | None],
+                              tuple[PermissionRule, ...] | None, Any],
                              Awaitable[None]] | None = None
 
     def resizeEvent(self, event: QResizeEvent) -> None:
@@ -243,8 +254,10 @@ class LifeSettingsDialog(QDialog):
         rules: tuple[PermissionRule, ...] | None = self.answers.kept()
         if rules == tuple(self.settings.permission_rules):
             rules = None
+        model = self.model.currentData()
+        model = UNCHANGED if model == self.chosen_model else model
         if (not changes and daily is UNCHANGED and identity is None and rules is None
-                or self.saved is None):
+                and model is UNCHANGED or self.saved is None):
             self.accept()
             return
         self.save_button.setEnabled(False)
@@ -253,7 +266,7 @@ class LifeSettingsDialog(QDialog):
         async def save() -> None:
             assert self.saved is not None
             try:
-                await self.saved(identity, daily, changes, rules)
+                await self.saved(identity, daily, changes, rules, model)
             except Exception as e:  # noqa: BLE001 - shown in the dialog
                 self.save_button.setEnabled(True)
                 say(self.error, user_message(e))

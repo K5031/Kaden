@@ -67,6 +67,9 @@ are in its settings (the gear). While its process starts, the view says so.
 - **Its own time costs at most a daily amount** (US$1 until the user sets another in its
   settings, or none), on the user's cheaper model;
   talking with the user does not count toward it and is answered with their chosen model.
+  A model of its own (`Life.model`, chosen under its gear and kept in life.json) runs all
+  it does instead, replies, own time and upkeep: what Continuous costs is mostly its
+  replies over a long conversation, which the daily amount does not cover.
 
 Nothing else shapes what it does: abilities (its tools, its folder, the web, Bilibili)
 and facts (the user can see its folder), never routines, quotas, schedules or moods.

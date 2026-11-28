@@ -1286,3 +1286,12 @@ user's (`child.settings_of`), without `mcp_servers`, `always_allow`, `never_allo
 120 s a check. Done when the child has worked (a busy `StateChanged` heard) and is idle with
 nothing running or queued; any prompt but a proposal ends the run as failed ("it asked"),
 and so does the child's process ending. The reply is all its text after the task was sent.
+
+## Continuous's model
+
+`Life.model` (life.json; None = the chats'): written as the child's `model` and
+`maintenance_model`, and the life's `Duty.model`, at each start; a change restarts it. A
+model the provider no longer lists stops the life from starting, with the start error
+shown; it is changed back under the gear, which reads only life.json. No fallback to the
+chats' model: the life would quietly run on, and cost, another model than the one chosen.
+
