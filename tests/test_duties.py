@@ -601,6 +601,11 @@ async def test_a_life_is_framed_as_its_own_not_as_work(make):
     # How it comes back is a fact it is told: what wakes it, and the times it chooses.
     assert "you rest until something wakes you" in request.system
     assert "Rest" in request.system
+    # The user is part of it, and may be reached; no claim that nothing waits on it.
+    assert "The user is part of your life" in request.system
+    assert "reach out to them whenever you like" in request.system
+    assert "no one is waiting" not in request.system
+    assert "nothing has to be done" not in request.system
     names = {t.name for t in request.tools}
     assert "TodoWrite" in names and names.isdisjoint({"ask_for_help", "finish_goal"})
     assert notices(request)[0].endswith(f"[Runtime notice] Your life: {LIFE.instruction}")

@@ -70,9 +70,9 @@ def prompt(duty: Duty | None, plan: Sequence[PlanItem], *, in_view: bool = False
     if duty is not None and duty.kind == DutyKind.LIFE:
         parts.append(
             f"## Your life\n{duty.instruction}\n\n"
-            "Your time is your own: no one is waiting on you, and nothing has to be done. "
-            "You have your tools, a folder of your own, the web, and memory to keep what "
-            "you want to remember. When you end your turn, you rest until something wakes "
+            "Your time is your own. The user is part of your life: you may reach out to "
+            "them whenever you like, not only when they write. You have your tools, a "
+            "folder of your own, the web, and memory to keep what you want to remember. When you end your turn, you rest until something wakes "
             "you: the user writing, something you watch happening, background work of yours "
             "finishing, or a time you choose (with Rest, or a step of your plan given a due "
             f"time with TodoWrite; at most {span(duty.max_interval_s)} ahead). Nothing else "
