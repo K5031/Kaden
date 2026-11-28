@@ -9,6 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import asyncio
 import itertools
+import json
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -3012,3 +3013,85 @@ def test_a_steps_details_show_each_argument_with_its_real_lines(qapp):
     item.arguments = '{"file_path": "/tmp/a.ht'  # still streaming: as it comes
     card.refresh()
     assert card.details.toPlainText() == '{"file_path": "/tmp/a.ht'
+
+
+FOX = {"name": "Fox Den", "base": "dark",
+       "overrides": {"accent": "#FF8A3D", "bg": "#f80", "code.keyword": "#FFB37A",
+                     "sparkles": "#FFFFFF", "text": "orange"}}
+
+
+def test_a_theme_file_is_a_base_and_the_colours_over_it(tmp_path):
+    """As Claude Code's custom themes: the file's name is its slug; name, base and
+    overrides are optional; a wrong name or colour is skipped and said, the rest kept."""
+    (tmp_path / "fox.json").write_text(json.dumps(FOX))
+    (tmp_path / "plain.json").write_text("{}")
+    (tmp_path / "broken.json").write_text("{not json")
+    (tmp_path / "notes.txt").write_text("not a theme")
+    themes = theme.read_themes(tmp_path)
+    assert set(themes) == {"fox", "plain", "broken"}
+    fox = themes["fox"]
+    assert fox.name == "Fox Den" and fox.palette.dark
+    assert fox.palette.accent == "#ff8a3d" and fox.palette.bg == "#ff8800"  # #rgb too
+    assert fox.palette.text == theme.DARK.text and fox.palette.side == theme.DARK.side
+    assert fox.code == {"keyword": "#ffb37a"}
+    assert any("sparkles" in p for p in fox.problems)
+    assert any("orange" in p for p in fox.problems)
+    assert themes["plain"].name == "plain" and themes["plain"].palette == theme.DARK
+    assert themes["broken"].problems  # listed, with what is wrong
+    assert theme.read_themes(tmp_path / "missing") == {}
+
+
+def test_a_chosen_theme_colours_the_app_and_the_code_and_survives_a_zoom(
+        tmp_path, qapp, system_theme, unzoomed):
+    (tmp_path / "fox.json").write_text(json.dumps(FOX))
+    theme.set_custom(theme.read_themes(tmp_path))
+    theme.set_theme(qapp, "custom:fox")
+    assert theme.choice() == "custom:fox"
+    assert theme.current().accent == "#ff8a3d" and theme.current().dark
+    assert theme.code_colours()["keyword"] == "#ffb37a"
+    from kaden.frontends.desktop import syntax
+    assert theme.code_colours()["string"] == syntax.colors(dark=True)["string"]
+    theme.set_zoom(qapp, 1.25)
+    assert theme.current().accent == "#ff8a3d"  # zooming keeps the theme
+    theme.set_theme(qapp, "custom:gone")  # a theme whose file is gone
+    assert theme.choice() == "system"
+    theme.set_custom({})
+
+
+async def test_a_custom_theme_choice_is_read_back(tmp_path):
+    saved = tmp_path / "desktop.json"
+    saved.write_text('{"theme": "custom:fox"}')
+    assert await window_module.load_look(saved) == (1.0, "custom:fox")
+
+
+async def test_custom_themes_are_in_the_menu_and_follow_their_files(
+        make, qapp, system_theme, tmp_path):
+    folder = tmp_path / "themes"
+    folder.mkdir()
+    (folder / "fox.json").write_text(json.dumps(FOX))
+    await window_module.load_themes(folder)
+    h: Harness = await make()
+    await h.start()
+    controller = Controller(h.runtime, ConversationModel())
+    window = MainWindow(h.runtime, controller, tmp_path / "desktop.json")
+    asyncio.create_task(controller.run())
+    fox = window.theme_actions["custom:fox"]
+    assert fox.text() == "Fox Den" and "sparkles" in fox.toolTip()
+    fox.trigger()
+    assert theme.current().accent == "#ff8a3d"
+    # Live: the folder and each theme file are watched; a change reads them again.
+    watch = window._themes_watch
+    assert str(folder) in watch.directories() and str(folder / "fox.json") in watch.files()
+    (folder / "fox.json").write_text(json.dumps({**FOX, "overrides": {"accent": "#00AA00"}}))
+    def changed(signal: Any, path: Path) -> None:  # as Qt does, on its own loop
+        signal.emit(str(path))
+        assert window._themes_due.isActive()  # one read, a moment on, for a burst
+        window._themes_due.stop()
+        window._themes_due.timeout.emit()
+    changed(watch.fileChanged, folder / "fox.json")
+    await eventually(lambda: theme.current().accent == "#00aa00")
+    (folder / "moss.json").write_text('{"name": "Moss", "base": "light"}')
+    changed(watch.directoryChanged, folder)
+    await eventually(lambda: "custom:moss" in window.theme_actions)
+    assert str(folder / "moss.json") in watch.files()
+    theme.set_custom({})

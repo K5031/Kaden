@@ -261,7 +261,7 @@ class MarkdownView(QTextBrowser):
 
     def _colour(self, frame: QTextFrame, language: str) -> None:
         """Syntax colours for a code block whose language is named and known."""
-        colors = syntax.colors(theme.current().dark)
+        colors = theme.code_colours()
         for start, length, kind in syntax.spans(self._code(frame), language):
             cursor = QTextCursor(self.document())
             cursor.setPosition(frame.firstPosition() + start)

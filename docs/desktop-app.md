@@ -11,6 +11,43 @@ choice is remembered.
 
 ![The desktop app, dark](images/main-dark.png)
 
+### Your own themes
+
+A theme of your own, or one someone shared, is a JSON file in the `themes` folder of
+Kaden's data folder (`~/.kaden/themes/`). It shows in **☰ → View → Theme** by its name,
+and saving the file restyles the app at once.
+
+```json
+{
+  "name": "Fox Den",
+  "base": "dark",
+  "overrides": {"accent": "#FF8A3D", "bg": "#1E1612", "code.keyword": "#FFB37A"}
+}
+```
+
+Every field is optional. `base` is `light` or `dark` (dark when left out): the theme starts
+from it, and `overrides` changes the colours you name, as `#rrggbb` or `#rgb`. A name or
+colour Kaden does not know is skipped, and the theme's menu item says which.
+
+| Name | What it colours |
+|---|---|
+| `bg` | The conversation, dialogs, menus, tooltips and plain buttons |
+| `side` | The sidebar |
+| `card` | Step groups and cards, a button under the pointer, disabled fields |
+| `field` | Text fields and lists |
+| `composer` | The message box |
+| `bubble` | Your messages |
+| `select` | Code in replies (its background), and small buttons under the pointer |
+| `line` | Hairlines, outlines and dividers |
+| `track` | A switch that is off, scroll bars, the thinking rule, the message box while typing |
+| `text`, `muted` | Text, and secondary text (hints, times, disabled text) |
+| `accent`, `accent_hover` | Main buttons, links, focus and selected text, and a main button under the pointer |
+| `on_accent` | Text on `accent` |
+| `accent_soft`, `accent_text` | The chosen item (the open conversation, a menu or list choice) and its text |
+| `ok`, `warning`, `error` | Success, warnings and errors |
+| `error_bg`, `error_text` | An error banner and its text |
+| `code.keyword`, `code.string`, `code.comment`, `code.number`, `code.name`, `code.builtin` | Kinds of words in code in replies |
+
 ## Install
 
 Ready-made downloads (a `.dmg` for macOS, a Flatpak and an AppImage for Linux) are not

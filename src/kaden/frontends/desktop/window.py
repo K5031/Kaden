@@ -19,7 +19,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QEvent, QPoint, QSize, Qt, QUrl, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QFileSystemWatcher,
+    QPoint,
+    QSize,
+    Qt,
+    QTimer,
+    QUrl,
+    Signal,
+)
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
@@ -146,10 +155,21 @@ async def load_look(path: Path) -> tuple[float, str]:
         try:
             saved = json.loads(path.read_text(encoding="utf-8"))
             name = saved.get("theme")
-            return float(saved.get("zoom", 1.0)), name if name in theme.THEMES else "system"
+            known = name in theme.THEMES or (
+                isinstance(name, str) and name.startswith(theme.CUSTOM))
+            return float(saved.get("zoom", 1.0)), name if known else "system"
         except (OSError, ValueError, TypeError, AttributeError):
             return 1.0, "system"
     return await asyncio.to_thread(read)
+
+
+async def load_themes(folder: Path) -> None:
+    """The custom themes in `folder`, which is made so it can be watched: read before the
+    saved theme is chosen."""
+    def read() -> dict[str, theme.CustomTheme]:
+        folder.mkdir(parents=True, exist_ok=True)
+        return theme.read_themes(folder)
+    theme.set_custom(await asyncio.to_thread(read))
 
 
 async def save_look(path: Path, voice: str = DEFAULT_VOICE, *, life: bool = False,
@@ -249,6 +269,16 @@ class MainWindow(QMainWindow):
             controller, zoom_file.parent / VOICE_DIR if zoom_file is not None else None,
             self._ask)
         self.voice.changed.connect(self._show_voice)
+        # Custom themes, kept beside the zoom's file; saving one restyles the app at once.
+        self._themes_dir = zoom_file.parent / theme.THEMES_DIR if zoom_file else None
+        self._themes_watch = QFileSystemWatcher(self)
+        # One save may change a file and the folder both: one read for them, a moment on.
+        self._themes_due = QTimer(self, singleShot=True, interval=150)
+        self._themes_due.timeout.connect(self._reload_themes)
+        self._themes_watch.directoryChanged.connect(self._themes_due.start)
+        self._themes_watch.fileChanged.connect(self._themes_due.start)
+        self._themes_read = 0  # reads started; a read finishing after a newer one is dropped
+        self._watch_themes()
         self.sessions = sessions  # the sub-sessions this window hosts
         controller.sessions = sessions
         self._collapsed: set[str] = set()  # sidebar groups the user folded
@@ -736,8 +766,9 @@ class MainWindow(QMainWindow):
             action.setShortcuts(keys)
             action.triggered.connect(lambda _=False, s=steps: self.zoom(s))
             view_menu.addAction(action)
-        theme_menu = view_menu.addMenu("&Theme")
-        themes = QActionGroup(self)
+        theme_menu = self._theme_menu = view_menu.addMenu("&Theme")
+        theme_menu.setToolTipsVisible(True)  # what of a custom theme's file was skipped
+        themes = self._theme_group = QActionGroup(self)
         self.theme_actions: dict[str, QAction] = {}
         for name, text in (("system", "&System"), ("light", "&Light"), ("dark", "&Dark")):
             action = QAction(text, self, checkable=True)
@@ -746,6 +777,8 @@ class MainWindow(QMainWindow):
             themes.addAction(action)
             theme_menu.addAction(action)
             self.theme_actions[name] = action
+        self._custom_separator = theme_menu.addSeparator()
+        self._fill_custom_themes()
         view_menu.addSeparator()
         view_menu.addAction(self.show_archived)
         self.model_menu = main_menu.addMenu("&Model")
@@ -785,10 +818,62 @@ class MainWindow(QMainWindow):
         self.splitter.setSizes([wider, max(rest - (wider - sidebar), 0)])
 
     def set_theme(self, name: str) -> None:
-        """Light, dark, or whatever the desktop is set to; remembered like the zoom."""
+        """Light, dark, whatever the desktop is set to, or a custom theme; remembered like
+        the zoom."""
         app = QApplication.instance()
         assert isinstance(app, QApplication)
         theme.set_theme(app, name)
+        if (chosen := self.theme_actions.get(theme.choice())) is not None:
+            chosen.setChecked(True)
+
+    def _fill_custom_themes(self) -> None:
+        """The custom themes after the built-in ones, by name; a file's skipped parts in
+        the item's tooltip."""
+        for key in [k for k in self.theme_actions if k.startswith(theme.CUSTOM)]:
+            action = self.theme_actions.pop(key)
+            self._theme_group.removeAction(action)
+            self._theme_menu.removeAction(action)
+            action.deleteLater()
+        custom = sorted(theme.custom().items(), key=lambda item: item[1].name.lower())
+        self._custom_separator.setVisible(bool(custom))
+        for slug, found in custom:
+            key = theme.CUSTOM + slug
+            action = QAction(found.name, self, checkable=True)
+            action.setChecked(key == theme.choice())
+            action.setToolTip("; ".join(found.problems))
+            action.triggered.connect(lambda _=False, k=key: self.set_theme(k))
+            self._theme_group.addAction(action)
+            self._theme_menu.addAction(action)
+            self.theme_actions[key] = action
+
+    def _watch_themes(self) -> None:
+        """The folder and each theme file read (theme.custom()), not yet watched."""
+        folder = self._themes_dir
+        if folder is None:
+            return
+        paths = [str(folder), *(str(folder / f"{slug}.json") for slug in theme.custom())]
+        watched = set(self._themes_watch.directories() + self._themes_watch.files())
+        if new := [p for p in paths if p not in watched]:
+            self._themes_watch.addPaths(new)
+
+    def _reload_themes(self) -> None:
+        """A theme file was added, changed or removed: read them again, and restyle if
+        the chosen one changed (or fall back to System if it is gone)."""
+        folder = self._themes_dir
+        assert folder is not None
+        self._themes_read += 1
+        read = self._themes_read
+
+        async def reload() -> None:
+            themes = await asyncio.to_thread(theme.read_themes, folder)
+            if read != self._themes_read:
+                return  # a newer read is under way
+            theme.set_custom(themes)
+            self._watch_themes()  # a file saved by replacing it is a new one to watch
+            self._fill_custom_themes()
+            if theme.choice().startswith(theme.CUSTOM):
+                self.set_theme(theme.choice())
+        self.home.command(reload())
 
     # ── startup ───────────────────────────────────────────────────────────
 

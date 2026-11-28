@@ -68,6 +68,7 @@ class DesktopFrontend(Frontend):
         from kaden.frontends.desktop.window import (
             MainWindow,
             load_look,
+            load_themes,
             load_view,
             load_voice,
             load_voice_at_start,
@@ -81,6 +82,7 @@ class DesktopFrontend(Frontend):
             await self._hand_over(self.data_dir)
             return
         if self.zoom_file is not None:
+            await load_themes(self.zoom_file.parent / theme.THEMES_DIR)
             zoom, look = await load_look(self.zoom_file)
             theme.set_theme(app, look)
             theme.set_zoom(app, zoom)

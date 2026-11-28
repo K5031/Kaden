@@ -1,6 +1,10 @@
 """The desktop app's look: one palette per system color scheme, a Qt style sheet built
 from it, and the few icons the app draws itself.
 
+A custom theme is a JSON file in the data folder's `themes/`, as Claude Code's: a base
+(light or dark) and the colours over it, by the names of `Palette`'s fields and `code.<kind>`
+for the code in replies (`read_themes`); it is chosen as `custom:<slug>`.
+
 Widgets pick their styling with object names and dynamic properties (`primary`, `tone`,
 `role`); custom-painted widgets read `current()` when they paint, so a change of the
 system's light or dark setting restyles everything. The zoom scales the app font and every
@@ -9,8 +13,11 @@ font size in the style sheet.
 
 from __future__ import annotations
 
+import json
 import math
-from dataclasses import dataclass
+import re
+from collections.abc import Mapping
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, Qt
@@ -27,6 +34,8 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QApplication, QStyleFactory, QWidget
 
+from kaden.frontends.desktop import syntax
+
 
 @dataclass(frozen=True)
 class Palette:
@@ -41,7 +50,7 @@ class Palette:
     muted: str  # secondary text
     accent: str
     accent_hover: str
-    accent_soft: str  # selection and the empty-chat avatar
+    accent_soft: str  # the chosen item: the open conversation, a menu or list choice
     accent_text: str  # text on accent_soft
     on_accent: str  # text on accent
     ok: str
@@ -68,8 +77,62 @@ DARK = Palette(
     error_text="#F7B4AE", bubble="#2B2B31", select="#26262C", composer="#26262C")
 
 ICONS = Path(__file__).parent / "icons"
+THEMES_DIR = "themes"  # in the data folder: a custom theme per JSON file
+CUSTOM = "custom:"  # a custom theme's choice: CUSTOM + its slug (its file's name)
+COLOURS = tuple(f.name for f in fields(Palette) if f.name != "dark")
+_HEX = re.compile(r"#(?:[0-9a-fA-F]{3}){1,2}")
+
+
+@dataclass(frozen=True)
+class CustomTheme:
+    name: str  # shown in the theme menu
+    palette: Palette
+    code: Mapping[str, str]  # the code colours it changes, by kind (syntax.colors)
+    problems: tuple[str, ...]  # what of the file was skipped, and why
+
+
+def read_themes(folder: Path) -> dict[str, CustomTheme]:
+    """Blocking: the custom themes in `folder`, by slug; none when it does not exist. A
+    name or colour that is wrong is skipped and said in `problems`; the rest applies."""
+    themes = {}
+    for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+        problems: list[str] = []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            data, problems = {}, [f"not read: {e}"]
+        if not isinstance(data, dict):
+            data, problems = {}, ["not a JSON object"]
+        base = data.get("base", "dark")
+        if base not in ("light", "dark"):
+            problems.append(f"base {base!r} is neither light nor dark")
+            base = "dark"
+        overrides = data.get("overrides", {})
+        if not isinstance(overrides, dict):
+            problems.append("overrides is not an object")
+            overrides = {}
+        colours: dict[str, str] = {}
+        code: dict[str, str] = {}
+        kinds = syntax.colors(dark=False)
+        for key, value in overrides.items():
+            kind = key.removeprefix("code.")
+            if key not in COLOURS and not (key.startswith("code.") and kind in kinds):
+                problems.append(f"no colour is named {key!r}")
+            elif not isinstance(value, str) or not _HEX.fullmatch(value):
+                problems.append(f"{key}: {value!r} is not #rrggbb or #rgb")
+            else:
+                hex_ = value.lower() if len(value) == 7 else "#" + "".join(
+                    c * 2 for c in value[1:].lower())
+                (code if key.startswith("code.") else colours)[kind] = hex_
+        name = data.get("name")
+        themes[path.stem] = CustomTheme(
+            name if isinstance(name, str) and name.strip() else path.stem,
+            replace(DARK if base == "dark" else LIGHT, **colours), code, tuple(problems))
+    return themes
 
 _current = LIGHT
+_code: Mapping[str, str] = {}  # the chosen custom theme's code colours
+_custom: dict[str, CustomTheme] = {}
 THEMES = ("system", "light", "dark")  # "system" follows the desktop's color scheme
 _choice = "system"
 ZOOM_LEVELS = (0.67, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0)
@@ -83,13 +146,31 @@ def current() -> Palette:
 
 
 def choice() -> str:
-    """The theme the user chose (THEMES)."""
+    """The theme the user chose: one of THEMES, or CUSTOM + a custom theme's slug."""
     return _choice
 
 
+def code_colours() -> dict[str, str]:
+    """The colour of each kind of token in a reply's code, in the theme in use."""
+    return {**syntax.colors(_current.dark), **_code}
+
+
+def custom() -> Mapping[str, CustomTheme]:
+    return _custom
+
+
+def set_custom(themes: Mapping[str, CustomTheme]) -> None:
+    """The custom themes there are (read_themes); the chosen one is applied again by
+    set_theme."""
+    _custom.clear()
+    _custom.update(themes)
+
+
 def set_theme(app: QApplication, name: str) -> None:
+    """Choose a theme; a custom one that is not there (its file gone) is System."""
     global _choice
-    _choice = name if name in THEMES else "system"
+    known = name in THEMES or name.removeprefix(CUSTOM) in _custom and name.startswith(CUSTOM)
+    _choice = name if known else "system"
     apply(app)
 
 
@@ -111,15 +192,25 @@ def zoom_step(level: float, steps: int) -> float:
 def set_zoom(app: QApplication, level: float) -> None:
     global _zoom
     _zoom = min(max(level, ZOOM_LEVELS[0]), ZOOM_LEVELS[-1])
-    apply(app, _current.dark)
+    _style(app)
 
 
 def apply(app: QApplication, dark: bool | None = None) -> None:
     """Style the app for `dark`, or for the chosen theme when None, at the zoom."""
-    global _current, _base_pt
-    if dark is None:
-        dark = system_is_dark() if _choice == "system" else _choice == "dark"
-    _current = DARK if dark else LIGHT
+    global _current, _code
+    chosen = _custom.get(_choice.removeprefix(CUSTOM)) if _choice.startswith(CUSTOM) else None
+    if dark is None and chosen is not None:
+        _current, _code = chosen.palette, chosen.code
+    else:
+        if dark is None:
+            dark = system_is_dark() if _choice == "system" else _choice == "dark"
+        _current, _code = DARK if dark else LIGHT, {}
+    _style(app)
+
+
+def _style(app: QApplication) -> None:
+    """Style the app in the palette in use, at the zoom."""
+    global _base_pt
     if _base_pt is None:
         screen = app.primaryScreen()
         _base_pt = BASE_PX * 72 / (screen.logicalDotsPerInch() if screen else 96)
