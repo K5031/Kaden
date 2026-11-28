@@ -1030,7 +1030,8 @@ async def test_the_context_is_sized_after_the_whole_system_prompt(make: Any) -> 
         await h.close()
         return given
 
-    assert await budget(False) - await budget(True) >= estimate_tokens("\n".join(names[1:]))
+    # Each estimate rounds on its own: the whole prompt's and the names' may differ by one.
+    assert await budget(False) - await budget(True) >= estimate_tokens("\n".join(names[1:])) - 1
 
 
 async def test_the_context_is_sized_after_the_life_in_the_system_prompt(make: Any) -> None:
