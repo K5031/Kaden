@@ -33,9 +33,12 @@ near 900K.
   just before its one-hour cache expires, so the summary request reads the warm cache.
   Claude Code's summary is written on the main model, for which the warm cache matters;
   Kaden's is written on the light model, so by estimate compacting just before expiry
-  and compacting at the next cold wake cost the same within a cent or two. It needs a timer that runs a model request nobody asked for, and it fires in
+  and compacting at the next cold wake cost the same within a cent or two. It needs a
+  timer that runs a model request nobody asked for, and it fires in
   Claude Code only from 200K tokens. The saving comes from the conversation being smaller
-  afterwards, which the window gives without the timer.
+  afterwards, which the window gives without the timer. Proposed again, with the summary
+  request reusing the cache: [Claude Code-style idle
+  compaction](../proposed/2026-11-28-claude-code-style-idle-compaction.md).
 - **Compact at the first request after the cache expired.** Costs nothing extra in cache
   writes, since that request writes all of it anyway, but saves a few cents per compaction
   over compacting whenever the limit is reached; the size limit is what saves.

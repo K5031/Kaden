@@ -11,7 +11,15 @@ Agent Note (`notes/proposed/`) and leaves this list.
 
 ## From the user
 
-
+- **A visual avatar Kaden controls** (2026-11-28), extending the desktop pet note
+  (`notes/proposed/2026-11-21-a-desktop-pet.md`): a character in a scene, wallpaper-level
+  quality, that shows Kaden's real state (resting, idle, thinking, talking, reacting) and
+  that Kaden can also drive itself (an expression tool, its calls followed by the window
+  without naming the tool). An original character, Kaden's own mascot (the user's design,
+  dark forest with glowing light). Levels: sprite states first; then a rigged 2D model
+  (Live2D-style: breathing, blinking, physics, lip sync with the voice, eyes on the
+  cursor); later, live generated video from a reference image (head and shoulders, heavy
+  on the GPU, drifts over long sessions; models to check when taken up).
 - **A more proactive Continuous** (2026-11-28): Ahri messaging the user on its own and
   doing things on its own more often, rather than mostly waiting. Mind what was declined
   under "Following more kinds of things" (quotas on its messages, forced topic switches,
