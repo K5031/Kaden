@@ -31,6 +31,9 @@ Design decisions live in `.agents/notes/` as **Agent Notes**: the why and what w
 - Only for lasting decision rationale that code, tests and docs don't explain. Skip mechanical or local changes; small choices go in `.agents/decisions.md`.
 - For a new feature or a change of approach, write the proposed note before coding.
 - If a note already owns the decision, update it. Don't duplicate.
+- Every new note, and every change that ships a proposed one, starts with a supersession
+  check: search the notes for older ones on the same decision or mechanism, and update,
+  move or cross-link them in the same change.
 - Before changing architecture, adding a dependency or switching approach, search the notes. If the change contradicts an accepted decision, flag it and ask.
 
 ### Layout
@@ -62,6 +65,9 @@ Status: proposed | implemented | rejected — <one-line reason>
 - When code changes a fact an implemented note states (path, name, default), update the note in the same change. Rewrite in place, don't append history.
 - Never edit a note into a different decision. Write a new note, link both ways, and set the old one's status accordingly.
 - State current facts only. No "previously" or "no longer", no commit or PR history.
+- `tests/test_agent_notes.py` checks each note's file name, header, status against its
+  folder and that folder's sections (an implemented note has no proposal sections or
+  plan), and that relative links in `.agents/`, `docs/` and the top-level files resolve.
 
 ## Layout
 Each module is a folder named after it in the folder for its kind (`src/kaden/<kind>/<module>/`, `__init__.py` exports `factory`). Code shared by several modules of a kind sits in the kind folder, not in a module. See `docs/development.md#layout`.
