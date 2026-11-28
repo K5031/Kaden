@@ -5,6 +5,9 @@ Agent Note (`notes/proposed/`) and leaves this list.
 
 ## From the user
 
+- **Custom themes** (2026-11-28): a way to get themes beyond the built-in light and dark
+  (colours of the desktop app, and of code in replies), made by the user or by others.
+
 - **A more proactive Continuous** (2026-11-28): Ahri messaging the user on its own and
   doing things on its own more often, rather than mostly waiting. Mind what was declined
   under "Following more kinds of things" (quotas on its messages, forced topic switches,

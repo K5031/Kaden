@@ -10,12 +10,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import asyncio
 import itertools
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QEvent, QPoint, Qt
 from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QTextCursor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
@@ -73,6 +73,20 @@ def qapp() -> QApplication:
     app.setQuitOnLastWindowClosed(False)  # the launcher's setting: the runtime ends the loop
     theme.apply(app, dark=False)
     return app
+
+
+@pytest.fixture(autouse=True)
+def _close_windows() -> Iterator[None]:
+    """A test's windows end with it: one left open keeps its timers firing into the next
+    test, on objects that may be gone by then (a crash in a later processEvents)."""
+    yield
+    app = QApplication.instance()
+    if app is None:
+        return
+    for widget in app.topLevelWidgets():
+        widget.close()
+        widget.deleteLater()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 async def open_window(h: Harness) -> tuple[MainWindow, Controller, asyncio.Task[None]]:
