@@ -21,12 +21,10 @@ they cost. The user prefers matching Claude Code's design where there is one.
 
 ## Proposal
 
-Three parts, which pay off only together:
+Two parts, on top of the one-hour cache, which a Core option gives already
+(`cache_control` with `ttl = "1h"`, [settings](../../../docs/settings.md)); the timer
+runs only for a conversation whose requests carry it.
 
-- **The one-hour cache** for a conversation that opts in (a runtime setting, or
-  Continuous's): the Core's `cache_control` with `ttl = "1h"` on the conversation's
-  requests. Writes cost 2× the input price instead of 1.25×; reads stay at the cached
-  price.
 - **A summary request that reuses the conversation's cache.** The request that writes
   the summary is the conversation's own (its system prompt, tools and messages, unchanged,
   as the last request sent them) with an instruction to summarize the older part appended,
@@ -52,6 +50,9 @@ Three parts, which pay off only together:
 - **The main model's summaries without the cache reuse.** Better summaries, but each
   reads the older part at full price: about $0.36 for 75K tokens on Opus 5.5, against about
   $0.08 with a warm cache and $0.05 on Haiku.
+- **The one-hour cache alone** (a Core option). Replayed on Ahri's log (5.3 days, its
+  light-model requests priced as such), it saves about $12.70 of $48 on Opus 5.5, and about
+  $6.30 of $26 on Sonnet 5.5: most of what this proposal would save, with no new mechanism.
 - **A lower size limit, or a cheaper model for Continuous** (Continuous's own model is
   shipped). What the measurements show saves the most, for little work.
 
@@ -68,10 +69,11 @@ Three parts, which pay off only together:
 
 ## Risks
 
-- **Cost for Continuous.** Replayed on Ahri's log (4.3 days), the one-hour cache cost
-  about $2 more than the five-minute one: 230 of its wakes came within five minutes anyway,
-  and every request's new part is written at 2×. Idle compaction would have to save more
-  than that to pay off.
+- **A small saving for Continuous.** Replayed on Ahri's log (5.3 days, keeping half the
+  conversation and a 3,000-token summary), idle compaction from 100K fires 4 times and
+  saves about $5.40 beyond the one-hour cache on Opus 5.5 ($30 against $36), about $2.90
+  on Sonnet 5.5; from Claude Code's 200K it never fires, since Continuous's window is
+  150K.
 - **Summaries nobody needed:** a conversation compacted at the hour and never opened again
   paid for a summary for nothing; Claude Code accepts this.
 - **Two contract changes and a spec change** (cache-reusing summaries, requests outside

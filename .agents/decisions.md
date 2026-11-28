@@ -1012,7 +1012,7 @@ The design is in [the note](notes/implemented/2026-11-12-voice-conversation.md);
 | Choice | Decision |
 |---|---|
 | Default | Every turn request carries top-level `cache_control: {"type": "ephemeral"}` (`anthropic._cached`): the API marks the end of the request, so the next one reads the conversation so far from the cache. Measured on Opus 5.5: a second turn's 11.5k tokens of prompt cost $0.003 instead of $0.046 |
-| Not cached | The runtime's one-off requests (`InferenceRequest.maintenance`: titles, summaries, the save pass, permission reviews): nothing would read what they wrote, so they would only pay the write premium |
+| Not cached | The runtime's one-off requests (`InferenceRequest.maintenance`: titles, summaries, the save pass, permission reviews): nothing would read what they wrote, so they would only pay the write premium. A `cache_control` configured in the Core's or the model's options is dropped from them; `maintenance_options` may set one |
 | Configured | A `cache_control` in the Core's or the model's options is sent as it is (`ttl = "1h"`) |
 | Cost | Written tokens count as input at the input price; the premium (25 %, or 100 % for an hour's cache) is added as `Usage.extra_cost_usd`, from the model's input price |
 | Limit | The life and Memory's addendum are in the system prompt, which comes before the messages: when one changes, the next request writes the conversation again instead of reading it. The plan is kept out of it while the conversation shows it, and the files Memory keeps each conversation's index as it started (measured: after a memory write, the next request read its whole prompt from the cache). What remains: a new rolling summary, and the built-in notes Memory, whose index changes with every save |

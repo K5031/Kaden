@@ -277,7 +277,9 @@ thinking off and refuse the request, so use it only with a maintenance model tha
 With Claude, Kaden asks Anthropic to cache each conversation, so every request after the
 first pays about a tenth or less for what was already sent. The cache lasts five minutes
 after the last request. For work with longer pauses (Continuous, which may rest for half an
-hour between turns), keep it for an hour instead, at a higher price for the first request:
+hour between turns), keep it for an hour instead, at a higher price for writing it; for
+Continuous this cost about a quarter less. Kaden's own one-off requests (titles, summaries)
+are never cached:
 
 ```toml
 [core.options.options]

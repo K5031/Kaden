@@ -42,10 +42,13 @@ near 900K.
 - **Compact at the first request after the cache expired.** Costs nothing extra in cache
   writes, since that request writes all of it anyway, but saves a few cents per compaction
   over compacting whenever the limit is reached; the size limit is what saves.
-- **The one-hour cache for Continuous.** Replayed on Ahri's log it costs about $2 more over
-  the 4.3 days: 40 wakes came 5 to 60 minutes apart and would have stayed cached, but every
-  request writes its new part at 2× the input price instead of 1.25×, and 230 wakes came
-  within five minutes anyway.
+- **The one-hour cache in place of a window.** Replayed on Ahri's log (5.3 days, Opus 5.5)
+  it costs about a quarter less ($36 against $48): 36 wakes came 5 to 60 minutes apart and
+  read their context instead of writing it, which outweighs every request writing its new
+  part at 2× the input price instead of 1.25×. It is a Core option the user sets in
+  config.toml ([settings](../../../docs/settings.md)), which Continuous copies, and it
+  complements the window rather than replacing it: a wake more than an hour later still
+  sends all of it.
 - **A `CompactionConfig` option in tokens.** Memory's own option, but a life copies its
   parent's config.toml, and a third-party Memory refuses options it does not know, so
   Continuous could not set it for whichever Memory runs.

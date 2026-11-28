@@ -162,7 +162,7 @@ class AnthropicCore(Core):
     """`options` are merged verbatim into every request body (thinking, temperature,
     tool_choice, ...); `models` adds per-model options, context windows and prices;
     `maintenance_options` are merged over both in the runtime's own one-off requests
-    (InferenceRequest.maintenance)."""
+    (InferenceRequest.maintenance), which leave out a `cache_control` from the others."""
 
     def __init__(
         self,
@@ -245,8 +245,9 @@ class AnthropicCore(Core):
     async def stream(self, request: InferenceRequest) -> AsyncIterator[CoreEvent]:
         ours = self._search  # the request's WebSearch is this Core's while search is on
         options = request_options(self._options, self._models.get(request.model))
-        if request.maintenance:
-            options = {**options, **self._maintenance_options}
+        if request.maintenance:  # the conversations' cache setting is not for one-off requests
+            options = ({k: v for k, v in options.items() if k != "cache_control"}
+                       | self._maintenance_options)
         extra_body = _cached(_thinking_shown(request.model, options), request)
         paused: list[JSON] = []  # what the turn had when the API paused it, sent back
 

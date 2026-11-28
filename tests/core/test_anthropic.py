@@ -510,6 +510,8 @@ async def test_maintenance_options_apply_only_to_maintenance(
      {"type": "ephemeral", "ttl": "1h"}),
     # A one-off request (a title, a summary, a review): nothing would read what it wrote.
     ({}, True, None),
+    # Nor with the conversations' cache configured: an hour's would cost twice the input.
+    ({"cache_control": {"type": "ephemeral", "ttl": "1h"}}, True, None),
 ])
 async def test_a_conversation_is_cached_by_default(
         options: dict, maintenance: bool, sent: dict | None) -> None:
