@@ -11,9 +11,6 @@ Agent Note (`notes/proposed/`) and leaves this list.
 
 ## From the user
 
-- **More of the industry's prompt pieces** (2026-11-28), after the working guidance,
-  project instruction files and the environment block: a coding skill (small diffs, tests,
-  git); richer tool descriptions; and a few repeatable tasks to judge prompt changes by.
 
 - **A more proactive Continuous** (2026-11-28): Ahri messaging the user on its own and
   doing things on its own more often, rather than mostly waiting. Mind what was declined

@@ -1276,3 +1276,13 @@ proposals never hold a conversation and are left alone.
 | A life's home by a relative path | `protected` also leaves out the work folder's path below the data folder's parent (`.kaden/life/home/…`), as whole path segments and not climbing out; not its bare name below the data folder, which `/home/<user>` would also match |
 | Flaky tests | `test_a_subagents_changes_stay_in_its_worktree` and one desktop window test failed only while four other sessions ran test suites on the same machine; neither failed in six full runs here, at 8 and 16 workers. Left as they are until a failure can be read |
 
+## Evaluations
+
+`evals/run.py`: each task in a temporary git repository (its commit tagged `eval-base`, what
+changed measured from it, committed or not) and a temporary data folder made from the
+user's (`child.settings_of`), without `mcp_servers`, `always_allow`, `never_allow`,
+`base_prompt`, `tool_settings`, config.toml's hooks and the user's prompt; permissions
+`allow_workspace`, `max_cost_usd` 1 by default (a total for the fresh folder), 900 s a task,
+120 s a check. Done when the child has worked (a busy `StateChanged` heard) and is idle with
+nothing running or queued; any prompt but a proposal ends the run as failed ("it asked"),
+and so does the child's process ending. The reply is all its text after the task was sent.

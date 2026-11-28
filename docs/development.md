@@ -118,6 +118,28 @@ KADEN_TEST_LOOP=qasync uv run pytest tests/test_runtime.py
 On Python 3.15, `tests/test_commands.py` hangs and `tests/core/test_openai_compat.py`
 crashes on this loop; on 3.13 every file passes.
 
+## Evaluating prompt and tool changes
+
+Tests run on a scripted model; whether a change to Kaden's guidance, skills or tool
+descriptions makes the real model work better is measured by `evals/`: a few small coding
+tasks, each a throwaway repository, what to ask, and a check of what Kaden did (the tests
+pass, only the right files changed, the project's rules followed, a brief answer).
+
+```bash
+uv run python -m evals.run                      # every task, the configured model
+uv run python -m evals.run --tasks fix-a-bug --runs 3 --model claude-sonnet-5-5
+```
+
+Kaden runs headless in a temporary data folder with your model and keys, but none of your
+own instructions, base prompt, tool servers, saved answers, tools' settings or hooks, so
+runs measure Kaden itself. It may change the task's folder without asking, spends at most
+`--budget` dollars a task (1), and a question it asks fails the task at once, since nobody
+answers. It needs the command sandbox (bubblewrap on Linux) and does not run inside a Kaden
+session's shell. The checks run the code Kaden wrote, outside the sandbox, with your
+rights. It costs real money: run it before and after such a change, a few runs each, rather
+than on every commit. A task is a folder in `evals/tasks/` with
+`repo/`, `task.md` and `check.py` (`check(repo, reply)` returns the problems found).
+
 ## Desktop bundles
 
 [Briefcase](https://briefcase.beeware.org/) builds them from `[tool.briefcase]` in
