@@ -5,10 +5,11 @@ model.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable
 from functools import partial
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -27,6 +28,7 @@ from kaden.frontends.desktop.messages import (
     ToolCard,
     UserBubble,
     WrapUpCard,
+    duration,
 )
 from kaden.frontends.desktop.prompts import (
     AnyPromptCard,
@@ -99,6 +101,8 @@ class ConversationView(QScrollArea):
         outer.addLayout(self.items_layout)
         self.waiting_line = text_label("Thinking…", selectable=False, tone="muted")
         self.waiting_line.hide()
+        self.waiting_timer = QTimer(self, interval=1000)  # its seconds, as they pass
+        self.waiting_timer.timeout.connect(self.tick_waiting)
         outer.addWidget(self.waiting_line)
         outer.addWidget(self.empty_state, 1)
         outer.addStretch()
@@ -165,9 +169,22 @@ class ConversationView(QScrollArea):
         """How the conversation stands: whether the agent thinks, whether there is more
         above, and whether nothing was said yet."""
         self.waiting_line.setVisible(self.model.waiting)
+        self.tick_waiting()
         self._show_empty_state()
         self.load_earlier.setVisible(self.model.has_earlier)
         self.load_earlier.setEnabled(True)
+
+    def tick_waiting(self) -> None:
+        """"Thinking… 4s" while the model is asked and nothing of it shows, counting."""
+        if not self.model.waiting:
+            self.waiting_timer.stop()
+            return
+        since = self.model.thinking_since
+        elapsed = time.monotonic() - since if since is not None else 0.0
+        self.waiting_line.setText(
+            f"Thinking… {duration(elapsed)}" if elapsed >= 1 else "Thinking…")
+        if not self.waiting_timer.isActive():
+            self.waiting_timer.start()
 
     def _widget_for(self, item: Item) -> QWidget:
         match item:

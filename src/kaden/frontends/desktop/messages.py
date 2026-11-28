@@ -92,7 +92,7 @@ TOOL_TONES = {ToolStatus.OK: "ok", ToolStatus.ERROR: "error", ToolStatus.ABANDON
               ToolStatus.TIMED_OUT: "warning", ToolStatus.INTERRUPTED: "warning"}
 
 
-def _duration(seconds: float) -> str:
+def duration(seconds: float) -> str:
     """"4s", "1m 5s"."""
     minutes, rest = divmod(max(1, round(seconds)), 60)
     return f"{minutes}m {rest}s" if minutes else f"{rest}s"
@@ -100,7 +100,7 @@ def _duration(seconds: float) -> str:
 
 def _thought(seconds: float | None) -> str:
     """The thinking line once the thinking is over: "Thought for 4s"."""
-    return "Thought" if seconds is None else f"Thought for {_duration(seconds)}"
+    return "Thought" if seconds is None else f"Thought for {duration(seconds)}"
 
 
 # ── transcript widgets ────────────────────────────────────────────────────
@@ -514,7 +514,7 @@ class AssistantBubble(QWidget):
         thinking = bool(item.reasoning) and not item.final and not item.text
         if thinking and item.thinking_since is not None:
             self.thinking.setText(
-                f"Thinking… {_duration(time.monotonic() - item.thinking_since)}")
+                f"Thinking… {duration(time.monotonic() - item.thinking_since)}")
         else:
             self.thinking.setText("Thinking…" if thinking else _thought(item.thought_s))
         if thinking and item.thinking_since is not None:

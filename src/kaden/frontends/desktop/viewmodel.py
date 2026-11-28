@@ -359,6 +359,9 @@ class ConversationModel:
         self.help_needed: str | None = None
         self.permissions: PermissionPolicy | None = None  # what the agent may do
         self.failure: Failure | None = None  # shown as a banner until the next cycle
+        # time.monotonic() when the model was last asked for its next step (THINKING):
+        # its seconds count from here, before any of its thinking streams.
+        self.thinking_since: float | None = None
         self.has_earlier = False
         self.closed = False
         self.titles: dict[str, str] = {}  # the tools' titles by name (ToolSpec.title)
@@ -427,6 +430,8 @@ class ConversationModel:
         self._seen.clear()
         self.last_seq = snapshot.seq
         self.state = snapshot.state
+        # Opened while it thinks: counted from now, since when it began is not known.
+        self.thinking_since = time.monotonic() if snapshot.state is AgentState.THINKING else None
         self.conversation = snapshot.conversation
         self.model = snapshot.model
         self.usage = snapshot.usage
@@ -477,6 +482,7 @@ class ConversationModel:
             case StateChanged(state=state):
                 if state is AgentState.THINKING and self.state is not AgentState.THINKING:
                     self.failure = None
+                    self.thinking_since = time.monotonic()
                 self.state = state
                 if not self.busy:
                     self._drop_plan()
@@ -706,16 +712,20 @@ class ConversationModel:
                 before.hidden = True
                 self.on_change(Updated(before))
             self._stream.append(self._add(
-                AssistantItem(reasoning=text, thinking_since=time.monotonic()) if reasoning
-                else AssistantItem(text)))
+                AssistantItem(reasoning=text, thinking_since=self._thought_from())
+                if reasoning else AssistantItem(text)))
             return
         if reasoning:
             if not tail.reasoning:
-                tail.thinking_since = time.monotonic()
+                tail.thinking_since = self._thought_from()
             tail.reasoning += text
         else:
             tail.text += text
         self.on_change(Updated(tail))
+
+    def _thought_from(self) -> float:
+        """When the thinking now streaming began: when the model was asked, if it was."""
+        return self.thinking_since if self.thinking_since is not None else time.monotonic()
 
     def _thinking(self) -> AssistantItem | None:
         """The committed thinking, without a reply, that the next item would follow: what

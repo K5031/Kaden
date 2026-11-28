@@ -13,6 +13,7 @@ import json
 import shutil
 import time
 from collections.abc import Callable, Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -2002,6 +2003,35 @@ async def test_a_line_says_kaden_is_thinking_before_anything_streams(make, qapp)
     assert window.conversation.waiting_line.isHidden()  # the reply's own Thinking… line shows now
     controller.model.apply(StateChanged(AgentState.IDLE))
     assert window.conversation.waiting_line.isHidden()
+
+
+async def test_thinking_counts_its_seconds_from_when_it_began(make, qapp):
+    """The seconds count from when the model was asked, before any of its thinking
+    streams (a summary of it may come only at the end), and go on in the reply's line."""
+    from kaden.api import ReasoningDelta, StateChanged
+
+    h = await make()
+    await h.start()
+    window, controller, _ = await open_window(h)
+    model, line = controller.model, window.conversation.waiting_line
+    model.apply(StateChanged(AgentState.THINKING))
+    assert model.thinking_since is not None
+    model.thinking_since -= 5  # five seconds on
+    window.conversation.tick_waiting()
+    assert line.text() == "Thinking… 5s"
+    assert window.conversation.waiting_timer.isActive()
+    model.apply(ReasoningDelta("Looking at the files"))
+    reply = next(i for i in model.items if isinstance(i, AssistantItem))
+    assert reply.thinking_since == model.thinking_since  # the same start, not a new one
+    model.apply(StateChanged(AgentState.IDLE))
+    window.conversation.refresh()
+    assert not window.conversation.waiting_timer.isActive()
+    # A view opened while it already thinks counts from when it opened.
+    snapshot = h.runtime.snapshot()
+    model.load(replace(snapshot, state=AgentState.THINKING), [])
+    assert model.thinking_since is not None
+    model.load(replace(snapshot, state=AgentState.IDLE), [])
+    assert model.thinking_since is None
 
 
 def test_thinking_says_so_while_it_streams(qapp):
