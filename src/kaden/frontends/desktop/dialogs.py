@@ -1,4 +1,4 @@
-"""Dialogs: long-term memory, notes, Continuous's journal and life, saved answers, a
+"""Dialogs: long-term memory, notes, Continuous's life, saved answers, a
 duty, and the welcome.
 
 Dialogs use open() and signals, never exec(): exec() would run a nested event loop inside
@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QStackedWidget,
-    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -206,30 +205,6 @@ class NoteDialog(QDialog):
             self.title.text(), self.description.text(), self.text.toPlainText(),
             self.note.id if self.note else None, failed=failed,
             done=lambda _: self.accept())
-
-
-class JournalDialog(QDialog):
-    """The life's journal, as it is when opened: what it wrote of its days."""
-
-    def __init__(self, parent: QWidget, name: str) -> None:
-        super().__init__(parent)
-        self.setWindowTitle(f"{name}'s journal")
-        self.resize(640, 560)
-        column = QVBoxLayout(self)
-        column.setContentsMargins(20, 18, 20, 16)
-        column.addWidget(text_label(f"{name}'s journal", selectable=False, role="heading"))
-        self.page = QTextBrowser()
-        self.page.setOpenExternalLinks(True)
-        column.addWidget(self.page, 1)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(self.reject)
-        column.addWidget(buttons)
-
-    def show_text(self, text: str) -> None:
-        if text.strip():
-            self.page.setMarkdown(text)
-        else:
-            self.page.setPlainText("Nothing written yet.")
 
 
 class LifeDialog(QDialog):

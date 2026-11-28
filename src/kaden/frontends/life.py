@@ -47,7 +47,6 @@ HOME = "home"  # its own work folder, in its data folder
 # all of it again: what is sent is kept to this many tokens (about two days of it stay
 # word for word).
 COMPACT_WINDOW = 150_000
-JOURNAL = "journal.md"  # in its folder: what the user reads of its days, in its view
 NAME = "Kaden"  # until the user names it
 OWN = ("You live on the user's computer: not their assistant, someone with a life of "
        "your own.")
@@ -55,8 +54,7 @@ UNSAID = "Who you are beyond that is yours to find out."  # when the user says n
 # Its base prompt, in place of the work chats' (an assistant's) and the user's
 # instructions for them: who it is comes from its life (Life.who).
 PROMPT = ("You have a life of your own on this computer, and tools to live it: its shell, "
-          f"files, the web. The user can read {JOURNAL} in your folder, as your journal, "
-          "where they talk with you.\n" + TOOL_FACTS)
+          "files, the web. The user can see the files in your folder.\n" + TOOL_FACTS)
 # Its shortest wait between turns, and the furthest ahead a time it chooses to wake at may
 # be (Rest, a due time in its plan). Nothing else of Kaden's wakes it.
 PACE_S = (60.0, 86_400.0)
@@ -116,16 +114,10 @@ class Life:
         live = self._live
         return live.snapshot() if live is not None and live.attached else None
 
-    async def read_journal(self) -> str:
-        """Its journal as it is now; "" before it writes one."""
-        path = self.folder / HOME / JOURNAL
-
-        def read() -> str:
-            try:
-                return path.read_text(encoding="utf-8")
-            except FileNotFoundError:
-                return ""
-        return await asyncio.to_thread(read)
+    @property
+    def home(self) -> Path:
+        """Its own folder, its work folder: what it keeps there, the user can see."""
+        return self.folder / HOME
 
     def take_questions(self) -> list[Prompt]:
         """What it began to wait on the user for (a permission, a question) since this was
@@ -159,7 +151,7 @@ class Life:
         # is the user's, and so are its answers; its permission level follows theirs.
         env = {k: v for k, v in os.environ.items() if k != PERMISSION_CEILING_ENV}
         live = self._live = await child.spawn(
-            self.command, self.folder, cwd=self.folder / HOME,
+            self.command, self.folder, cwd=self.home,
             conversation_id=self.conversation_id, env=env, on_event=self._event)
         try:
             if self.conversation_id is None:
@@ -246,7 +238,7 @@ class Life:
 
     def _prepare(self) -> None:
         """Its data folder: the app's configuration, its daily amount, its own home."""
-        (self.folder / HOME).mkdir(parents=True, exist_ok=True)
+        self.home.mkdir(parents=True, exist_ok=True)
         settings = child.settings_of(self.parent_dir, self.folder)
         # What the user said in its own view is its own (saved in its folder), not the
         # chats': its tool settings, and what it may always or never do.
@@ -259,7 +251,7 @@ class Life:
         self._own_model = settings.get("maintenance_model") or None
         settings["budget"] = ({} if self.daily_usd is None
                               else {"max_cost_usd_per_day": self.daily_usd})
-        settings["work_folder"] = str(self.folder / HOME)
+        settings["work_folder"] = str(self.home)
         settings["system_prompt"] = PROMPT
         settings["compact_window"] = COMPACT_WINDOW
         child.write_settings(self.folder / "settings.toml", settings)

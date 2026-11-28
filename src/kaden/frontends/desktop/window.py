@@ -80,7 +80,6 @@ from kaden.frontends.desktop.composer import AttachmentStrip, MessageBox
 from kaden.frontends.desktop.conversation import ConversationView
 from kaden.frontends.desktop.dialogs import (
     DutyDialog,
-    JournalDialog,
     LifeDialog,
     MemoryDialog,
     WelcomeDialog,
@@ -233,7 +232,6 @@ class MainWindow(QMainWindow):
         controller.ask_for_folder = self._offer_folders
         self.life = life  # the one who lives on, hosted by the app
         self.life_dialog: LifeDialog | None = None
-        self.journal_dialog: JournalDialog | None = None
         # With a system tray, closing the window hides it and Kaden runs on; quit() quits.
         self.tray = Tray(self, self.bring_forward, self.quit) if tray else None
         if self.tray is not None:
@@ -386,21 +384,21 @@ class MainWindow(QMainWindow):
         self.view_menu_button.setAccessibleName("Menu")
         self.view_menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.view_menu_button.hide()
-        self.journal_button = QToolButton(text="Journal")
-        self.journal_button.setToolTip("What they wrote of their days")
-        self.journal_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.journal_button.clicked.connect(self.open_journal)
-        self.journal_button.hide()
+        self.files_button = QToolButton(text="Files")
+        self.files_button.setToolTip("Open their folder: what they keep there")
+        self.files_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.files_button.clicked.connect(self.open_files)
+        self.files_button.hide()
         titles.addWidget(self.view_menu_button)
         titles.addWidget(self.title_label, 100)  # a chat's title takes the room there is
-        # The life's name in its view, as wide as it is, so Journal follows it.
+        # The life's name in its view, as wide as it is, so Files follows it.
         self.life_name = QLabel()
         self.life_name.setProperty("role", "header")
         self.life_name.hide()
         titles.addWidget(self.life_name)
         # As tall in both views, so the Continuous switch keeps its place.
         self.title_label.setMinimumHeight(self.view_menu_button.sizeHint().height())
-        titles.addWidget(self.journal_button)
+        titles.addWidget(self.files_button)
         titles.addStretch(1)
         titles.addWidget(self.duty_label)
         head.addLayout(titles, 1)
@@ -1260,7 +1258,7 @@ class MainWindow(QMainWindow):
         self.sidebar.setVisible(not on)
         self.title_label.setVisible(not on)
         for widget in (self.life_name, self.view_menu_button,
-                       self.journal_button, self.view_gear_button, self._gear_balance):
+                       self.files_button, self.view_gear_button, self._gear_balance):
             widget.setVisible(on)
         self._gear_balance.setFixedWidth(self.view_gear_button.sizeHint().width())
         self.waking.setVisible(waking)
@@ -1312,15 +1310,17 @@ class MainWindow(QMainWindow):
                            asyncio.create_task(controller.run())))
         self._life_frame(True)
 
-    def open_journal(self) -> None:
-        life = self.life
-        assert life is not None
-        dialog = self.journal_dialog = JournalDialog(self, life.name)
-        dialog.open()
+    def open_files(self) -> None:
+        """Its folder, in the user's own file manager; made first, since it is only made
+        as the life first starts."""
+        assert self.life is not None
+        folder = self.life.home
 
-        async def fill() -> None:
-            dialog.show_text(await life.read_journal())
-        self.home.command(fill())
+        async def open_folder() -> None:
+            await asyncio.to_thread(folder.mkdir, parents=True, exist_ok=True)
+            if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder))):
+                QMessageBox.warning(self, "Kaden", f"Could not open their folder, {folder}.")
+        self.home.command(open_folder())
 
     def _notify_new_prompts(self) -> None:
         prompts = self.home.model.prompts

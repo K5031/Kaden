@@ -11,6 +11,7 @@ import asyncio
 import itertools
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -2288,10 +2289,7 @@ class FakeLife:
         self.name, self.about = name, about
 
 
-    async def read_journal(self) -> str:
-        return self.journal
-
-    journal = ""
+    home = Path("/nowhere/home")
 
     @property
     def running(self) -> bool:
@@ -2348,14 +2346,14 @@ async def test_the_life_takes_over_the_window_and_gives_it_back(make, qapp):
         return lambda: (qapp.processEvents(), check())[1]
     await eventually(laid_out(
         lambda: switch.mapTo(window, switch.rect().center()).y() == switch_at.y()))
-    # Its name is the title, whole, with Journal after it.
+    # Its name is the title, whole, with Files after it.
     name = window.life_name
     assert window.title_label.isHidden()
     await eventually(laid_out(lambda: name.text() == "Kaden" and name.width()
                               >= name.fontMetrics().horizontalAdvance("Kaden")))
-    def gap() -> int:  # from its name to Journal
-        journal = window.journal_button
-        return (journal.mapTo(window, journal.rect().topLeft()).x()
+    def gap() -> int:  # from its name to Files
+        files = window.files_button
+        return (files.mapTo(window, files.rect().topLeft()).x()
                 - name.mapTo(window, name.rect().topRight()).x())
     await eventually(laid_out(lambda: gap() < 20))
     assert window.controller is not window.home  # the message box talks to it
@@ -2486,7 +2484,8 @@ async def test_its_view_is_on_screen_at_once_while_it_wakes(make, qapp):
 
 
 
-async def test_the_lifes_view_shows_what_it_is_doing_and_its_journal(make, qapp):
+async def test_the_lifes_view_shows_what_it_is_doing_and_opens_its_folder(make, qapp,
+                                                                         monkeypatch):
     h: Harness = await make()
     await h.start()
     them: Harness = await make()
@@ -2495,7 +2494,9 @@ async def test_the_lifes_view_shows_what_it_is_doing_and_its_journal(make, qapp)
                   Step(text=""))
     await them.start()
     life = FakeLife(them.runtime)
-    life.journal = "# Monday\n\nFound an old map of Kyoto."
+    opened: list[str] = []
+    monkeypatch.setattr(window_module.QDesktopServices, "openUrl",
+                        lambda url: opened.append(url.toLocalFile()) or True)
     controller = Controller(h.runtime, ConversationModel())
     window = MainWindow(h.runtime, controller, life=life)
     asyncio.create_task(controller.run())
@@ -2504,14 +2505,14 @@ async def test_the_lifes_view_shows_what_it_is_doing_and_its_journal(make, qapp)
     await eventually(lambda: window.showing_life)
     await them.runtime.activate()  # it does something by itself
     await eventually(lambda: window.duty_label.text() == "Reading about fox legends")
-    assert window.journal_button.isVisibleTo(window)
-    window.journal_button.click()
-    journal = await eventually(lambda: window.journal_dialog)
-    await eventually(lambda: "old map of Kyoto" in journal.page.toPlainText())
-    journal.reject()
+    assert window.files_button.isVisibleTo(window)
+    life.home = them.data_dir / "life-home"  # not made yet: opening it makes it
+    window.files_button.click()  # its folder, in the user's own file manager
+    await eventually(lambda: opened == [str(life.home)])
+    assert life.home.is_dir()
     window.continuous_switch.click()
     await eventually(lambda: not window.showing_life)
-    assert not window.journal_button.isVisibleTo(window)
+    assert not window.files_button.isVisibleTo(window)
 
 
 async def test_closing_hides_to_the_tray_and_quit_quits(make, qapp):

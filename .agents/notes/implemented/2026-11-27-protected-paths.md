@@ -13,7 +13,7 @@ or the work folder's shortcut, though the docs say such calls "always" ask
 ([P9](../../contract-issues.md)). Checking it on those paths too does not work: it matches
 words anywhere in the arguments, file contents and search text included, and
 the data folder by its bare name, so Continuous (data folder `life`) would ask before
-writing "my life" in its journal.
+writing "my life" in a file of its own.
 
 The user's rule for Kaden's permissions is that the less it asks, the better, and that
 Kaden should do as Claude Code does. Claude Code has no built-in rule for reading secrets

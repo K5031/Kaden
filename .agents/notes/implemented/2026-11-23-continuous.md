@@ -34,7 +34,8 @@ conversation, usage and settings are its own, so it never sees the user's chats 
 memory, and they never see its life. Its view is the window's own, on that runtime,
 without the chat list: its name, the step it is on as the status line (nothing while it
 rests: when it wakes next is not shown, which would make it a timer),
-Journal for `home/journal.md`; its name and who it is are in its settings (the gear). While its process starts, the view says so.
+Files, which opens its folder (`home/`) in the user's file manager; its name and who it is
+are in its settings (the gear). While its process starts, the view says so.
 
 ### Its life
 
@@ -54,14 +55,15 @@ Journal for `home/journal.md`; its name and who it is are in its settings (the g
 - **Who it is** is the user's: a name and, if they like, who they are; left empty, it is
   theirs to find out. The user can change it at any time.
 - **Its own prompt** (`life.PROMPT`): that it has a life of its own and tools to live it,
-  that the user can read its journal, then Kaden's facts about its tools. Not the chats'
+  that the user can see the files in its folder (no file is named: a named journal would
+  suggest the habit of keeping one), then Kaden's facts about its tools. Not the chats'
   (an assistant's), nor the user's instructions for them.
 - **Its own time costs at most a daily amount** (US$1 until the user sets another in its
   settings, or none), on the user's cheaper model;
   talking with the user does not count toward it and is answered with their chosen model.
 
 Nothing else shapes what it does: abilities (its tools, its folder, the web, Bilibili)
-and facts (the user reads its journal), never routines, quotas, schedules or moods.
+and facts (the user can see its folder), never routines, quotas, schedules or moods.
 
 ## Alternatives considered
 

@@ -122,18 +122,18 @@ async def test_starting_it_twice_at_once_starts_one_life(tmp_path, child_env):
         await life.aclose()
 
 
-async def test_it_keeps_a_journal_the_user_can_read(tmp_path, child_env):
-    """Its prompt says the user reads journal.md in its folder; the app reads it there."""
+async def test_the_user_can_see_its_folder_and_no_file_is_named_for_it(tmp_path, child_env):
+    """Its prompt says the user can see the files in its folder, and names none: what it
+    keeps there, a journal or anything else, is its own choice."""
     data = home(tmp_path, [{"text": ""}])
     life = Life(data, pace_s=(0.05, 30))
     try:
         await life.start()
         await eventually(lambda: life.snapshot)
         settings = tomllib.loads((data / "life" / "settings.toml").read_text())
-        assert "journal.md" in settings["system_prompt"]
-        assert await life.read_journal() == ""  # nothing written yet
-        (data / "life" / "home" / "journal.md").write_text("Found an old map today.")
-        assert await life.read_journal() == "Found an old map today."
+        assert "The user can see the files in your folder" in settings["system_prompt"]
+        assert "journal" not in settings["system_prompt"].lower()
+        assert life.home == data / "life" / "home" == Path(settings["work_folder"])
     finally:
         await life.aclose()
 

@@ -95,9 +95,9 @@ closed it.
 - **They don't wait long on you.** A permission or a question they put to you closes by
   itself after 3 minutes without an answer, and they go on without it.
 - **You can see what they are up to.** While they do something, the line at the top of
-  their view says what (say, "Search the web for fox legends"), and **Journal** next to
-  their name shows `journal.md` in their folder: they know you can read it, and what they
-  write of their days is up to them.
+  their view says what (say, "Search the web for fox legends"), and **Files** next to
+  their name opens their folder: they know you can see it, and what they keep there is up
+  to them.
 - **They talk to you when they want to.** Something they tell you by themselves shows in
   the chat you are in; replies to what you say stay in their view.
 - **They are apart from your chats, both ways.** They never see your conversations or
