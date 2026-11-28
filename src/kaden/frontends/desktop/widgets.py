@@ -97,10 +97,18 @@ class ElidedLabel(QLabel):
 
 
 class Switch(QCheckBox):
-    """A check box drawn as a sliding switch."""
+    """A check box drawn as a sliding switch; a dot on it while `unseen` (something new
+    behind it, as a messaging app's)."""
 
     TRACK = QSize(30, 18)
     GAP = 8
+    DOT = 7.0
+    unseen = False
+
+    def set_unseen(self, unseen: bool) -> None:
+        if unseen != self.unseen:
+            self.unseen = unseen
+            self.update()
 
     def sizeHint(self) -> QSize:
         metrics = self.fontMetrics()
@@ -133,6 +141,11 @@ class Switch(QCheckBox):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor("#FFFFFF"))
         painter.drawEllipse(QRectF(x, track.y() + 2, knob, knob))
+        if self.unseen:  # at the track's top right corner, ringed in the background
+            painter.setPen(QPen(QColor(colors.bg), 1.5))
+            painter.setBrush(QColor(colors.accent))
+            painter.drawEllipse(QRectF(track.right() - self.DOT + 1, track.top() - 2,
+                                       self.DOT, self.DOT))
         painter.setPen(QColor(colors.text if self.isEnabled() else colors.muted))
         painter.drawText(QRectF(width + self.GAP, 0, self.width() - width - self.GAP,
                                 self.height()), Qt.AlignmentFlag.AlignVCenter, self.text())

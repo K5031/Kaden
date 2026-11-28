@@ -2375,21 +2375,39 @@ async def test_the_life_takes_over_the_window_and_gives_it_back(make, qapp):
     window.hide()
 
 
-async def test_what_the_life_says_by_itself_shows_in_the_chat_on_screen(make, qapp):
+async def test_what_the_life_says_by_itself_is_a_dot_not_a_notice_in_a_chat(make, qapp):
+    """Its words stay in its own view: elsewhere a dot on the Continuous switch says it
+    said something, and a notification when the window is not in front; its view clears
+    the dot."""
     h: Harness = await make()
     await h.start()
     them: Harness = await make()
     await them.start()
     life = FakeLife(them.runtime)
+    life.name = "Ahri"
     controller = Controller(h.runtime, ConversationModel())
     window = MainWindow(h.runtime, controller, life=life)
+    tray = window.tray = FakeTray()  # type: ignore[assignment]
     asyncio.create_task(controller.run())
     await eventually(lambda: controller.caught_up(h.runtime.snapshot().seq))
+    assert not window.continuous_switch.unseen
     life.said.append("I found an old map of Kyoto!")
     for listener in life.listeners:
         listener()
-    await eventually(lambda: any("I found an old map of Kyoto!" in n.text
-                                 for n in window.model.items if isinstance(n, NoticeItem)))
+    assert window.continuous_switch.unseen
+    assert not any(isinstance(n, NoticeItem) for n in window.model.items)  # not in a chat
+    assert tray.shown == [("Ahri", "I found an old map of Kyoto!")]  # window not in front
+    life.said.extend(["One.", "Two."])  # a burst: one notification, its newest words
+    for listener in life.listeners:
+        listener()
+    assert tray.shown[-1] == ("Ahri (2 new)", "Two.")
+    window.continuous_switch.click()
+    assert not window.continuous_switch.unseen
+    life.said.append("Said while its view comes up")
+    for listener in life.listeners:
+        listener()
+    assert not window.continuous_switch.unseen  # they are there already
+    await eventually(lambda: window.showing_life)
 
 
 async def test_the_user_names_the_life_before_it_first_lives(make, qapp):
@@ -2432,8 +2450,8 @@ async def test_the_user_names_the_life_before_it_first_lives(make, qapp):
     assert window.input.placeholderText() == "Message Kaden"
     for listener in life.listeners:
         listener()
-    await eventually(lambda: any(n.text == "Mira Fox: Look at this map!"
-                                 for n in window.model.items if isinstance(n, NoticeItem)))
+    assert window.continuous_switch.unseen  # a dot, not a notice in the chat
+    assert not any(isinstance(n, NoticeItem) for n in window.model.items)
 
 
 async def test_its_view_is_on_screen_at_once_while_it_wakes(make, qapp):

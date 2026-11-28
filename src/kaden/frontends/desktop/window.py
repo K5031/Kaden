@@ -1332,6 +1332,8 @@ class MainWindow(QMainWindow):
         if on and self.life is not None and not self.life.has_lived:
             self._name_life()  # its name and who it is, first
             return
+        if on:
+            self.continuous_switch.set_unseen(False)  # what it said is in its view
         self._life_frame(on, waking=on)  # at once, before its process answers
         self.home.command(self._show_life(on))
 
@@ -1432,17 +1434,21 @@ class MainWindow(QMainWindow):
             self.continuous_switch.setChecked(True)
 
     def _life_said(self) -> None:
-        """What the life said by itself: in its own view it is in the conversation;
-        elsewhere a notice in the chat on screen. What it asks the user is a notification
-        when the window is not in front."""
+        """What the life said by itself stays in its own view. Elsewhere a dot on the
+        Continuous switch says there is something new there, and a notification shows
+        it when the window is not in front; what it asks the user is one too."""
         if self.life is None:
             return
         for prompt in self.life.take_questions():
             self._notify(self.life.name, prompt, life=True)
-        if self.showing_life:
+        said = self.life.take_messages()
+        if self._life_on or not said:  # its view is up, or coming up: they are there
             return
-        for text in self.life.take_messages():
-            self.model.notify(f"{self.life.name}: {text}")
+        self.continuous_switch.set_unseen(True)
+        if self.tray is not None and not (self.isActiveWindow() and not self.isMinimized()):
+            self._notified_life = True  # one notification for a burst: its newest words
+            title = self.life.name + (f" ({len(said)} new)" if len(said) > 1 else "")
+            self.tray.showMessage(title, said[-1], QIcon(str(app_menu.ICON)), 10_000)
 
     def open_tool_servers(self) -> None:
         self.open_settings("Tool servers")

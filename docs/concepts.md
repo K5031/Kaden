@@ -71,8 +71,9 @@ closed it.
   their view says what (say, "Search the web for fox legends"), and **Files** next to
   their name opens their folder: they know you can see it, and what they keep there is up
   to them.
-- **They talk to you when they want to.** Something they tell you by themselves shows in
-  the chat you are in; replies to what you say stay in their view.
+- **They talk to you when they want to.** What they say stays in their view. While you
+  are in your chats, a dot on the **Continuous** switch says they said something, and a
+  notification shows it when the window is not in front; opening their view clears it.
 - **They are apart from your chats, both ways.** They never see your conversations or
   their memory, and your chats never see their life. They know what you tell them, and
   have a folder of their own to work in. What you always or never allow in their view is

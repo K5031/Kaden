@@ -23,7 +23,9 @@ have to hold.
 The **Continuous** switch in the title bar, in the same place in both views, turns the
 whole window between the user's chats and the life's view; it is the one way between
 them. It changes what is shown, not what runs: the life goes on while the chats are up,
-and what it says by itself shows there as a notice. Someone who wants an agent to talk
+and what it says by itself stays in its view: a dot on the switch says there is something
+new, and a notification shows it when the window is not in front. Notices in the chat on
+screen mixed its words into an unrelated conversation. Someone who wants an agent to talk
 with wants both: the one who is always there, and fresh sessions for work.
 
 ### Its own instance
