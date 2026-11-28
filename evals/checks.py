@@ -36,14 +36,24 @@ def tests_pass(repo: Path) -> bool:
 
 def call(repo: Path, module: str, function: str, *args: Any) -> Any:
     """`module.function(*args)` from `repo`, in a process of its own; None when it fails."""
-    code = ("import json, sys; sys.path.insert(0, sys.argv[1]); "
-            f"from {module} import {function} as f; "
-            "print(json.dumps(f(*json.loads(sys.argv[2]))))")
+    return evaluate(repo, f"from {module} import {function} as f",
+                    f"f(*json.loads({json.dumps(json.dumps(args))}))")
+
+
+def evaluate(repo: Path, imports: str, expression: str) -> Any:
+    """The value of `expression` after `imports`, run in `repo` in a process of its own, as
+    JSON (its output's last line: what the code prints comes before); None when it fails."""
+    code = ("import json, sys; sys.path.insert(0, sys.argv[1]); " + imports + "; "
+            f"print(json.dumps({expression}))")
     try:
-        run = subprocess.run([sys.executable, "-c", code, str(repo), json.dumps(args)],
+        run = subprocess.run([sys.executable, "-c", code, str(repo)], cwd=repo,
                              capture_output=True, text=True, timeout=TIMEOUT_S, check=False)
     except subprocess.TimeoutExpired:
         return None
-    if run.returncode != 0:
+    lines = run.stdout.strip().splitlines()
+    if run.returncode != 0 or not lines:
         return None
-    return json.loads(run.stdout)
+    try:
+        return json.loads(lines[-1])
+    except ValueError:
+        return None

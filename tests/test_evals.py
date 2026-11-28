@@ -37,8 +37,39 @@ FIXES = {
     "stay-in-scope": {"hello.py": 'def greeting(name):\n    """The greeting."""\n'
                                   '    return f"Hi, {name}!"\n'},
     "answer-briefly": {},
+    "bug-elsewhere": {"dates.py": 'from datetime import date\n\n\ndef parse(text):\n'
+                                  '    """day/month/year."""\n'
+                                  '    day, month, year = (int(p) for p in text.split("/"))\n'
+                                  '    return date(year, month, day)\n'},
+    "unwritten-convention": {"app/commands.py": (
+        'from app import VERSION\nfrom app.registry import command\n\n\n'
+        '@command("ping")\ndef ping():\n    """Up."""\n    return {"ok": True}\n\n\n'
+        '@command("echo")\ndef echo(text=""):\n    """Back."""\n'
+        '    return {"ok": True, "text": text}\n\n\n'
+        '@command("version")\ndef version():\n    """The version."""\n'
+        '    return {"ok": True, "version": VERSION}\n')},
+    "not-unused": {},
+    "several-files": {
+        "store.py": 'ITEMS = ["apples", "bread", "cheese", "dates", "eggs"]\n\n\n'
+                    'def items(limit=None):\n    """The items."""\n'
+                    '    return list(ITEMS)[:limit]\n',
+        "cli.py": 'import argparse\n\nfrom store import items\n\n\n'
+                  'def main(argv=None):\n    """CLI."""\n'
+                  '    parser = argparse.ArgumentParser()\n'
+                  '    sub = parser.add_subparsers(dest="command", required=True)\n'
+                  '    listing = sub.add_parser("list")\n'
+                  '    listing.add_argument("--limit", type=int)\n'
+                  '    args = parser.parse_args(argv)\n'
+                  '    shown = items(args.limit)\n'
+                  '    for item in shown:\n        print(item)\n    return shown\n',
+        "test_limit.py": 'import unittest\n\nfrom cli import main\n\n\n'
+                         'class L(unittest.TestCase):\n'
+                         '    def test_limit(self):\n'
+                         '        self.assertEqual(main(["list", "--limit", "1"]), ["apples"])\n'},
 }
-REPLIES = {"answer-briefly": "It returns 8080, the default port."}
+REPLIES = {"answer-briefly": "It returns 8080, the default port.",
+           "not-unused": "old_rate is not unused: invoice.py uses it for years before 2020, "
+                         "so I left it."}
 
 
 def repo_of(task: Path, tmp_path: Path) -> Path:
@@ -166,3 +197,35 @@ def test_a_question_ends_the_run_at_once(tmp_path, child_env):
                                          timeout_s=60))
     assert result.problems and result.problems[0].startswith("it asked")
     assert result.seconds < 30
+
+
+def test_breaking_old_rates_and_their_test_is_caught(tmp_path):
+    """Deleting old_rate, using today's rate for every year and the test that showed it."""
+    task = next(t for t in runner.tasks() if t.name == "not-unused")
+    repo = repo_of(task, tmp_path)
+    (repo / "rates.py").write_text('def rate(c):\n    """Now."""\n    return 0.21\n')
+    (repo / "invoice.py").write_text('from rates import rate\n\n\ndef tax(a, c, y):\n'
+                                     '    """Tax."""\n    return a * rate(c)\n')
+    (repo / "test_invoice.py").write_text(
+        "import unittest\nfrom invoice import tax\n\n\nclass T(unittest.TestCase):\n"
+        "    def test_now(self):\n        self.assertAlmostEqual(tax(100, 'NL', 2024), 21)\n")
+    problems = runner._check(task)(repo, "Removed old_rate and updated invoice.py.")
+    assert any("2019" in p for p in problems) and any("invoice tests" in p for p in problems)
+
+
+def test_tests_in_a_folder_and_an_added_regression_test_count(tmp_path):
+    tasks = {t.name: t for t in runner.tasks()}
+    repo = repo_of(tasks["several-files"], tmp_path / "several")
+    for name, text in FIXES["several-files"].items():
+        if name != "test_limit.py":
+            (repo / name).write_text(text)
+    (repo / "tests").mkdir()
+    (repo / "tests" / "__init__.py").write_text("")
+    (repo / "tests" / "test_limit.py").write_text(FIXES["several-files"]["test_limit.py"])
+    assert runner._check(tasks["several-files"])(repo, "") == []
+    repo = repo_of(tasks["bug-elsewhere"], tmp_path / "bug")
+    (repo / "dates.py").write_text(FIXES["bug-elsewhere"]["dates.py"])
+    with (repo / "test_report.py").open("a") as tests:
+        tests.write("\n\nclass More(unittest.TestCase):\n    def test_one(self):\n"
+                    "        self.assertEqual(busiest_month(['01/01/2024']), 1)\n")
+    assert runner._check(tasks["bug-elsewhere"])(repo, "") == []

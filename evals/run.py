@@ -209,6 +209,8 @@ async def main(argv: list[str] | None = None) -> int:
             print(f"{mark}  {result.task:20} ${result.cost_usd:.3f}  {result.seconds:5.0f} s")
             for problem in result.problems:
                 print(f"      - {problem}")
+            if result.problems and result.reply:  # to judge the check as well as the model
+                print("      its reply: " + " ".join(result.reply.split())[:400])
     passed = sum(r.passed for r in results)
     cost = sum(r.cost_usd for r in results)
     print(f"\n{passed}/{len(results)} passed, ${cost:.2f}")
