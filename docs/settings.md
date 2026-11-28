@@ -16,6 +16,15 @@ Change what you need and choose **Save**; only what you changed is saved.
 | Instructions | Your own instructions: who the agent is to you, how it should talk. They are added after Kaden's built-in guidance on how to work, never in its place. | At the next step |
 | Tools | What the agent can do on your computer. | At restart |
 
+A project can have instructions of its own, as for Claude Code: a `CLAUDE.md` (or
+`.claude/CLAUDE.md`, or a `CLAUDE.local.md` you keep out of git) in a chat's folder or any
+folder above it. Where there is none, an `AGENTS.md` is read instead. They follow your
+Instructions, the nearest folder's last; `@path` in one brings in another file from the
+same project (not from elsewhere on your computer, so a downloaded project cannot read your
+keys). Each file is read up to 40,000 characters, and all of them up to 100,000. A file
+another user put in a shared folder above yours is not read. Kaden reads them again at each step, so
+an edit applies at once.
+
 Raising or removing the spending limit, or letting the agent do more, asks you to confirm
 first.
 

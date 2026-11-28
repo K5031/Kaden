@@ -1115,3 +1115,26 @@ async def test_kadens_guidance_comes_first_and_the_users_instructions_after(make
     assert (await h.runtime.settings()).system_prompt == ""
     await h.turn("again")
     assert "Use kaomojis" not in h.core.requests[-1].system
+
+
+async def test_a_projects_instruction_files_follow_the_users_instructions(make: Any,
+                                                                         tmp_path: Any) -> None:
+    """Claude Code's CLAUDE.md (or AGENTS.md) of the work folder: in the system prompt
+    after the user's own instructions, and read again so an edit applies at the next step."""
+    folder = tmp_path / "project"
+    folder.mkdir()
+    (folder / "CLAUDE.md").write_text("Run the tests before you say done.")
+    from kaden.runtime.config import ModuleState
+
+    tools = FakeTools()
+    tools.folders = []  # tools that take a conversation's folder
+    h: Harness = await make(core=ScriptedCore(default=Step(text="ok")), tools=tools,
+                            system_prompt="Use kaomojis.",
+                            modules=ModuleState(work_folder=str(tmp_path)))
+    await h.start(folder=str(folder))
+    await h.turn("hi")
+    system = h.core.requests[-1].system
+    assert system.index("Use kaomojis.") < system.index("Run the tests before you say done.")
+    (folder / "CLAUDE.md").write_text("Write in French.")
+    await h.turn("again")
+    assert "Write in French." in h.core.requests[-1].system

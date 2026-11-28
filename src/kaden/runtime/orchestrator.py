@@ -119,7 +119,7 @@ from kaden.api import (
     foreground_timeout,
 )
 from kaden.runtime import duty as duties
-from kaden.runtime import hooks
+from kaden.runtime import hooks, instructions
 from kaden.runtime import skills as skill_files
 from kaden.runtime import watches as watch_files
 from kaden.runtime.budget import (
@@ -487,6 +487,8 @@ class Runtime:
         self._grants: dict[str, bool] = {}
         self._memory_tools: set[str] = set()  # offered by Memory this request
         self._skills: dict[str, skill_files.Loaded] = {}  # found for this request
+        self._instructions: list[instructions.File] = []  # the project's, for this request
+        self._instructions_skipped: list[str] = []
         # The TodoWrite call that wrote the open conversation's plan; None when a person
         # did, or it is not known (the conversation was opened again).
         self._plan_call: CallId | None = None
@@ -843,19 +845,27 @@ class Runtime:
         return tuple(s.skill for s in self._skills.values())
 
     async def _load_skills(self) -> None:
-        """Read the skill folders again, so a new or changed skill needs no restart."""
+        """Read the skill folders and the project's instruction files again, so a new or
+        changed one needs no restart."""
         roots = skill_files.folders(self._config.data_dir, self._project())
         self._skills, problems = await asyncio.to_thread(skill_files.load, roots)
+        found, skipped = await asyncio.to_thread(instructions.read, self._project())
+        if [f.path for f in found] != [f.path for f in self._instructions]:
+            self._log.decision("instructions_read", files=[str(f.path) for f in found])
+        if skipped != self._instructions_skipped:
+            for reason in skipped:
+                self._log.decision("instruction_skipped", problem=reason)
+        self._instructions, self._instructions_skipped = found, skipped
         if problems != self._skill_problems:
             self._skill_problems = problems
             for problem in problems:
                 self._log.decision("skill_skipped", problem=problem)
 
     def _system(self) -> str:
-        """Kaden's guidance, then the user's own instructions, the skills' listing and, in
-        plan mode, what it allows."""
+        """Kaden's guidance, then the user's own instructions, the project's instruction
+        files, the skills' listing and, in plan mode, what it allows."""
         sections = [self._config.base_prompt, self._config.system_prompt,
-                    skill_files.prompt(self._skills),
+                    instructions.prompt(self._instructions), skill_files.prompt(self._skills),
                     PLAN_MODE_PROMPT if self._plan_mode else ""]
         return "\n\n".join(s for s in sections if s)
 

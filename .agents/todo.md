@@ -11,10 +11,9 @@ Agent Note (`notes/proposed/`) and leaves this list.
 
 ## From the user
 
-- **More of the industry's prompt pieces** (2026-11-28), after the working guidance:
-  reading a project's instruction files (`AGENTS.md`, `CLAUDE.md`), as Claude Code does; an
-  environment block (work folder, platform); a coding skill (small diffs, tests, git); and
-  a few repeatable tasks to judge prompt changes by.
+- **More of the industry's prompt pieces** (2026-11-28), after the working guidance and
+  project instruction files: an environment block (work folder, platform); a coding skill
+  (small diffs, tests, git); and a few repeatable tasks to judge prompt changes by.
 
 - **A more proactive Continuous** (2026-11-28): Ahri messaging the user on its own and
   doing things on its own more often, rather than mostly waiting. Mind what was declined

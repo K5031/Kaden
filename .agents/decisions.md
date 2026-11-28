@@ -78,9 +78,13 @@ The system prompt is `RuntimeConfig.base_prompt` (`config.BASE_PROMPT`: `GUIDANC
 work in any job, then `TOOL_FACTS`, which explain backgrounded operations,
 `TaskOutput`/`TaskStop` and `recall`), then the user's instructions
 (`RuntimeConfig.system_prompt`, `[runtime] system_prompt` or `system_prompt_file`, the
-Settings' Instructions; "" = none), then the skills' listing and plan mode's section.
-Continuous writes its own `base_prompt` (`life.PROMPT`) and drops the user's instructions,
-which are for the chats. The system prompt is the same for a conversation's whole life.
+Settings' Instructions; "" = none), then the project's instruction files
+(`runtime/instructions.py`, see [project instruction
+files](notes/implemented/2026-11-28-project-instruction-files.md)), then the skills' listing
+and plan mode's section. Continuous writes its own `base_prompt` (`life.PROMPT`) and drops
+the user's instructions, which are for the chats. The instruction files and the skills are
+read again at each listing of the tools, so the system prompt changes only when one of them
+changes.
 Memory's `system_addendum` follows, separated by a blank line.
 
 ## Runtime-authored texts
